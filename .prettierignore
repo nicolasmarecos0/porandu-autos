@@ -1,0 +1,9 @@
+pnpm-lock.yaml
+.next
+db/migrations
+
+# Documentación: se mantiene con su formato original, sin reescritura de Prettier.
+docs/
+README.md
+CLAUDE.md
+SETUP_PLAN.md
