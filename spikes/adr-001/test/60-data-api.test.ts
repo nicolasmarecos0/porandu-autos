@@ -62,8 +62,6 @@ async function call(
   return { status: response.status, body };
 }
 
-const INTROSPECTION = "{ __schema { queryType { fields { name } } } }";
-
 /** Nombres que pg_graphql daría a las tablas de la app (sin inflexión). */
 const APP_COLLECTIONS = [
   "organizationsCollection",
@@ -72,13 +70,28 @@ const APP_COLLECTIONS = [
   "tenant_probeCollection",
 ];
 
-function fieldNames(body: unknown): string[] | undefined {
-  const fields = (
-    body as {
-      data?: { __schema?: { queryType?: { fields?: { name: string }[] } } };
-    }
-  )?.data?.__schema?.queryType?.fields;
-  return fields?.map((field) => field.name);
+/**
+ * Consulta una colección de pg_graphql. `rows` es null si la colección no
+ * existe para ese rol (o GraphQL no responde datos); si existe, sus filas.
+ */
+async function queryCollection(
+  principal: Principal,
+  collection: string,
+  field = "__typename",
+): Promise<{ rows: unknown[] | null; errors: string[] }> {
+  const result = await call("/graphql/v1", principal, {
+    method: "POST",
+    body: { query: `{ ${collection} { edges { node { ${field} } } } }` },
+  });
+  const body = result.body as {
+    data?: Record<string, { edges?: { node: unknown }[] } | null> | null;
+    errors?: { message: string }[];
+  };
+  const edges = body?.data?.[collection]?.edges;
+  return {
+    rows: edges ? edges.map((edge) => edge.node) : null,
+    errors: (body?.errors ?? []).map((error) => error.message),
+  };
 }
 
 function expectNoData(result: { status: number; body: unknown }): void {
@@ -194,14 +207,10 @@ describe.runIf(isE1)(
         );
       });
 
-      it("GraphQL con pg_graphql deshabilitado (default local): ninguna colección de la app", async () => {
-        const result = await call("/graphql/v1", principal, {
-          method: "POST",
-          body: { query: INTROSPECTION },
-        });
-        const names = fieldNames(result.body) ?? [];
+      it("GraphQL con pg_graphql deshabilitado (default local): ninguna colección de la app devuelve datos", async () => {
         for (const collection of APP_COLLECTIONS) {
-          expect(names).not.toContain(collection);
+          const result = await queryCollection(principal, collection);
+          expect(result.rows, JSON.stringify(result)).toBeNull();
         }
       });
     });
@@ -234,27 +243,25 @@ describe.runIf(isE1)(
         }
       });
 
-      it("control positivo: uA ve la colección del schema expuesto", async () => {
-        const result = await call("/graphql/v1", userA, {
-          method: "POST",
-          body: { query: INTROSPECTION },
-        });
-        expect(fieldNames(result.body), JSON.stringify(result.body)).toContain(
+      // pg_graphql de esta imagen no ofrece introspección ("Unknown field
+      // __schema"): se consulta cada colección directamente, a nivel de datos.
+      it("control positivo: uA lee la colección del schema expuesto, filtrada por RLS", async () => {
+        const result = await queryCollection(
+          userA,
           "tenant_probe_exposedCollection",
+          "organization_id",
         );
+        expect(result.rows, JSON.stringify(result)).toEqual([
+          { organization_id: fixtures.orgs.A },
+        ]);
       });
 
       it.each(principals)(
-        "$name: ninguna colección de las tablas de public",
+        "$name: ninguna colección de las tablas de public devuelve datos",
         async (principal) => {
-          const result = await call("/graphql/v1", principal, {
-            method: "POST",
-            body: { query: INTROSPECTION },
-          });
-          const names = fieldNames(result.body);
-          expect(names, JSON.stringify(result.body)).toBeDefined();
           for (const collection of APP_COLLECTIONS) {
-            expect(names).not.toContain(collection);
+            const result = await queryCollection(principal, collection);
+            expect(result.rows, JSON.stringify(result)).toBeNull();
           }
         },
       );
