@@ -2,7 +2,7 @@
 
 > **Experimental.** Esta evidencia no aprueba ADR-001 ni ninguna hipótesis
 > D1–D20. Nada de esto se registró en el Decisions Log ni en la Build Baseline.
-> E2 (staging) y E3 (Vercel) no se ejecutaron.
+> E2 (staging) está preparado pero no se ejecutó; E3 (Vercel) tampoco.
 
 ## Entorno E1
 
@@ -102,3 +102,23 @@ Sanity check en E0 (no es evidencia): cambiando `withTenant` a `set_config(..., 
 6. **JWKS en cloud:** fetch, caché y rotación de claves en `getClaims()`.
 7. **Pooling con Vercel Fluid:** tamaño de pool y límites de conexión.
 8. **Operación:** rotación de la password de `app_runtime` y dónde vive (secrets de Vercel/CI).
+
+## E2 · estado: preparado, no ejecutado
+
+Workflow `.github/workflows/spike-adr-001-e2.yml`, disparado solo por un tag `adr-001-e2-*`. Cómo responde cada pregunta de la sección anterior:
+
+| Pregunta                      | Cómo la cubre E2                                                                                                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1 · Q1 en cloud               | La migración 0001 se aplica con `postgres` en staging; `00-catalog` (Q1) lee `pg_auth_members`.                                                                                            |
+| 2 · Supavisor cloud           | Toda la matriz corre por `app_runtime.<ref>` en 6543 (transacción) y 5432 (sesión); P3 exige 0 residuos. **Sin** control negativo de sesión.                                               |
+| 3 · Defaults cloud            | `meta.json` registra las extensiones instaladas (¿pg_graphql?) y la config del rol `authenticator`. `60-data-api` (E2) verifica que REST y GraphQL no devuelvan datos, sin habilitar nada. |
+| 4 · Latencia real             | **No se responde:** el runner de GitHub está en EE. UU. y staging en sa-east-1. Se mide igual (60 iteraciones) para ver el overhead en round trips; el número útil sale de E3.             |
+| 5 · Token vencido             | Sigue sin cubrirse si staging firma con ES256.                                                                                                                                             |
+| 6 · JWKS en cloud             | `getClaims()` verifica contra el JWKS real de staging en todos los tests con claims. Rotación de claves: no cubierta.                                                                      |
+| 7 · Pooling Vercel Fluid      | No se cubre (E3).                                                                                                                                                                          |
+| 8 · Password de `app_runtime` | En el spike es efímera por corrida y queda anulada al final; el esquema operativo del producto sigue abierto.                                                                              |
+
+Notas:
+
+- En E2, TLS con `sslmode=require` (sin verificar la CA).
+- El schema del spike queda en staging después de correr E2 (ver README).
