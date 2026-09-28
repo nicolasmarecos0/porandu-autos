@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Asset estático: no puede leer los tokens CSS. Valores = --color-brand / --color-brand-contrast. -->
+  <rect width="32" height="32" rx="8" fill="#376b89"/>
+  <path d="M12 23V9h6a4.5 4.5 0 0 1 0 9h-6" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
