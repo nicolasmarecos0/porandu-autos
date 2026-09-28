@@ -27,7 +27,7 @@ Trabajás sobre una baseline ya definida. **No es una fase de ideación.** Tu ro
   - `domains/`: tipos y lógica pura. **No importa React, Next ni `db/`.**
   - `db/`: schema, migraciones y acceso a datos.
   - `lib/`: infraestructura.
-- **Acceso a datos:** las páginas llaman loaders de `domains/*/queries.ts`. En B1 esos loaders leen `mocks/`. No introducir repositories, DI containers ni abstracciones que no pida la tarea.
+- **Acceso a datos (DEC-016):** `domains/` no carga datos ni depende de `mocks/`. En B1 las páginas llaman loaders que viven junto a la fuente mock (`mocks/*`); en Hito 1 pasan a la capa de datos con el aislamiento multi-tenant aprobado. No introducir repositories, DI containers ni abstracciones que no pida la tarea.
 - **Multi-tenancy (DEC-006 / ADR-001):**
   - Nunca importar `db/client` fuera de `db/`.
   - Toda query tenant-scoped pasa por el mecanismo aprobado en ADR-001.
