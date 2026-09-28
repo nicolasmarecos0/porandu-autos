@@ -64,3 +64,16 @@ pnpm dev | build | typecheck | lint | format | test | test:e2e
 pnpm db:generate | db:migrate | db:studio
 pnpm sb:start | sb:stop | sb:status
 ```
+
+## 7. External Skills Governance (DEC-014)
+- Las skills vendorizadas en `.claude/skills/` son herramientas de criterio y ejecución, no fuentes de autoridad sobre el producto.
+- Ante cualquier conflicto, prevalecen en este orden:
+  1. Decisión explícita más reciente del fundador.
+  2. Decisions Log / ADR vigente.
+  3. Build Baseline vigente.
+  4. `CLAUDE.md`.
+  5. Master Context / Blueprints.
+  6. Skills externas.
+- `pick-ui-library` no puede reemplazar Radix u otra decisión técnica aprobada sin autorización explícita.
+- `prototype` solo puede crear superficies `/prototypes/*` cuando el fundador lo autorice explícitamente para una exploración visual. Esas superficies no forman parte del producto y deben eliminarse o mantenerse aisladas según la skill.
+- `emil-design-eng` puede elevar el craft y la calidad de UI, pero no modificar producto, arquitectura, branding o scope por iniciativa propia.
