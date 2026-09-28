@@ -103,3 +103,112 @@ export function SettingsIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/* Íconos de contenido (Opportunities). */
+
+export function MapPinIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 20.5s6.5-5.6 6.5-10.5a6.5 6.5 0 0 0-13 0c0 4.9 6.5 10.5 6.5 10.5z" />
+      <circle cx="12" cy="10" r="2.25" />
+    </Icon>
+  );
+}
+
+export function PhoneIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 4.5h3.2l1.6 4-2 1.3a10 10 0 0 0 6.4 6.4l1.3-2 4 1.6V19a1.5 1.5 0 0 1-1.6 1.5A15.5 15.5 0 0 1 3.5 6.1 1.5 1.5 0 0 1 5 4.5z" />
+    </Icon>
+  );
+}
+
+export function SteeringIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="2" />
+      <path d="M4.5 10.5l5.6 1M19.5 10.5l-5.6 1M12 14v6" />
+    </Icon>
+  );
+}
+
+export function DocumentIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10.5A.5.5 0 0 1 6.5 20V4a.5.5 0 0 1 .5-.5z" />
+      <path d="M14 3.5V8h4M9.5 12.5h5M9.5 16h5" />
+    </Icon>
+  );
+}
+
+export function SwapIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 8h13l-3-3M20 16H7l3 3" />
+    </Icon>
+  );
+}
+
+export function WalletIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3" />
+      <rect x="4" y="8" width="16" height="11" rx="2" />
+      <path d="M16 13.5h1.5" />
+    </Icon>
+  );
+}
+
+export function PercentIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M18 6L6 18" />
+      <circle cx="7.5" cy="7.5" r="2" />
+      <circle cx="16.5" cy="16.5" r="2" />
+    </Icon>
+  );
+}
+
+export function BoxIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 8l8-4 8 4-8 4-8-4z" />
+      <path d="M4 8v8l8 4 8-4V8M12 12v8" />
+    </Icon>
+  );
+}
+
+export function LockIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="5" y="10.5" width="14" height="9.5" rx="1.75" />
+      <path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" />
+    </Icon>
+  );
+}
+
+export function CheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </Icon>
+  );
+}
+
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9.5 6l6 6-6 6" />
+    </Icon>
+  );
+}
+
+export function UndoIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 14L4.5 9.5 9 5" />
+      <path d="M4.5 9.5H15a4.5 4.5 0 0 1 0 9h-3" />
+    </Icon>
+  );
+}

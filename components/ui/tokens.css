@@ -153,6 +153,18 @@
 
   /* Motion: transiciones cortas, sin animaciones complejas. */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  /* Ease-out fuerte para entradas y respuesta al presionar. */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --default-transition-duration: 150ms;
   --default-transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Entrada de tooltip: solo el primero anima; los vecinos abren al instante. */
+  --animate-tooltip-in: tooltip-in 125ms var(--ease-out-strong);
+
+  @keyframes tooltip-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
 }
