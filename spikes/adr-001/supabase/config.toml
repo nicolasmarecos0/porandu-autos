@@ -52,7 +52,11 @@ jwt_expiry = 3600
 enable_signup = false
 
 [auth.email]
-enable_signup = false
+# Hallazgo E1 (run 2): `[auth.email] enable_signup = false` deshabilita el
+# proveedor email completo ("Email logins are disabled"), no solo el alta.
+# El signup se bloquea con `[auth] enable_signup = false` (arriba); el
+# proveedor email queda habilitado para permitir login con password.
+enable_signup = true
 enable_confirmations = false
 
 [edge_runtime]
