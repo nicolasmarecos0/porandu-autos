@@ -1,7 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
-import { openSql } from "./support/db";
+import type { VerifiedClaims } from "../src/claims";
+import { verifiedClaimsFor } from "./support/claims";
+import { asUser, openSql } from "./support/db";
 import { env, isE1 } from "./support/env";
 
 /*
@@ -265,6 +267,79 @@ describe.runIf(isE1)(
           }
         },
       );
+
+      // Mecanismo, a nivel SQL y en la MISMA corrida: graphql.resolve() como uA
+      // (app_runtime + SET LOCAL ROLE authenticated + claims) con el search_path
+      // que arma PostgREST en cada variante de extra_search_path.
+      describe("mecanismo: pg_graphql refleja los schemas del search_path", () => {
+        const runtimeSql = openSql(env.runtimeUrl, "graphql-mechanism", 1);
+        let claimsA: VerifiedClaims;
+        beforeAll(async () => {
+          claimsA = await verifiedClaimsFor(fixtures.users.uA);
+        });
+        afterAll(() => runtimeSql.end({ timeout: 5 }));
+
+        async function resolveAs(searchPath: string, query: string) {
+          const response = await asUser(runtimeSql, claimsA, async (tx) => {
+            await tx.unsafe(`set local search_path = ${searchPath}`);
+            const [row] = await tx<
+              { r: unknown }[]
+            >`select graphql.resolve(${query}) as r`;
+            return row?.r;
+          });
+          observations.push({
+            path: "graphql.resolve (SQL)",
+            principal: "uA",
+            method: "SQL",
+            headers: { search_path: searchPath },
+            status: 0,
+            body: response,
+          });
+          return response as {
+            data?: Record<
+              string,
+              { edges: { node: { id?: string } }[] }
+            > | null;
+            errors?: { message: string }[];
+          };
+        }
+
+        it("reproducción del hallazgo: con `public` en el search_path (default de Supabase) authenticated lee tablas de public; RLS contiene el cruce", async () => {
+          const orgsResult = await resolveAs(
+            "graphql_public, public, extensions",
+            "{ organizationsCollection { edges { node { id } } } }",
+          );
+          expect(
+            orgsResult.data?.organizationsCollection?.edges.map(
+              (e) => e.node.id,
+            ),
+            JSON.stringify(orgsResult),
+          ).toEqual([fixtures.orgs.A]);
+          const probeResult = await resolveAs(
+            "graphql_public, public, extensions",
+            "{ tenant_probeCollection { edges { node { id } } } }",
+          );
+          const ids = probeResult.data?.tenant_probeCollection?.edges.map(
+            (e) => e.node.id,
+          );
+          expect([...(ids ?? [])].sort(), JSON.stringify(probeResult)).toEqual(
+            [...fixtures.probe.A].sort(),
+          );
+        });
+
+        it("mitigación: sin `public` en el search_path no se refleja ninguna tabla de la app", async () => {
+          for (const collection of APP_COLLECTIONS) {
+            const result = await resolveAs(
+              "graphql_public, extensions, spike_exposed",
+              `{ ${collection} { edges { node { __typename } } } }`,
+            );
+            expect(
+              result.data?.[collection],
+              JSON.stringify(result),
+            ).toBeFalsy();
+          }
+        });
+      });
     });
   },
 );

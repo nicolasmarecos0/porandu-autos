@@ -14,7 +14,13 @@ port = 54321
 # `spike_exposed` es un schema de control negativo que crea el harness de tests
 # para demostrar que el test detecta una Data API expuesta.
 schemas = ["graphql_public", "spike_exposed"]
-extra_search_path = ["public", "extensions"]
+# Hallazgo E1 (run 5): PostgREST ejecuta graphql_public.graphql() con
+# search_path = graphql_public + extra_search_path, y pg_graphql refleja las
+# tablas de ese search_path. Con el default ["public", "extensions"] y
+# pg_graphql habilitado, authenticated lee tablas de `public` por /graphql/v1
+# aunque `public` no esté en `schemas`. Mitigación bajo prueba: `public` fuera
+# de extra_search_path. `spike_exposed` entra solo como control positivo.
+extra_search_path = ["extensions", "spike_exposed"]
 max_rows = 1000
 
 [db]
