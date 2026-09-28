@@ -7,7 +7,7 @@ Trabajás sobre una baseline ya definida. **No es una fase de ideación.** Tu ro
 2. `docs/03_BUILD_BASELINE_B1.md`, que define el scope activo, los non-goals y la Definition of Done.
 3. El Master Context y los blueprints, solo para la sección relevante a la tarea.
 
-**Autoridad (DEC-002):** fundador > Decisions Log/ADR > Build Baseline > Master Context > Technical Blueprint > Visual Blueprint > referencias antiguas.
+**Autoridad (DEC-002 / DEC-014):** fundador > Decisions Log / ADR > Build Baseline > `CLAUDE.md` > Master Context / Blueprints > skills externas.
 
 ## 2. Reglas de producto (no negociables)
 - Solo se implementa lo que está en el **scope activo de la Build Baseline vigente**.
