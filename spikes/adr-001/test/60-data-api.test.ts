@@ -62,6 +62,25 @@ async function call(
   return { status: response.status, body };
 }
 
+const INTROSPECTION = "{ __schema { queryType { fields { name } } } }";
+
+/** Nombres que pg_graphql daría a las tablas de la app (sin inflexión). */
+const APP_COLLECTIONS = [
+  "organizationsCollection",
+  "profilesCollection",
+  "membershipsCollection",
+  "tenant_probeCollection",
+];
+
+function fieldNames(body: unknown): string[] | undefined {
+  const fields = (
+    body as {
+      data?: { __schema?: { queryType?: { fields?: { name: string }[] } } };
+    }
+  )?.data?.__schema?.queryType?.fields;
+  return fields?.map((field) => field.name);
+}
+
 function expectNoData(result: { status: number; body: unknown }): void {
   const leaked =
     result.status < 300 && Array.isArray(result.body) && result.body.length > 0;
@@ -175,16 +194,70 @@ describe.runIf(isE1)(
         );
       });
 
-      it("GraphQL: ninguna colección de las tablas de la app en el schema", async () => {
+      it("GraphQL con pg_graphql deshabilitado (default local): ninguna colección de la app", async () => {
         const result = await call("/graphql/v1", principal, {
           method: "POST",
-          body: { query: "{ __schema { queryType { fields { name } } } }" },
+          body: { query: INTROSPECTION },
         });
-        const text = JSON.stringify(result.body);
-        expect(text).not.toMatch(
-          /organizations|memberships|profiles|tenantProbe|tenant_probe/i,
+        const names = fieldNames(result.body) ?? [];
+        for (const collection of APP_COLLECTIONS) {
+          expect(names).not.toContain(collection);
+        }
+      });
+    });
+
+    // Con la extensión deshabilitada el chequeo anterior es trivial. Acá se
+    // habilita pg_graphql y se repite, con control positivo: la colección del
+    // schema expuesto debe aparecer para uA (prueba que la reflexión funciona).
+    describe("GraphQL con pg_graphql habilitado", () => {
+      const userA: Principal = {
+        name: "uA",
+        token: fixtures.users.uA.accessToken,
+      };
+
+      beforeAll(async () => {
+        await migration`create extension if not exists pg_graphql`;
+        await migration`select pg_notify('pgrst', 'reload schema')`;
+        const deadline = Date.now() + 45_000;
+        for (;;) {
+          const probe = await call("/graphql/v1", userA, {
+            method: "POST",
+            body: { query: "{ __typename }" },
+          });
+          if (!JSON.stringify(probe.body).includes("not enabled")) break;
+          if (Date.now() > deadline) {
+            throw new Error(
+              `pg_graphql no quedó activo: ${JSON.stringify(probe)}`,
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      });
+
+      it("control positivo: uA ve la colección del schema expuesto", async () => {
+        const result = await call("/graphql/v1", userA, {
+          method: "POST",
+          body: { query: INTROSPECTION },
+        });
+        expect(fieldNames(result.body), JSON.stringify(result.body)).toContain(
+          "tenant_probe_exposedCollection",
         );
       });
+
+      it.each(principals)(
+        "$name: ninguna colección de las tablas de public",
+        async (principal) => {
+          const result = await call("/graphql/v1", principal, {
+            method: "POST",
+            body: { query: INTROSPECTION },
+          });
+          const names = fieldNames(result.body);
+          expect(names, JSON.stringify(result.body)).toBeDefined();
+          for (const collection of APP_COLLECTIONS) {
+            expect(names).not.toContain(collection);
+          }
+        },
+      );
     });
   },
 );
