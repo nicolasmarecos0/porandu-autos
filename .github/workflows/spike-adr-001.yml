@@ -94,7 +94,7 @@ jobs:
 
       - name: Resumen
         if: always()
-        run: node spikes/adr-001/scripts/summarize.ts
+        run: node spikes/adr-001/scripts/summarize.mts
 
       - name: Diagnóstico de contenedores
         if: failure()

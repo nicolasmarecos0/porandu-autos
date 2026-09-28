@@ -32,6 +32,7 @@ no tiene una Data API lateral hacia las tablas de la aplicación.
 
 ```
 supabase/config.toml       Supabase local de E1: public NO expuesto, pooler en modo transacción, signup off
+supabase/migrations/       solo crea el schema vacío del control positivo (PostgREST lo exige al arrancar)
 drizzle.config.ts          Único lugar que lee la credencial de migración (SPIKE_MIGRATION_URL)
 src/schema.ts              organizations, profiles, memberships (RLS habilitado desde la creación)
 migrations/0000_tables     generada por drizzle-kit
@@ -44,7 +45,7 @@ src/claims.ts              verifyAccessToken() con auth.getClaims(token)
 src/actions.ts             patrón de mutación: input estricto, la org sale del contexto
 test/support/              env, conexiones crudas, fixtures (global-setup), HS256 para E0
 test/00…90                 matriz (ver abajo)
-scripts/summarize.ts       resumen Markdown para el workflow
+scripts/summarize.mts      resumen Markdown para el workflow
 e0/                        shim local (no evidencia)
 ```
 

@@ -183,8 +183,9 @@ export default async function setup(project: TestProject): Promise<void> {
 
     // 4b. Control negativo de la Data API: misma tabla, mismas grants y RLS,
     // pero en un schema que SÍ está expuesto (supabase/config.toml).
+    // En e1 la CLI crea el schema vacío antes de PostgREST (supabase/migrations).
     await sql.unsafe(`
-      create schema spike_exposed;
+      create schema if not exists spike_exposed;
       grant usage on schema spike_exposed to anon, authenticated;
       create table spike_exposed.tenant_probe_exposed (
         id uuid primary key default gen_random_uuid(),

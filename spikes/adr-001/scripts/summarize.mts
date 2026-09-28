@@ -1,6 +1,6 @@
 /*
  * Resume los resultados del spike (vitest.json + JSON del harness) en Markdown.
- * Lo usa el workflow de E1: `node spikes/adr-001/scripts/summarize.ts`.
+ * Lo usa el workflow de E1: `node spikes/adr-001/scripts/summarize.mts`.
  * Solo builtins de Node y sintaxis TS borrable (Node 24 ejecuta TS directo).
  */
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
