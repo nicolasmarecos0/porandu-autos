@@ -7,3 +7,6 @@ docs/
 README.md
 CLAUDE.md
 SETUP_PLAN.md
+
+# Skills de terceros para Claude Code: se versionan tal cual las instala el CLI `skills`.
+.claude/skills/
