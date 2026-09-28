@@ -31,7 +31,8 @@ no tiene una Data API lateral hacia las tablas de la aplicación.
 ## Estructura
 
 ```
-supabase/config.toml       Supabase local de E1: public NO expuesto, pooler en modo transacción, signup off
+RESULTS.md                 resultados de E1 por criterio, hallazgos y preguntas para E2/E3
+supabase/config.toml       Supabase local de E1: public NO expuesto (ni en extra_search_path), pooler en modo transacción, signup off
 supabase/migrations/       solo crea el schema vacío del control positivo (PostgREST lo exige al arrancar)
 drizzle.config.ts          Único lugar que lee la credencial de migración (SPIKE_MIGRATION_URL)
 src/schema.ts              organizations, profiles, memberships (RLS habilitado desde la creación)
@@ -60,7 +61,7 @@ e0/                        shim local (no evidencia)
 | C5 · latencia (solo medición, sin umbral) | `80-latency` |
 | C6 · claims/rol no sobreviven a la transacción | `50-pooler-leak` (S-50, P3 con 600 transacciones, control negativo local) |
 | C7 · `postgres` migra, nunca en runtime | `70-runtime-vs-migration` (M-1…M-4), S-43 |
-| C8 · sin Data API lateral | `60-data-api` (PostgREST + GraphQL, con control positivo) |
+| C8 · sin Data API lateral | `60-data-api` (PostgREST; GraphQL con pg_graphql deshabilitado y habilitado; reproducción SQL del mecanismo de `search_path`; controles positivos) |
 | C9 · Q1: `grant authenticated to app_runtime` en Supabase | migración 0001 + `00-catalog` (Q1) |
 
 ## Guardas del experimento
