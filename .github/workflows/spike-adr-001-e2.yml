@@ -1,0 +1,119 @@
+name: Spike ADR-001 (E2 · staging)
+
+# E2: la misma validación de ADR-001 contra el proyecto Supabase de STAGING
+# (sa-east-1). Experimental: no aprueba ADR-001 ni es CI del producto.
+#
+# Disparo deliberado: SOLO al pushear un tag `adr-001-e2-*`. Ningún push de
+# rama la ejecuta. No toca Vercel (E3).
+#
+# Seguridad:
+# - Los secrets se pasan paso a paso (nunca a nivel job) y solo a los pasos
+#   que los necesitan. Ninguna URL con credenciales pasa por el shell: se
+#   derivan dentro de Node (spikes/adr-001/test/support/staging.ts).
+# - La password de app_runtime es efímera: se genera en el runner, se enmascara
+#   y la limpieza final la anula en la base.
+# - Los controles negativos de contaminación de sesión NO corren acá: solo se
+#   ejecutan contra hosts loopback (E0/E1).
+on:
+  push:
+    tags: ["adr-001-e2-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-adr-001-e2
+  cancel-in-progress: false
+
+jobs:
+  e2:
+    name: E2 · Supabase staging (sa-east-1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SPIKE_TARGET: e2
+      SPIKE_PUBLISHABLE_KEY_KIND: publishable
+      SPIKE_SECRET_KEY_KIND: secret
+      # Runner en EE. UU. → sa-east-1: cada round trip cuesta ~100+ ms.
+      SPIKE_LATENCY_ITERATIONS: "60"
+      # Oculta el aviso de Node sobre "type": "module" al importar .ts desde .mjs.
+      NODE_NO_WARNINGS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Entorno efímero del runner
+        run: |
+          set -euo pipefail
+          # Password efímera de app_runtime: existe solo en este runner.
+          PW="$(openssl rand -hex 32)"
+          echo "::add-mask::$PW"
+          {
+            echo "SPIKE_APP_RUNTIME_PASSWORD=$PW"
+            echo "SPIKE_RESULTS_DIR=$RUNNER_TEMP/adr-001-e2-results"
+          } >> "$GITHUB_ENV"
+
+      - name: Preflight de secrets (sin imprimir valores)
+        id: preflight
+        env:
+          SPIKE_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          SPIKE_PUBLISHABLE_KEY: ${{ secrets.STAGING_PUBLISHABLE_KEY }}
+          SPIKE_SECRET_KEY: ${{ secrets.STAGING_SECRET_KEY }}
+          SPIKE_STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          SPIKE_STAGING_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+        run: node spikes/adr-001/scripts/e2-preflight.mjs
+
+      - name: Limpieza previa (restos de una corrida interrumpida)
+        env:
+          SPIKE_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          SPIKE_SECRET_KEY: ${{ secrets.STAGING_SECRET_KEY }}
+          SPIKE_STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          SPIKE_STAGING_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+        run: node spikes/adr-001/scripts/e2-cleanup.mjs
+
+      - name: Migraciones con postgres vía pooler en modo sesión (drizzle-kit)
+        env:
+          SPIKE_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          SPIKE_STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          SPIKE_STAGING_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+        run: pnpm exec drizzle-kit migrate --config spikes/adr-001/drizzle.config.ts
+
+      - name: Matriz de aislamiento contra staging
+        env:
+          SPIKE_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          SPIKE_PUBLISHABLE_KEY: ${{ secrets.STAGING_PUBLISHABLE_KEY }}
+          SPIKE_SECRET_KEY: ${{ secrets.STAGING_SECRET_KEY }}
+          SPIKE_STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          SPIKE_STAGING_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+        run: >
+          pnpm exec vitest run --config spikes/adr-001/vitest.config.mts
+          --reporter=verbose --reporter=json
+          --outputFile.json="$SPIKE_RESULTS_DIR/vitest.json"
+
+      - name: Limpieza final (siempre que el preflight haya pasado)
+        if: always() && steps.preflight.outcome == 'success'
+        env:
+          SPIKE_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          SPIKE_SECRET_KEY: ${{ secrets.STAGING_SECRET_KEY }}
+          SPIKE_STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          SPIKE_STAGING_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+        run: node spikes/adr-001/scripts/e2-cleanup.mjs
+
+      - name: Resumen
+        if: always()
+        run: node spikes/adr-001/scripts/summarize.mts
+
+      - name: Artefacto de resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adr-001-e2-results
+          path: ${{ runner.temp }}/adr-001-e2-results
+          if-no-files-found: warn
+          retention-days: 14
