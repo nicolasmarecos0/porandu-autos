@@ -3,69 +3,78 @@
  *
  * Única fuente de color, radio, espaciado, sombra y tipografía de la UI.
  * Cada token de `@theme` genera su utilidad de Tailwind (p. ej.
- * `--color-surface-1` → `bg-surface-1`, `--shadow-glow-accent` →
- * `shadow-glow-accent`) y queda disponible como variable CSS.
+ * `--color-surface-1` → `bg-surface-1`, `--shadow-card` → `shadow-card`) y
+ * queda disponible como variable CSS.
  *
  * La paleta por defecto de Tailwind se elimina (`--color-*: initial`) para que
  * los componentes solo puedan usar colores definidos acá.
  *
- * Estética: dark premium, carbón/grafito, glassmorphism moderado, acento
- * esmeralda. Los pares de texto/fondo cumplen WCAG AA (≥ 4.5:1).
+ * Estética: SaaS ejecutivo, claro y modular. Workspace claro-neutro con
+ * paneles blancos, rail de navegación oscuro (grafito azulado) y color de
+ * marca `#376B89` como acento estructural. Sombras sutiles, sin glow.
+ * Los pares de texto/fondo cumplen WCAG AA (≥ 4.5:1).
  */
 
 @theme static {
   --color-*: initial;
 
-  /* Backgrounds: capa más profunda de la app. */
-  --color-bg-canvas: #090b0d;
-  --color-bg-subtle: #0d1013;
-  /* Resplandor esmeralda muy tenue del canvas; da profundidad al glass. */
-  --color-bg-glow: rgb(16 185 129 / 0.05);
+  /* Backgrounds: fondo del workspace. */
+  --color-bg-canvas: #eef1f4;
+  --color-bg-subtle: #e6eaee;
 
-  /* Surfaces: grafito, de menor a mayor elevación. */
-  --color-surface-1: #121519;
-  --color-surface-2: #181c21;
-  --color-surface-3: #1f242a;
-  /* Glass: superficie translúcida; se usa junto a `backdrop-blur-glass`. */
-  --color-surface-glass: rgb(18 21 25 / 0.72);
+  /* Surfaces: paneles y tarjetas, de mayor a menor protagonismo. */
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f7f9fa;
+  --color-surface-3: #eef2f5;
+
+  /* Surface inverse: rail de navegación y bloques oscuros. */
+  --color-surface-inverse: #1d2830;
+  --color-surface-inverse-hover: #2a3740;
 
   /* Borders. */
-  --color-border-subtle: rgb(255 255 255 / 0.06);
-  --color-border-default: rgb(255 255 255 / 0.1);
-  --color-border-strong: rgb(255 255 255 / 0.16);
+  --color-border-subtle: #e4e9ed;
+  --color-border-default: #d6dde3;
+  --color-border-strong: #bcc7d0;
+  --color-border-inverse: rgb(255 255 255 / 0.08);
 
   /* Text. */
-  --color-text-primary: #f2f4f5;
-  --color-text-secondary: #b6bec6;
-  --color-text-muted: #8a939c;
+  --color-text-primary: #16212b;
+  --color-text-secondary: #3e4a56;
+  --color-text-muted: #5c6874;
+  --color-text-inverse: #ffffff;
+  --color-text-inverse-muted: #aebcc7;
 
-  /* Accent: esmeralda Porandú. */
-  --color-accent: #10b981;
-  --color-accent-strong: #34d399;
-  --color-accent-soft: rgb(16 185 129 / 0.12);
-  --color-accent-border: rgb(52 211 153 / 0.32);
-  --color-accent-contrast: #03140d;
+  /* Brand: color principal de Porandú (acento estructural). */
+  --color-brand: #376b89;
+  --color-brand-hover: #2d5a74;
+  --color-brand-strong: #244a60;
+  --color-brand-soft: #e7eff4;
+  --color-brand-border: #b7cddb;
+  --color-brand-contrast: #ffffff;
+  /* Tinte claro de marca para usar sobre superficies inverse. */
+  --color-brand-inverse: #a9c7d9;
 
-  /* Estados. `*-soft` para fondos, `*-border` para contornos. */
-  --color-success: #4ade80;
-  --color-success-soft: rgb(74 222 128 / 0.12);
-  --color-success-border: rgb(74 222 128 / 0.32);
-  --color-warning: #f5b544;
-  --color-warning-soft: rgb(245 181 68 / 0.12);
-  --color-warning-border: rgb(245 181 68 / 0.32);
-  --color-danger: #f27070;
-  --color-danger-soft: rgb(242 112 112 / 0.12);
-  --color-danger-border: rgb(242 112 112 / 0.32);
+  /* Estados. Texto oscuro sobre `*-soft`; `*-border` para contornos. */
+  --color-success: #1d7348;
+  --color-success-soft: #e5f3ec;
+  --color-success-border: #b3dbc6;
+  --color-warning: #8a5300;
+  --color-warning-soft: #fcf2e1;
+  --color-warning-border: #efd29c;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+  --color-danger-border: #f4c0ba;
 
-  /* Foco accesible. */
-  --color-focus-ring: #34d399;
+  /* Foco accesible: sobre superficies claras y sobre inverse. */
+  --color-focus-ring: #376b89;
+  --color-focus-ring-inverse: #a9c7d9;
 
   /* Radius. */
   --radius-xs: 0.25rem;
   --radius-sm: 0.375rem;
-  --radius-md: 0.625rem;
-  --radius-lg: 0.875rem;
-  --radius-xl: 1.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
 
   /*
    * Spacing. `--spacing` es la unidad base de Tailwind (grilla de 4 px).
@@ -73,19 +82,14 @@
    */
   --spacing: 0.25rem;
   --spacing-nav-rail: 6.5rem;
-  --spacing-gutter: 2rem;
+  --spacing-gutter: 1.5rem;
   --spacing-section: 1.5rem;
 
-  /* Shadows y glow. */
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5);
-  --shadow-lg: 0 16px 40px -12px rgb(0 0 0 / 0.6);
-  --shadow-glass:
-    inset 0 1px 0 rgb(255 255 255 / 0.05), 0 8px 32px -12px rgb(0 0 0 / 0.6);
-  --shadow-glow-accent: 0 0 12px rgb(16 185 129 / 0.45);
-
-  /* Blur para glassmorphism moderado. */
-  --blur-glass: 16px;
+  /* Shadows: sutiles, frías, sin glow. */
+  --shadow-sm: 0 1px 2px rgb(22 33 43 / 0.06);
+  --shadow-card: 0 1px 2px rgb(22 33 43 / 0.05), 0 2px 8px rgb(22 33 43 / 0.04);
+  --shadow-md: 0 2px 4px rgb(22 33 43 / 0.06), 0 8px 20px rgb(22 33 43 / 0.06);
+  --shadow-lg: 0 4px 8px rgb(22 33 43 / 0.06), 0 16px 40px rgb(22 33 43 / 0.1);
 
   /* Typography. `--font-inter` lo define next/font en el root layout. */
   --font-sans:
@@ -99,14 +103,14 @@
   --text-display--letter-spacing: -0.02em;
   --text-display--font-weight: 600;
 
-  --text-title: 1.5rem;
-  --text-title--line-height: 2rem;
-  --text-title--letter-spacing: -0.015em;
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.875rem;
+  --text-title--letter-spacing: -0.01em;
   --text-title--font-weight: 600;
 
-  --text-heading: 1.125rem;
-  --text-heading--line-height: 1.625rem;
-  --text-heading--letter-spacing: -0.01em;
+  --text-heading: 1.0625rem;
+  --text-heading--line-height: 1.5rem;
+  --text-heading--letter-spacing: -0.005em;
   --text-heading--font-weight: 600;
 
   --text-body: 0.875rem;

@@ -15,7 +15,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex h-dvh overflow-hidden">
       <a
         href="#workspace"
-        className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-3 focus-visible:left-3 focus-visible:z-50 focus-visible:rounded-md focus-visible:bg-surface-2 focus-visible:px-3 focus-visible:py-2 focus-visible:text-label focus-visible:text-text-primary focus-visible:outline-2 focus-visible:outline-focus-ring"
+        className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-3 focus-visible:left-3 focus-visible:z-50 focus-visible:rounded-md focus-visible:bg-surface-1 focus-visible:px-3 focus-visible:py-2 focus-visible:text-label focus-visible:text-text-primary focus-visible:shadow-md focus-visible:outline-2 focus-visible:outline-focus-ring"
       >
         Saltar al contenido
       </a>

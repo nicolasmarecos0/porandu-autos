@@ -19,15 +19,9 @@ export function NavLink({ href, label, icon }: NavLinkProps) {
     <Link
       href={href}
       aria-current={isActive ? "page" : undefined}
-      className="group relative flex w-full flex-col items-center gap-1 rounded-md px-0.5 py-2.5 text-caption text-text-secondary transition-[color,background-color] hover:bg-surface-3 hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring aria-[current=page]:bg-accent-soft aria-[current=page]:text-text-primary"
+      className="group flex w-full flex-col items-center gap-1 rounded-md px-0.5 py-2.5 text-caption text-text-inverse-muted transition-[color,background-color] hover:bg-surface-inverse-hover hover:text-text-inverse focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring-inverse aria-[current=page]:bg-brand aria-[current=page]:text-text-inverse aria-[current=page]:shadow-sm"
     >
-      <span
-        aria-hidden="true"
-        className="absolute top-1/2 -left-1 h-6 w-0.5 -translate-y-1/2 rounded-full bg-accent opacity-0 shadow-glow-accent transition-opacity group-aria-[current=page]:opacity-100"
-      />
-      <span className="text-text-muted transition-colors group-hover:text-text-primary group-aria-[current=page]:text-accent-strong">
-        {icon}
-      </span>
+      {icon}
       <span className="max-w-full truncate">{label}</span>
     </Link>
   );

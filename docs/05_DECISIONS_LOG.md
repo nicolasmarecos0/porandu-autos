@@ -26,6 +26,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-010 | Hosting de staging: Vercel | Aceptada | 2026-09-21 |
 | DEC-011 | Convención de idioma | Aceptada | 2026-09-21 |
 | DEC-012 | Login B1: email + password | Aceptada | 2026-09-21 |
+| DEC-013 | Dirección visual: Automotive Enterprise UI | Aceptada | 2026-09-28 |
 | ADR-001 | Implementación de tenant isolation | Aceptada en principio · implementación en validación | 2026-09-21 |
 
 ---
@@ -121,6 +122,18 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 ## DEC-012 — Login B1: email + password
 - **Estado:** Aceptada · 2026-09-21
 - **Decisión:** B1 usa Supabase Auth con email + password. Magic link queda fuera de B1.
+
+## DEC-013 — Dirección visual: Automotive Enterprise UI
+- **Estado:** Aceptada · 2026-09-28
+- **Decisión:**
+  - Workspace claro-neutro con paneles blancos y rail oscuro.
+  - Color principal de marca: `#376B89`.
+  - `#376B89` se usa para identidad, navegación activa, énfasis y estados seleccionados.
+  - Sombras y bordes sutiles.
+  - Sin glow/neón ni glassmorphism dominante.
+  - La imagen de referencia del fundador guía jerarquía, densidad, composición y lenguaje visual, pero no se copia literalmente.
+- **Supersede:** la dirección dark/glassmorphism anterior ("dark mode elegante, glassmorphism moderado" en la Build Baseline B1 §3.1 y el "Estilo base" del Master Context §33).
+- **Consecuencias:** los design tokens de `components/ui/tokens.css` implementan esta dirección.
 
 ---
 

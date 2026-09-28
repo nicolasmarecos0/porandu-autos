@@ -19,7 +19,7 @@ function NavList({ items }: { items: readonly NavItem[] }) {
 
 function BrandMark() {
   return (
-    <div className="flex size-10 items-center justify-center rounded-lg border border-accent-border bg-accent-soft text-accent-strong shadow-glass">
+    <div className="flex size-10 items-center justify-center rounded-lg bg-brand text-brand-contrast shadow-sm">
       <svg
         viewBox="0 0 24 24"
         width={22}
@@ -43,11 +43,11 @@ export function NavRail() {
   return (
     <nav
       aria-label="Navegación principal"
-      className="flex h-full w-nav-rail shrink-0 flex-col items-center gap-6 overflow-y-auto border-r border-border-subtle bg-surface-glass px-1 py-4 shadow-glass backdrop-blur-glass"
+      className="flex h-full w-nav-rail shrink-0 flex-col items-center gap-6 overflow-y-auto bg-surface-inverse px-1.5 py-4"
     >
       <BrandMark />
       <NavList items={primaryItems} />
-      <div className="mt-auto w-full border-t border-border-subtle pt-3">
+      <div className="mt-auto w-full border-t border-border-inverse pt-3">
         <NavList items={footerItems} />
       </div>
     </nav>
