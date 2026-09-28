@@ -28,6 +28,8 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-012 | Login B1: email + password | Aceptada | 2026-09-21 |
 | DEC-013 | Dirección visual: Automotive Enterprise UI | Aceptada | 2026-09-28 |
 | DEC-014 | Gobernanza de Design Skills | Aceptada | 2026-09-28 |
+| DEC-015 | Opportunities Visual Architecture | Aceptada | 2026-09-28 |
+| DEC-016 | Loaders de datos fuera de `domains/` | Aceptada | 2026-09-28 |
 | ADR-001 | Implementación de tenant isolation | Aceptada en principio · implementación en validación | 2026-09-21 |
 
 ---
@@ -141,6 +143,28 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 - **Decisión:** las Design Engineering Skills de terceros son herramientas subordinadas a la jerarquía de autoridad de Porandú. No pueden superseder decisiones de producto, arquitectura o branding aprobadas. `prototype` requiere invocación explícita y trabaja de forma aislada.
 - **Aclara:** DEC-002. Las skills externas quedan al final de la jerarquía, y `CLAUDE.md` se ubica entre la Build Baseline y el Master Context.
 - **Consecuencias:** aplica a `emil-design-eng`, `prototype` y `pick-ui-library` en `.claude/skills/`. Las reglas operativas están en `CLAUDE.md` §7.
+
+
+## DEC-015 — Opportunities Visual Architecture
+- **Estado:** Aceptada · 2026-09-28
+- **Decisión:** la dirección visual aprobada para Opportunities es **Reference-first + Porandú DNA**: arquitectura Automotive Enterprise inspirada en las referencias aprobadas, adaptada a la identidad Porandú, con cola operativa, customer identity, Porandú Ring, cuatro scores explicables, action area, Why Now y Vehicle Rail.
+  - Columna izquierda: tarjeta de identidad del prospecto seleccionado (`#376B89`) y la cola de oportunidades agrupada por urgencia.
+  - Centro: strip de Porandú Score (con el Porandú Ring), Intent, Vehicle Fit y Deal Readiness; "¿Qué hacer?" (Next Best Action); "¿Por qué ahora?" en "Señales fuertes" / "A validar".
+  - Derecha: Vehicle Rail con vehículo buscado, Top Match, alternativa y trade-in.
+  - El Porandú Ring muestra cómo se compone el Porandú Score a partir de Intent, Vehicle Fit y Deal Readiness. La composición llega como dato (en B1, un valor de mock) y no fija la fórmula, que sigue siendo conceptual según DEC-004. Un dato faltante se dibuja punteado y no penaliza (DEC-005).
+- **Aclara:** la Build Baseline B1 §3.2 ("Opportunities: lista simple que lleva al workspace"). Opportunities sigue siendo una cola de oportunidades, pero incorpora contexto de decisión comercial en la misma superficie. `/opportunities/[id]` (Opportunity Workspace) se mantiene como ruta del slice.
+- **Consecuencias:**
+  - La exploración se hizo con la skill `prototype` (DEC-014) y la superficie `/prototypes/opportunities` se eliminó al promover la variante.
+  - Sigue siendo una implementación visual de B1 sobre fixtures (`mocks/`): sin persistencia, sin scoring real, sin WhatsApp ni IA. "Marcar como hecha" es estado simulado en cliente.
+  - Una acción que cambia condiciones económicas se marca "Requiere aprobación" y no se completa desde Opportunities.
+
+## DEC-016 — Loaders de datos fuera de `domains/`
+- **Estado:** Aceptada · 2026-09-28
+- **Decisión:** `domains/` contiene únicamente tipos, labels y lógica determinista de dominio. No puede depender de `mocks/`, `db/`, React, Next ni componentes de UI.
+  - En B1, mientras usemos datos simulados, los loaders pueden vivir junto a la fuente mock (p. ej. `getOpportunityQueue()` en `mocks/opportunities.ts`).
+  - En Hito 1 la carga de datos pasará a la capa de datos correspondiente y deberá aplicar el aislamiento multi-tenant aprobado (`withTenant` o el mecanismo vigente entonces).
+- **Supersede:** las partes de `CLAUDE.md` §3 y de la Build Baseline B1 §7 que indicaban loaders dentro de `domains/*/queries.ts`.
+- **Consecuencias:** `CLAUDE.md` §3 se alinea con esta decisión. La Build Baseline no se reescribe: esta decisión la supersede en ese punto.
 
 ---
 
