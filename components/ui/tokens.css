@@ -9,9 +9,10 @@
  * La paleta por defecto de Tailwind se elimina (`--color-*: initial`) para que
  * los componentes solo puedan usar colores definidos acá.
  *
- * Estética: SaaS ejecutivo, claro y modular. Workspace claro-neutro con
- * paneles blancos, rail de navegación oscuro (grafito azulado) y color de
- * marca `#376B89` como acento estructural. Sombras sutiles, sin glow.
+ * Estética (DEC-013): software operativo enterprise, claro y denso. Banda
+ * superior de marca `#376B89`, rail de navegación oscuro y compacto, workspace
+ * claro-neutro con paneles blancos, franjas de métricas y encabezados de
+ * tabla en grafito. Bordes y sombras sutiles, sin glow.
  * Los pares de texto/fondo cumplen WCAG AA (≥ 4.5:1).
  */
 
@@ -27,9 +28,13 @@
   --color-surface-2: #f7f9fa;
   --color-surface-3: #eef2f5;
 
-  /* Surface inverse: rail de navegación y bloques oscuros. */
+  /*
+   * Surface inverse: rail de navegación, franja de métricas y encabezados de
+   * tabla. `raised` destaca un bloque dentro de una superficie inverse.
+   */
   --color-surface-inverse: #1d2830;
   --color-surface-inverse-hover: #2a3740;
+  --color-surface-inverse-raised: #2c3a44;
 
   /* Borders. */
   --color-border-subtle: #e4e9ed;
@@ -65,29 +70,38 @@
   --color-danger-soft: #fdecea;
   --color-danger-border: #f4c0ba;
 
+  /* Skeletons: estructura sin datos (placeholders de B1 y estados de carga). */
+  --color-skeleton: #e3e9ee;
+  --color-skeleton-strong: #d3dce3;
+  --color-skeleton-inverse: rgb(255 255 255 / 0.14);
+
   /* Foco accesible: sobre superficies claras y sobre inverse. */
   --color-focus-ring: #376b89;
   --color-focus-ring-inverse: #a9c7d9;
 
-  /* Radius. */
-  --radius-xs: 0.25rem;
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  /* Radius: contenidos, de software operativo. */
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
 
   /*
    * Spacing. `--spacing` es la unidad base de Tailwind (grilla de 4 px).
    * Los tokens nombrados definen medidas de layout del shell.
    */
   --spacing: 0.25rem;
-  --spacing-nav-rail: 6.5rem;
-  --spacing-gutter: 1.5rem;
-  --spacing-section: 1.5rem;
+  --spacing-top-bar: 3rem;
+  --spacing-nav-rail: 4rem;
+  --spacing-page-header: 3.5rem;
+  --spacing-context-rail: 20rem;
+  /* Padding del workspace y separación entre paneles. */
+  --spacing-gutter: 1rem;
+  --spacing-section: 0.75rem;
 
   /* Shadows: sutiles, frías, sin glow. */
   --shadow-sm: 0 1px 2px rgb(22 33 43 / 0.06);
-  --shadow-card: 0 1px 2px rgb(22 33 43 / 0.05), 0 2px 8px rgb(22 33 43 / 0.04);
+  --shadow-card: 0 1px 2px rgb(22 33 43 / 0.05), 0 1px 4px rgb(22 33 43 / 0.03);
   --shadow-md: 0 2px 4px rgb(22 33 43 / 0.06), 0 8px 20px rgb(22 33 43 / 0.06);
   --shadow-lg: 0 4px 8px rgb(22 33 43 / 0.06), 0 16px 40px rgb(22 33 43 / 0.1);
 
@@ -103,8 +117,8 @@
   --text-display--letter-spacing: -0.02em;
   --text-display--font-weight: 600;
 
-  --text-title: 1.375rem;
-  --text-title--line-height: 1.875rem;
+  --text-title: 1.25rem;
+  --text-title--line-height: 1.75rem;
   --text-title--letter-spacing: -0.01em;
   --text-title--font-weight: 600;
 
@@ -113,12 +127,24 @@
   --text-heading--letter-spacing: -0.005em;
   --text-heading--font-weight: 600;
 
+  /* Valor numérico destacado (scores, métricas). Usar con `tabular-nums`. */
+  --text-metric: 1.75rem;
+  --text-metric--line-height: 2rem;
+  --text-metric--letter-spacing: -0.01em;
+  --text-metric--font-weight: 600;
+
   --text-body: 0.875rem;
   --text-body--line-height: 1.375rem;
 
   --text-label: 0.75rem;
   --text-label--line-height: 1rem;
   --text-label--font-weight: 500;
+
+  /* Rótulos en mayúsculas (métricas, encabezados de tabla). Usar con `uppercase`. */
+  --text-overline: 0.6875rem;
+  --text-overline--line-height: 1rem;
+  --text-overline--letter-spacing: 0.06em;
+  --text-overline--font-weight: 600;
 
   --text-caption: 0.6875rem;
   --text-caption--line-height: 0.875rem;
