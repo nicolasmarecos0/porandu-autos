@@ -27,6 +27,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-011 | Convención de idioma | Aceptada | 2026-09-21 |
 | DEC-012 | Login B1: email + password | Aceptada | 2026-09-21 |
 | DEC-013 | Dirección visual: Automotive Enterprise UI | Aceptada | 2026-09-28 |
+| DEC-014 | Gobernanza de Design Skills | Aceptada | 2026-09-28 |
 | ADR-001 | Implementación de tenant isolation | Aceptada en principio · implementación en validación | 2026-09-21 |
 
 ---
@@ -134,6 +135,12 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - La imagen de referencia del fundador guía jerarquía, densidad, composición y lenguaje visual, pero no se copia literalmente.
 - **Supersede:** la dirección dark/glassmorphism anterior ("dark mode elegante, glassmorphism moderado" en la Build Baseline B1 §3.1 y el "Estilo base" del Master Context §33).
 - **Consecuencias:** los design tokens de `components/ui/tokens.css` implementan esta dirección.
+
+## DEC-014 — Gobernanza de Design Skills
+- **Estado:** Aceptada · 2026-09-28
+- **Decisión:** las Design Engineering Skills de terceros son herramientas subordinadas a la jerarquía de autoridad de Porandú. No pueden superseder decisiones de producto, arquitectura o branding aprobadas. `prototype` requiere invocación explícita y trabaja de forma aislada.
+- **Aclara:** DEC-002. Las skills externas quedan al final de la jerarquía, y `CLAUDE.md` se ubica entre la Build Baseline y el Master Context.
+- **Consecuencias:** aplica a `emil-design-eng`, `prototype` y `pick-ui-library` en `.claude/skills/`. Las reglas operativas están en `CLAUDE.md` §7.
 
 ---
 

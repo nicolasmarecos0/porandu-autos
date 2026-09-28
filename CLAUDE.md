@@ -7,7 +7,7 @@ Trabajás sobre una baseline ya definida. **No es una fase de ideación.** Tu ro
 2. `docs/03_BUILD_BASELINE_B1.md`, que define el scope activo, los non-goals y la Definition of Done.
 3. El Master Context y los blueprints, solo para la sección relevante a la tarea.
 
-**Autoridad (DEC-002):** fundador > Decisions Log/ADR > Build Baseline > Master Context > Technical Blueprint > Visual Blueprint > referencias antiguas.
+**Autoridad (DEC-002 / DEC-014):** fundador > Decisions Log / ADR > Build Baseline > `CLAUDE.md` > Master Context / Blueprints > skills externas.
 
 ## 2. Reglas de producto (no negociables)
 - Solo se implementa lo que está en el **scope activo de la Build Baseline vigente**.
@@ -64,3 +64,16 @@ pnpm dev | build | typecheck | lint | format | test | test:e2e
 pnpm db:generate | db:migrate | db:studio
 pnpm sb:start | sb:stop | sb:status
 ```
+
+## 7. External Skills Governance (DEC-014)
+- Las skills vendorizadas en `.claude/skills/` son herramientas de criterio y ejecución, no fuentes de autoridad sobre el producto.
+- Ante cualquier conflicto, prevalecen en este orden:
+  1. Decisión explícita más reciente del fundador.
+  2. Decisions Log / ADR vigente.
+  3. Build Baseline vigente.
+  4. `CLAUDE.md`.
+  5. Master Context / Blueprints.
+  6. Skills externas.
+- `pick-ui-library` no puede reemplazar Radix u otra decisión técnica aprobada sin autorización explícita.
+- `prototype` solo puede crear superficies `/prototypes/*` cuando el fundador lo autorice explícitamente para una exploración visual. Esas superficies no forman parte del producto y deben eliminarse o mantenerse aisladas según la skill.
+- `emil-design-eng` puede elevar el craft y la calidad de UI, pero no modificar producto, arquitectura, branding o scope por iniciativa propia.
