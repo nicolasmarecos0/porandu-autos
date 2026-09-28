@@ -1,0 +1,113 @@
+name: Spike ADR-001 (E1)
+
+# Experimento aislado de ADR-001 sobre Supabase LOCAL (E1) dentro del runner.
+# No es CI del producto, no usa secrets y no toca staging (E2).
+on:
+  push:
+    branches: [spike/h0-saas-foundation]
+    paths:
+      - "spikes/adr-001/**"
+      - ".github/workflows/spike-adr-001.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-adr-001-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e1:
+    name: E1 · Supabase local
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SPIKE_TARGET: e1
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.118.0
+
+      - name: Supabase local (config de spikes/adr-001/supabase)
+        run: supabase start --workdir spikes/adr-001
+
+      - name: Exportar conexiones y claves locales
+        run: |
+          set -euo pipefail
+          supabase status --workdir spikes/adr-001
+          supabase status --workdir spikes/adr-001 -o env > "$RUNNER_TEMP/sb.env"
+          echo "Variables de 'supabase status -o env':"
+          cut -d= -f1 "$RUNNER_TEMP/sb.env"
+          set -a; source "$RUNNER_TEMP/sb.env"; set +a
+
+          # Password efímera de app_runtime: no está en el repo ni en las migraciones.
+          PW="$(openssl rand -hex 24)"
+          echo "::add-mask::$PW"
+
+          # Tenant del pooler local: se toma de status si lo expone; si no, pooler-dev.
+          TENANT="pooler-dev"
+          POOLER_URL="$(grep -E '^[A-Z_]*POOLER[A-Z_]*=' "$RUNNER_TEMP/sb.env" | head -1 | cut -d= -f2- | tr -d '"' || true)"
+          if [ -n "$POOLER_URL" ]; then
+            PARSED="$(echo "$POOLER_URL" | sed -nE 's#^postgres(ql)?://postgres\.([^:@]+)[:@].*#\2#p')"
+            if [ -n "$PARSED" ]; then TENANT="$PARSED"; fi
+          fi
+          echo "Tenant del pooler: $TENANT"
+
+          if [ -n "${PUBLISHABLE_KEY:-}" ]; then PK="$PUBLISHABLE_KEY"; PK_KIND="publishable"; else PK="$ANON_KEY"; PK_KIND="legacy-anon"; fi
+          if [ -n "${SECRET_KEY:-}" ]; then SK="$SECRET_KEY"; SK_KIND="secret"; else SK="$SERVICE_ROLE_KEY"; SK_KIND="legacy-service_role"; fi
+          echo "Clave pública usada: $PK_KIND · clave de servidor usada: $SK_KIND"
+
+          {
+            echo "SPIKE_RESULTS_DIR=$RUNNER_TEMP/adr-001-results"
+            echo "SPIKE_SUPABASE_URL=$API_URL"
+            echo "SPIKE_PUBLISHABLE_KEY=$PK"
+            echo "SPIKE_PUBLISHABLE_KEY_KIND=$PK_KIND"
+            echo "SPIKE_SECRET_KEY=$SK"
+            echo "SPIKE_SECRET_KEY_KIND=$SK_KIND"
+            echo "SPIKE_JWT_SECRET=${JWT_SECRET:-}"
+            echo "SPIKE_MIGRATION_URL=$DB_URL"
+            echo "SPIKE_APP_RUNTIME_PASSWORD=$PW"
+            echo "SPIKE_RUNTIME_URL=postgresql://app_runtime:$PW@127.0.0.1:54322/postgres"
+            echo "SPIKE_RUNTIME_POOLER_URL=postgresql://app_runtime.$TENANT:$PW@127.0.0.1:54329/postgres"
+            echo "SPIKE_POSTGRES_POOLER_URL=postgresql://postgres.$TENANT:postgres@127.0.0.1:54329/postgres"
+          } >> "$GITHUB_ENV"
+
+      - name: Migraciones con la credencial de migración (postgres) vía drizzle-kit
+        run: pnpm exec drizzle-kit migrate --config spikes/adr-001/drizzle.config.ts
+
+      - name: Matriz de aislamiento, pooler, Data API y latencia
+        run: >
+          pnpm exec vitest run --config spikes/adr-001/vitest.config.mts
+          --reporter=verbose --reporter=json
+          --outputFile.json="$SPIKE_RESULTS_DIR/vitest.json"
+
+      - name: Resumen
+        if: always()
+        run: node spikes/adr-001/scripts/summarize.ts
+
+      - name: Diagnóstico de contenedores
+        if: failure()
+        run: |
+          docker ps -a --format '{{.Names}}\t{{.Status}}'
+          for c in $(docker ps -a --format '{{.Names}}' | grep porandu-adr-001); do
+            echo "::group::$c"; docker logs --tail 80 "$c" 2>&1 || true; echo "::endgroup::"
+          done
+
+      - name: Artefacto de resultados
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adr-001-e1-results
+          path: ${{ runner.temp }}/adr-001-results
+          if-no-files-found: warn
