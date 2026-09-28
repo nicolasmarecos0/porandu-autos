@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, inject, it } from "vitest";
 import { openSql } from "./support/db";
-import { env, isE1 } from "./support/env";
+import { env, usesSupabase } from "./support/env";
 
 /*
  * C3 (catálogo) y C9 (Q1). Se consulta con la credencial de migración porque
@@ -136,7 +136,7 @@ describe("C3 · catálogo de seguridad", () => {
     expect(rows.map((r) => r.table)).toEqual(COVERED_TENANT_TABLES);
   });
 
-  it.runIf(isE1)(
+  it.runIf(usesSupabase)(
     "S-65 · hecho R1: en Supabase `postgres` tiene BYPASSRLS y es owner de las tablas",
     () => {
       expect(fixtures.meta.postgresRole.rolbypassrls).toBe(true);

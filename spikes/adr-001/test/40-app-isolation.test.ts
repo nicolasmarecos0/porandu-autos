@@ -11,7 +11,7 @@ import { expectPgError } from "./support/assert";
 import { verifiedClaimsFor, verifyToken } from "./support/claims";
 import { runtimeConnections } from "./support/connections";
 import { openSql } from "./support/db";
-import { env, isE1 } from "./support/env";
+import { env, usesSupabase } from "./support/env";
 import type { OrgKey, UserKey } from "./support/fixtures";
 import { decodeJwtPart, signHs256, tamperPayload } from "./support/jwt-hs256";
 
@@ -260,7 +260,7 @@ describe("A-14 · verificación del token", () => {
 
   it("token con firma válida pero vencido: rechazado", async (context) => {
     const header = decodeJwtPart(users.uA.accessToken, 0);
-    if (isE1 && (header.alg !== "HS256" || !env.jwtSecret)) {
+    if (usesSupabase && (header.alg !== "HS256" || !env.jwtSecret)) {
       context.skip(
         `Auth local firma con ${String(header.alg)}: no se puede firmar un token vencido válido`,
       );

@@ -38,6 +38,12 @@ export type SetupMeta = {
     readonly postgres: string;
     readonly appRuntime: string;
   };
+  /** Extensiones instaladas (p. ej. si pg_graphql está activo en staging). */
+  readonly extensions: readonly string[];
+  /** Settings del rol `authenticator` (config de PostgREST, si vive en la base). */
+  readonly authenticatorConfig: readonly string[] | null;
+  /** Identificador de la corrida: prefijo de usuarios y organizaciones sintéticos. */
+  readonly runId: string;
 };
 
 export type Fixtures = {

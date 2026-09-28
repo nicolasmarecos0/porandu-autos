@@ -25,8 +25,11 @@ import { env } from "./support/env";
  */
 
 const fixtures = inject("fixtures");
-const ITERATIONS = 400;
-const WARMUP = 40;
+// e2 corre desde un runner de GitHub (EE. UU.) contra sa-east-1: cada round trip
+// cuesta ~100+ ms, así que el workflow baja las iteraciones (SPIKE_LATENCY_ITERATIONS).
+// Ese número NO representa Vercel → Supabase en la misma región (eso es E3).
+const ITERATIONS = Number(process.env.SPIKE_LATENCY_ITERATIONS ?? "400");
+const WARMUP = Math.max(5, Math.floor(ITERATIONS / 10));
 
 type Stats = { p50: number; p95: number; mean: number; n: number };
 
