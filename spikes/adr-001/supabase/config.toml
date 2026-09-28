@@ -1,0 +1,62 @@
+# Supabase local para el spike ADR-001 (entorno E1). No es la configuración
+# del producto: vive aislada en spikes/adr-001 y solo la usa el workflow
+# .github/workflows/spike-adr-001.yml (`supabase start --workdir spikes/adr-001`).
+#
+# Las migraciones NO las aplica la CLI: el experimento las aplica con
+# drizzle-kit usando la credencial de migración (`postgres`).
+
+project_id = "porandu-adr-001"
+
+[api]
+enabled = true
+port = 54321
+# Hipótesis D3: `public` NO está expuesto en la Data API.
+# `spike_exposed` es un schema de control negativo que crea el harness de tests
+# para demostrar que el test detecta una Data API expuesta.
+schemas = ["graphql_public", "spike_exposed"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.pooler]
+# Supavisor local en modo transacción: equivalente local del pooler 6543.
+enabled = true
+port = 54329
+pool_mode = "transaction"
+# Pool chico a propósito: obliga a que muchas conexiones de cliente compartan
+# pocos backends de Postgres (prueba de fuga de claims/rol, P3).
+default_pool_size = 5
+max_client_conn = 100
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[inbucket]
+enabled = false
+
+[storage]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+jwt_expiry = 3600
+# Hipótesis D8: sin signup público; los usuarios se crean con la Admin API.
+enable_signup = false
+
+[auth.email]
+enable_signup = false
+enable_confirmations = false
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
