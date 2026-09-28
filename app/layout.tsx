@@ -1,14 +1,28 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter",
+});
+
 export const metadata: Metadata = {
-  title: "Porandú Autos",
+  title: {
+    default: "Porandú Autos",
+    template: "%s · Porandú Autos",
+  },
+};
+
+export const viewport: Viewport = {
+  colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="es-PY" className="h-full antialiased">
-      <body className="flex min-h-full flex-col">{children}</body>
+    <html lang="es-PY" className={`${inter.variable} h-full antialiased`}>
+      <body className="min-h-full">{children}</body>
     </html>
   );
 }

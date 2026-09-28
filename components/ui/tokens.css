@@ -1,0 +1,128 @@
+/*
+ * Porandú Autos — design tokens.
+ *
+ * Única fuente de color, radio, espaciado, sombra y tipografía de la UI.
+ * Cada token de `@theme` genera su utilidad de Tailwind (p. ej.
+ * `--color-surface-1` → `bg-surface-1`, `--shadow-glow-accent` →
+ * `shadow-glow-accent`) y queda disponible como variable CSS.
+ *
+ * La paleta por defecto de Tailwind se elimina (`--color-*: initial`) para que
+ * los componentes solo puedan usar colores definidos acá.
+ *
+ * Estética: dark premium, carbón/grafito, glassmorphism moderado, acento
+ * esmeralda. Los pares de texto/fondo cumplen WCAG AA (≥ 4.5:1).
+ */
+
+@theme static {
+  --color-*: initial;
+
+  /* Backgrounds: capa más profunda de la app. */
+  --color-bg-canvas: #090b0d;
+  --color-bg-subtle: #0d1013;
+  /* Resplandor esmeralda muy tenue del canvas; da profundidad al glass. */
+  --color-bg-glow: rgb(16 185 129 / 0.05);
+
+  /* Surfaces: grafito, de menor a mayor elevación. */
+  --color-surface-1: #121519;
+  --color-surface-2: #181c21;
+  --color-surface-3: #1f242a;
+  /* Glass: superficie translúcida; se usa junto a `backdrop-blur-glass`. */
+  --color-surface-glass: rgb(18 21 25 / 0.72);
+
+  /* Borders. */
+  --color-border-subtle: rgb(255 255 255 / 0.06);
+  --color-border-default: rgb(255 255 255 / 0.1);
+  --color-border-strong: rgb(255 255 255 / 0.16);
+
+  /* Text. */
+  --color-text-primary: #f2f4f5;
+  --color-text-secondary: #b6bec6;
+  --color-text-muted: #8a939c;
+
+  /* Accent: esmeralda Porandú. */
+  --color-accent: #10b981;
+  --color-accent-strong: #34d399;
+  --color-accent-soft: rgb(16 185 129 / 0.12);
+  --color-accent-border: rgb(52 211 153 / 0.32);
+  --color-accent-contrast: #03140d;
+
+  /* Estados. `*-soft` para fondos, `*-border` para contornos. */
+  --color-success: #4ade80;
+  --color-success-soft: rgb(74 222 128 / 0.12);
+  --color-success-border: rgb(74 222 128 / 0.32);
+  --color-warning: #f5b544;
+  --color-warning-soft: rgb(245 181 68 / 0.12);
+  --color-warning-border: rgb(245 181 68 / 0.32);
+  --color-danger: #f27070;
+  --color-danger-soft: rgb(242 112 112 / 0.12);
+  --color-danger-border: rgb(242 112 112 / 0.32);
+
+  /* Foco accesible. */
+  --color-focus-ring: #34d399;
+
+  /* Radius. */
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+
+  /*
+   * Spacing. `--spacing` es la unidad base de Tailwind (grilla de 4 px).
+   * Los tokens nombrados definen medidas de layout del shell.
+   */
+  --spacing: 0.25rem;
+  --spacing-nav-rail: 6.5rem;
+  --spacing-gutter: 2rem;
+  --spacing-section: 1.5rem;
+
+  /* Shadows y glow. */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 16px 40px -12px rgb(0 0 0 / 0.6);
+  --shadow-glass:
+    inset 0 1px 0 rgb(255 255 255 / 0.05), 0 8px 32px -12px rgb(0 0 0 / 0.6);
+  --shadow-glow-accent: 0 0 12px rgb(16 185 129 / 0.45);
+
+  /* Blur para glassmorphism moderado. */
+  --blur-glass: 16px;
+
+  /* Typography. `--font-inter` lo define next/font en el root layout. */
+  --font-sans:
+    var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --text-display: 2rem;
+  --text-display--line-height: 2.5rem;
+  --text-display--letter-spacing: -0.02em;
+  --text-display--font-weight: 600;
+
+  --text-title: 1.5rem;
+  --text-title--line-height: 2rem;
+  --text-title--letter-spacing: -0.015em;
+  --text-title--font-weight: 600;
+
+  --text-heading: 1.125rem;
+  --text-heading--line-height: 1.625rem;
+  --text-heading--letter-spacing: -0.01em;
+  --text-heading--font-weight: 600;
+
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.375rem;
+
+  --text-label: 0.75rem;
+  --text-label--line-height: 1rem;
+  --text-label--font-weight: 500;
+
+  --text-caption: 0.6875rem;
+  --text-caption--line-height: 0.875rem;
+  --text-caption--letter-spacing: 0.01em;
+  --text-caption--font-weight: 500;
+
+  /* Motion: transiciones cortas, sin animaciones complejas. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}

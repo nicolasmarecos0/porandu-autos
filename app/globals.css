@@ -1,1 +1,33 @@
 @import "tailwindcss";
+@import "../components/ui/tokens.css";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-bg-canvas);
+    background-image:
+      radial-gradient(
+        60rem 40rem at 0% 0%,
+        var(--color-bg-glow),
+        transparent 70%
+      ),
+      linear-gradient(
+        180deg,
+        var(--color-bg-subtle),
+        var(--color-bg-canvas) 40rem
+      );
+    background-attachment: fixed;
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+  }
+
+  ::selection {
+    background-color: var(--color-accent-soft);
+    color: var(--color-text-primary);
+  }
+}
