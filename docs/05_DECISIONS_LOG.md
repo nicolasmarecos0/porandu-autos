@@ -30,6 +30,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-014 | Gobernanza de Design Skills | Aceptada | 2026-09-28 |
 | DEC-015 | Opportunities Visual Architecture | Aceptada | 2026-09-28 |
 | DEC-016 | Loaders de datos fuera de `domains/` | Aceptada | 2026-09-28 |
+| DEC-017 | Opportunities Surface Boundaries | Aceptada | 2026-09-28 |
 | ADR-001 | Implementación de tenant isolation | Aceptada en principio · implementación en validación | 2026-09-21 |
 
 ---
@@ -165,6 +166,41 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - En Hito 1 la carga de datos pasará a la capa de datos correspondiente y deberá aplicar el aislamiento multi-tenant aprobado (`withTenant` o el mecanismo vigente entonces).
 - **Supersede:** las partes de `CLAUDE.md` §3 y de la Build Baseline B1 §7 que indicaban loaders dentro de `domains/*/queries.ts`.
 - **Consecuencias:** `CLAUDE.md` §3 se alinea con esta decisión. La Build Baseline no se reescribe: esta decisión la supersede en ese punto.
+
+## DEC-017 — Opportunities Surface Boundaries
+- **Estado:** Aceptada · 2026-09-28
+- **Decisión:** `/opportunities` queda definido como la cola operativa y superficie compacta de inteligencia comercial de Porandú Autos.
+  - Su responsabilidad es responder: "¿A quién atiendo ahora, por qué y qué hago?"
+  - Puede contener:
+    - selección y priorización de oportunidades;
+    - identidad resumida del prospecto;
+    - Porandú Score;
+    - Intent;
+    - Vehicle Fit;
+    - Deal Readiness;
+    - recencia;
+    - Next Best Action;
+    - Why Now / señales;
+    - contexto resumido de vehículo buscado;
+    - Top Match;
+    - alternativa;
+    - trade-in.
+  - Why Now y Next Best Action permanecen en `/opportunities` para mantener la superficie rápida y operativa.
+  - `/opportunities/[id]`, todavía no construido, permanece dentro del alcance de B1, pero cambia su responsabilidad. No debe duplicar esta superficie: no repite la cola, los cuatro scores, Why Now, Next Best Action ni Vehicle Rail como experiencia principal. Será un deep workspace reservado para información y acciones de profundidad, como:
+    - conversación completa;
+    - Porandú Memory;
+    - qualification detallada;
+    - historial y trazabilidad;
+    - notas;
+    - Talking Points (Mencionar / Validar / Evitar);
+    - contexto completo de trade-in;
+    - matches ampliados;
+    - Offer Builder;
+    - acciones comerciales profundas.
+  - Action Cockpit mantiene una responsabilidad distinta y transversal: "¿Qué necesita atención en todo el negocio ahora mismo?" Puede priorizar eventos provenientes de Opportunities, Conversations, Calendar, Recovery, Stock y otras áreas, pero no debe replicar la experiencia completa de `/opportunities`.
+- **Aclara:** la Build Baseline B1 §1, §3.2, §6 y §8 en lo referido a Opportunity Workspace, Intelligence Workspace y Vehicle Rail, y DEC-015 respecto de `/opportunities/[id]`.
+- **Consecuencias:** la pantalla Opportunities construida bajo DEC-015 absorbió parte del alcance originalmente previsto para Opportunity Workspace / Intelligence Workspace / Vehicle Rail. Los futuros módulos deben reutilizar esas capacidades y evitar duplicación.
+  - La Build Baseline, el Master Context y el Visual Blueprint no se reescriben: DEC-017 prevalece sobre ellos en estos puntos (DEC-002).
 
 ---
 
