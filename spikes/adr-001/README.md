@@ -24,14 +24,16 @@ no tiene una Data API lateral hacia las tablas de la aplicación.
 | Entorno | Qué es | Cuenta como evidencia |
 |---|---|---|
 | E0 | PostgreSQL local + shim mínimo de Supabase (`e0/`) | **No.** Solo sirve para iterar el harness sin Docker |
-| **E1** | Supabase local real (CLI + Docker) en GitHub Actions | **Sí** |
-| **E2** | Proyecto Supabase de staging (`sa-east-1`) | **Sí**, cuando se ejecute. Preparado en `.github/workflows/spike-adr-001-e2.yml`; todavía no ejecutado |
-| E3 | Preview de Vercel | No ejecutado |
+| **E1** | Supabase local real (CLI + Docker) en GitHub Actions | **Sí.** Ejecutado (corrida de referencia: [run 36493339590](https://github.com/nicolasmarecos0/porandu-autos/actions/runs/36493339590)) |
+| **E2** | Proyecto Supabase de staging (`sa-east-1`) | **Sí.** Ejecutado en staging `sa-east-1` ([run 36590229247](https://github.com/nicolasmarecos0/porandu-autos/actions/runs/36590229247)): tenant isolation validado en cloud |
+| E3 | Preview de Vercel | Pendiente, solo para latencia, pool y serverless |
+
+Resultados por criterio, hallazgos y recomendación: [`RESULTS.md`](RESULTS.md).
 
 ## Estructura
 
 ```
-RESULTS.md                 resultados de E1 por criterio, hallazgos y preguntas para E2/E3
+RESULTS.md                 resultados de E1 y E2 por criterio, hallazgos, recomendación y pendientes de E3
 supabase/config.toml       Supabase local de E1: public NO expuesto (ni en extra_search_path), pooler en modo transacción, signup off
 supabase/migrations/       solo crea el schema vacío del control positivo (PostgREST lo exige al arrancar)
 drizzle.config.ts          Único lugar que lee la credencial de migración (SPIKE_MIGRATION_URL)
@@ -105,7 +107,9 @@ El global setup no es idempotente: cada corrida necesita una base recién creada
 `.github/workflows/spike-adr-001-e2.yml`. Requiere 5 Repository secrets:
 `STAGING_SUPABASE_URL`, `STAGING_PUBLISHABLE_KEY`, `STAGING_SECRET_KEY`,
 `STAGING_DB_PASSWORD` y `STAGING_SESSION_POOLER_URL` (este último tal como lo
-muestra Supabase, con `[YOUR-PASSWORD]` sin reemplazar).
+muestra Supabase, con `[YOUR-PASSWORD]` sin reemplazar). La corrida de E2 ya
+ejecutada usó la rama temporal `spike/adr-001-e2-run`, que solo cambia este
+disparo por un push a esa rama, porque el entorno de Claude Code no puede pushear tags.
 
 Orden de provisioning, sin que nadie arme connection strings:
 
