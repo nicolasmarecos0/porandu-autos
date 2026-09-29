@@ -33,7 +33,7 @@ Trabajás sobre una baseline ya definida. **No es una fase de ideación.** Tu ro
   - Toda query tenant-scoped pasa por el mecanismo aprobado en ADR-001.
   - Nunca confiar en un `organization_id` enviado por el cliente sin validarlo contra la membership.
   - Toda tabla con `organization_id` tiene RLS habilitado.
-  - Mientras ADR-001 esté "en validación", no replicar el patrón fuera del spike.
+  - ADR-001 está aceptada (`docs/adr/ADR-001-tenant-isolation.md`). Sus reglas obligatorias (§3) aplican a todo código de runtime, migración y privilegios.
 - **Secretos:** jamás en código, en commits ni en el bundle de cliente. `SUPABASE_SECRET_KEY` y `DATABASE_URL` son server-only (usar `import "server-only"`).
 - **Proveedores externos** (IA, WhatsApp): siempre detrás de un servicio interno. El dominio no los conoce.
 - **Dependencias:** solo las de DEC-009 más las que la tarea justifique. Toda dependencia nueva se justifica en el resumen.
