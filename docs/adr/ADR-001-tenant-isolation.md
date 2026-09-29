@@ -4,7 +4,7 @@
 - **Principio:** DEC-006 (aceptada el 2026-09-21). Este ADR define su implementación.
 - **Autoridad:** nivel 2 según DEC-002, registrada en el [Decisions Log](../05_DECISIONS_LOG.md#adr-001--tenant-isolation-y-saas-foundation). Prevalece sobre la Build Baseline, `CLAUDE.md`, el Master Context y los blueprints.
 - **Evidencia:** entornos E1 y E2 del spike de ADR-001, documentados en [`spikes/adr-001/RESULTS.md`](https://github.com/nicolasmarecos0/porandu-autos/blob/318f33af1fd3210e35ddcd74617adbad4623c0a1/spikes/adr-001/RESULTS.md) (rama `spike/h0-saas-foundation`, commit `318f33a`). El spike es experimental: su código, workflows, tests y scripts no forman parte del producto.
-- **Pendiente:** E3, solo para los puntos operativos de §7. E3 no vuelve a validar el aislamiento.
+- **Pendiente:** E3, solo para los puntos operativos de §7. E3 no vuelve a validar el aislamiento. Además, dos follow-ups no bloqueantes (§7).
 
 ---
 
@@ -29,7 +29,7 @@ La entrada ADR-001 del 2026-09-21 dejó la implementación como hipótesis, a va
 | **Contexto JWT verificado** | Los claims se obtienen de un access token verificado por Supabase Auth (firma y expiración) y se inyectan como `request.jwt.claims`. Nunca provienen de datos del cliente sin verificar. RLS los lee a través de `auth.uid()`. |
 | **`SET LOCAL ROLE authenticated`** | Dentro de la transacción, `withTenant` asume `authenticated` con alcance local. El rol está fijo en el código; no se toma del token. |
 | **`set_config(..., true)`** | Claims y rol se fijan únicamente con alcance de transacción. Al COMMIT, ROLLBACK o error, la conexión vuelve a ser `app_runtime` sin claims. |
-| **RLS** | Es la barrera de aislamiento. Las policies restringen cada fila a las organizaciones donde el usuario de la request tiene membership activa. |
+| **RLS** | Es la barrera de aislamiento. Las policies restringen cada fila a las organizaciones donde el usuario de la request tiene membership activa. El patrón de referencia aprobado para H0 es `organization_id IN (SELECT private.user_org_ids())` (§4), porque es el mecanismo que validaron E1 y E2. |
 | **Filtros explícitos por `organization_id`** | Defense in depth en la capa de aplicación: las queries filtran por la organización del contexto validado y las escrituras toman `organization_id` de ese contexto, nunca del input del cliente. No reemplazan a RLS. |
 | **Supavisor en modo transacción** | El runtime se conecta por el pooler Supavisor en modo transacción (puerto 6543, usuario `app_runtime.<project_ref>`), sin prepared statements con nombre. |
 
@@ -45,7 +45,7 @@ La entrada ADR-001 del 2026-09-21 dejó la implementación como hipótesis, a va
 6. **Las migraciones y los privilegios preservan el aislamiento multi-tenant.** Como mínimo, mantienen las invariantes de catálogo que E1 y E2 verificaron (C3):
    - toda tabla de `public` tiene RLS habilitado;
    - todo privilegio de `authenticated` sobre `public` está cubierto por una policy;
-   - toda tabla con `organization_id` lo declara `NOT NULL`, con FK a `organizations` e índice que empieza por `organization_id`;
+   - toda tabla tenant-scoped (propiedad de una organización, identificada por su columna `organization_id`) declara `organization_id` `NOT NULL`, con FK a `organizations` e índice que empieza por `organization_id`. No aplica a tablas que no pertenecen a una organización, como `organizations` (la raíz del tenant) o `profiles` (propia de cada usuario);
    - `app_runtime` no es superuser, no tiene `BYPASSRLS` ni herencia y no tiene privilegios directos;
    - ni `anon` ni `app_runtime` tienen privilegios sobre las tablas de `public`;
    - no hay funciones `SECURITY DEFINER` en `public`;
@@ -81,7 +81,7 @@ Así se implementó cada pieza en E1 y E2. Es la referencia para H0, no código 
   - El planner la evalúa una vez por statement, no una vez por fila (S-04).
   - Una policy de escritura usa la misma condición en `USING` y `WITH CHECK`: mover una fila a otra organización se rechaza.
   - Sin una necesidad de escritura no hay grants ni policies de escritura (default deny).
-  - La hipótesis original nombraba `is_member(organization_id)`. Esa forma no se probó.
+  - `private.user_org_ids()` reemplaza a `is_member(organization_id)`, la hipótesis previa de la entrada del 2026-09-21 y de la Build Baseline §7, en todo lo que se contradigan. `is_member()` no se probó.
 - **Conexión de runtime**
   - postgres-js con `prepare: false`, porque Supavisor en modo transacción no soporta prepared statements con nombre.
 - **Migraciones**
@@ -117,10 +117,10 @@ En E2, el commit `8c0b967` (rama temporal `spike/adr-001-e2-run`) es `0c1b441` c
 **Hallazgos que fundamentan las reglas**
 - **Hallazgo 1 · GraphQL como Data API lateral** (reglas 3 y 4). En E1, con `pg_graphql` habilitado y el `extra_search_path` por defecto, un usuario leyó su organización por `/graphql/v1` aunque `public` no estaba expuesto. RLS contuvo el cruce de tenant, pero el canal saltea las reglas de la aplicación. Sacar `public` de `extra_search_path` lo cierra.
 - **Hallazgo 2 · Supavisor no limpia el estado de sesión** (regla 2). En el pooler local, un `set_config(..., false)` se vio en 30 de 30 consultas de otros clientes. El control negativo corrió solo contra loopback, nunca contra staging.
-- **Hallazgo 4 · Con la Data API deshabilitada, los endpoints responden `503 PGRST002`.** `/rest/v1` y `/graphql/v1` no desaparecen. C8 prueba que no salen datos, pero no distingue "deshabilitada" de "caída", y la causa no está confirmada. El aislamiento no depende de ese estado: lo sostienen los grants y RLS.
+- **Hallazgo 4 · Con la Data API deshabilitada, los endpoints responden `503 PGRST002`.** `/rest/v1` y `/graphql/v1` no desaparecen. C8 prueba que no salen datos, pero no distingue "deshabilitada" de "caída", y la causa no está confirmada. El aislamiento no depende de ese estado: lo sostienen los grants y RLS. Confirmar la causa es un follow-up no bloqueante (§7).
 - **Hallazgo 5 · `pg_graphql` no está instalado en staging** (regla 4). La vía del Hallazgo 1 reaparece si se habilita `pg_graphql` o si, al reactivar la Data API, se vuelve a exponer `public` (incluido `extra_search_path`).
 
-**No ejecutado en E1/E2:** A-14b (token vencido con firma válida). Con ES256 no se puede fabricar ese token.
+**No ejecutado en E1/E2:** A-14b (token vencido con firma válida). Con ES256 no se puede fabricar ese token. Queda como follow-up no bloqueante (§7).
 
 ---
 
@@ -130,7 +130,7 @@ Hipótesis de la entrada del 2026-09-21:
 
 | # | Hipótesis | Resultado |
 |---|---|---|
-| 1 | RLS en toda tabla con `organization_id`, con policies basadas en `is_member(organization_id)` sobre `auth.uid()` y `memberships` | **Validada con otra forma de policy.** RLS en toda tabla de `public` (C3). Las policies validadas usan `private.user_org_ids()` (§4); `is_member()` no se probó. |
+| 1 | RLS en toda tabla con `organization_id`, con policies basadas en `is_member(organization_id)` sobre `auth.uid()` y `memberships` | **Validada con otra forma de policy.** RLS en toda tabla de `public` (C3). Las policies validadas usan `private.user_org_ids()` (§4); `is_member()` no se probó y queda reemplazada. |
 | 2 | `withTenant(ctx, fn)`: transacción con `set local role authenticated`, claims en `request.jwt.claims` y organización ya validada contra la membership | **Validada** (C1, C2, C6). Claims y rol se fijan con `set_config(..., true)`. |
 | 3 | Cliente de DB server-only, no importable fuera de `db/` (ESLint `no-restricted-imports`) | **No cubierta por el spike.** Sigue como regla de `CLAUDE.md` §3 y de la Build Baseline §7 (commit 7). |
 | 4 | Service role reservado para webhooks y jobs futuros, en un módulo separado y con `organization_id` explícito | **No cubierta por el spike.** Sigue como previsión de la Build Baseline §7; este ADR no la aprueba. |
@@ -147,9 +147,9 @@ Criterios de aceptación:
 
 ---
 
-## 7. Pendiente: E3
+## 7. Pendientes
 
-E3 (preview de Vercel contra Supabase en la misma región) queda pendiente únicamente para:
+**E3** (preview de Vercel contra Supabase en la misma región) queda pendiente únicamente para:
 
 1. **Latencia real** Vercel → Supabase en la misma región, incluido el overhead de `withTenant`.
 2. **Pool y serverless:** tamaño de pool, límites de conexión y comportamiento de las conexiones en las funciones de Vercel.
@@ -158,6 +158,11 @@ E3 (preview de Vercel contra Supabase en la misma región) queda pendiente únic
 5. **Credencial de `app_runtime`:** dónde vive y cómo se rota. En el spike fue efímera por corrida y quedó anulada al terminar.
 
 E3 no vuelve a validar el aislamiento, que ya validaron E1 y E2. Si un resultado de E3 obliga a cambiar alguna pieza de §2 o alguna regla de §3, se registra en este ADR y se consulta al fundador antes de cambiarla.
+
+**Follow-ups no bloqueantes.** No son requisito para aprobar este ADR ni forman parte de E3:
+
+1. **Token vencido con firma válida (A-14b).** No se pudo ejecutar en E1/E2 porque con ES256 no se puede fabricar ese token. El rechazo de un token adulterado sí se probó (A-14a).
+2. **Causa del `503 PGRST002`** con la Data API deshabilitada (Hallazgo 4). No afecta el aislamiento, que sostienen los grants y RLS.
 
 ---
 
