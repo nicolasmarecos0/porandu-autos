@@ -15,7 +15,9 @@
   },
   "dependencies": {
     "@radix-ui/react-tooltip": "^1.2.16",
+    "drizzle-orm": "^0.45.3",
     "next": "16.3.6",
+    "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -24,6 +26,7 @@
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
     "eslint-config-prettier": "^10.1.8",

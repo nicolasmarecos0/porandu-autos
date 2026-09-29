@@ -57,7 +57,7 @@ function parseUrl(value: string): URL | null {
  * Supavisor autentica como `<rol>.<project_ref>`; la conexión directa, como
  * `<rol>`. En ambos casos el rol es lo anterior al primer punto.
  */
-function databaseRole(url: URL): string {
+export function databaseRole(url: URL): string {
   return decodeURIComponent(url.username).split(".")[0] ?? "";
 }
 
