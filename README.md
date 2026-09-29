@@ -79,7 +79,8 @@ Ver `.env.example`. **Nunca commitear `.env*` con valores reales.**
 | `pnpm typecheck` | `tsc --noEmit` |
 | `pnpm lint` | ESLint |
 | `pnpm format` / `pnpm format:check` | Prettier |
-| `pnpm test` | Vitest (unit e integración) |
+| `pnpm test` | Vitest (unit e integración), una sola corrida |
+| `pnpm test:watch` | Vitest en modo watch |
 | `pnpm test:e2e` | Playwright |
 | `pnpm db:generate` | Genera una migración desde el schema de Drizzle |
 | `pnpm db:migrate` | Aplica las migraciones |
