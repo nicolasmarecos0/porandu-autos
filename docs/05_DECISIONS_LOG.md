@@ -31,7 +31,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-015 | Opportunities Visual Architecture | Aceptada | 2026-09-28 |
 | DEC-016 | Loaders de datos fuera de `domains/` | Aceptada | 2026-09-28 |
 | DEC-017 | Opportunities Surface Boundaries | Aceptada | 2026-09-28 |
-| ADR-001 | Implementación de tenant isolation | Aceptada en principio · implementación en validación | 2026-09-21 |
+| ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
 
@@ -204,28 +204,33 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 
 ---
 
-## ADR-001 — Implementación de tenant isolation
-- **Estado:** principio aceptado (DEC-006). Implementación en validación.
-- **Fecha:** 2026-09-21
-
-### Contexto
-Drizzle se conecta directo a Postgres. Con credenciales privilegiadas, esa conexión puede eludir RLS. Se necesita que el aislamiento no dependa solo de la disciplina del código de aplicación.
-
-### Hipótesis a validar (spike, commit 6 de B1)
-1. RLS habilitado en toda tabla con `organization_id`. Las policies usan la función `is_member(organization_id)`, basada en `auth.uid()` y `memberships`.
-2. Toda query de aplicación pasa por `withTenant(ctx, fn)`. Esta función abre una transacción que:
-   - ejecuta `set local role authenticated`;
-   - inyecta los claims JWT de la sesión (`request.jwt.claims`) para que RLS aplique a las queries de Drizzle;
-   - recibe una organización activa ya validada contra la membership.
-3. El cliente de DB crudo es server-only y no se importa fuera de `db/`. Esto se asegura con `no-restricted-imports` en ESLint.
-4. El acceso con service role queda reservado a webhooks y jobs futuros, en un módulo separado y con `organization_id` explícito.
-
-### Criterios para aceptar la implementación
-- Con dos organizaciones y dos usuarios, A no puede leer, insertar, actualizar ni borrar datos de B a través de `withTenant`. Probado contra Postgres real (Supabase local).
-- Una query ejecutada sin contexto de tenant falla o devuelve cero filas. Nunca devuelve datos de otro tenant.
-- Un test verifica que toda tabla con `organization_id` tenga RLS habilitado.
-- El pooler y el entorno de Vercel son compatibles con transacciones que usan `set local`.
-- El overhead de latencia es aceptable para el uso de P1.
-
-### Resultado
-_Pendiente. Se completa al cerrar el spike. Si la hipótesis falla, se documenta aquí la alternativa elegida y se consulta al fundador antes de congelarla._
+## ADR-001 — Tenant isolation y SaaS foundation
+- **Estado:** Aceptada · 2026-09-29. El principio se aceptó el 2026-09-21 (DEC-006); la implementación estuvo en validación hasta el cierre de E1 y E2.
+- **Documento:** [`docs/adr/ADR-001-tenant-isolation.md`](adr/ADR-001-tenant-isolation.md), con la forma validada, la evidencia completa y el resultado frente a la hipótesis original.
+- **Decisión:** arquitectura aprobada para tenant isolation:
+  - PostgreSQL en Supabase, con Drizzle (`drizzle-orm` y `drizzle-kit`, driver `postgres`).
+  - Rol de runtime `app_runtime`: `LOGIN NOINHERIT NOBYPASSRLS`, sin privilegios directos, miembro de `authenticated` `WITH INHERIT FALSE, SET TRUE`.
+  - Credencial `postgres` separada y exclusiva para migraciones.
+  - `withTenant()` como boundary transaccional y única puerta de acceso a datos tenant-scoped, con una organización ya validada contra las memberships activas.
+  - Contexto JWT verificado por Supabase Auth, inyectado como `request.jwt.claims`.
+  - `SET LOCAL ROLE authenticated` dentro de la transacción.
+  - `set_config(..., true)`: claims y rol solo con alcance de transacción.
+  - RLS como barrera de aislamiento.
+  - Filtros explícitos por `organization_id` en la aplicación como defense in depth.
+  - Supavisor en modo transacción para el runtime.
+- **Reglas obligatorias:**
+  - El runtime nunca usa `postgres`.
+  - El runtime nunca usa `SET` de sesión ni `set_config(..., false)`.
+  - La Data API permanece deshabilitada en H0.
+  - `pg_graphql` no se habilita en H0.
+  - Ninguna tabla de aplicación en `public` queda sin RLS.
+  - Las migraciones y los privilegios preservan el aislamiento multi-tenant (invariantes de catálogo en el documento, §3).
+- **Evidencia:** E1 (Supabase local, [run 36493339590](https://github.com/nicolasmarecos0/porandu-autos/actions/runs/36493339590)) y E2 (staging `sa-east-1`, [run 36590229247](https://github.com/nicolasmarecos0/porandu-autos/actions/runs/36590229247)) validaron el aislamiento. Ningún criterio de aislamiento falló; los únicos fail de E2 son la medición de latencia, que no tiene umbral.
+- **Pendiente (E3):** únicamente latencia real Vercel → Supabase en la misma región, pool y serverless, JWKS (caché y rotación), TLS `verify-full` y manejo y rotación de la credencial de `app_runtime`. E3 no vuelve a validar el aislamiento. Si un resultado de E3 obliga a cambiar la decisión, se registra en el documento y se consulta al fundador.
+- **Follow-ups no bloqueantes:** el test de token vencido con firma válida (A-14b) y la causa del `503 PGRST002` con la Data API deshabilitada. No son requisito para aprobar ADR-001 ni forman parte de E3.
+- **Supersede:** la hipótesis y los criterios de la entrada ADR-001 del 2026-09-21 (su resultado queda en el documento, §6) y, de la Build Baseline B1 §7 ("Aislamiento de tenant"), los puntos 1 y 2 en lo que difieren. En particular, `is_member()` queda reemplazada por `private.user_org_ids()`, el patrón de referencia aprobado para H0 porque es el mecanismo validado por E1 y E2.
+- **Aclara:** cierra el gate del commit 6 de la Build Baseline §9 y el punto abierto de §10. Los puntos 3 a 5 de la Build Baseline §7 siguen vigentes. El spike no cubrió el guardrail de import de `db/client` (3) ni el service role (4), y este ADR no los aprueba. Los tests obligatorios (5) se escriben en H0.
+- **Consecuencias:**
+  - H0 implementa esta arquitectura en `db/`. El código del spike (`spike/h0-saas-foundation`) es experimental y no se trae a `main`.
+  - `CLAUDE.md` §3 se alinea con esta decisión. La Build Baseline no se reescribe: ADR-001 prevalece sobre ella en estos puntos (DEC-002).
+  - Staging conserva el schema que dejó E2. Antes de las migraciones reales de H0 se resetea o recibe una migración de limpieza; la elección queda abierta.
