@@ -52,8 +52,8 @@ pnpm install
 pnpm sb:start          # levanta Supabase local (Docker)
 pnpm sb:status         # muestra URL y keys locales
 cp .env.example .env.local
-# completar .env.local con los valores de sb:status
-pnpm db:migrate
+# completar .env.local (ver "Variables de entorno")
+pnpm db:migrate        # usa MIGRATION_DATABASE_URL (rol postgres)
 pnpm dev               # http://localhost:3000
 ```
 
@@ -61,14 +61,22 @@ Para detener Supabase local: `pnpm sb:stop`.
 
 ## Variables de entorno
 
-Ver `.env.example`. **Nunca commitear `.env*` con valores reales.**
+Ver `.env.example`, que solo contiene placeholders. **Nunca commitear `.env*` con valores reales**: `.gitignore` ignora todo `.env*` salvo `.env.example`.
 
-| Variable | Uso | Expuesta al cliente |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | URL del proyecto Supabase | Sí |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Key pública de Supabase | Sí |
-| `SUPABASE_SECRET_KEY` | Key privilegiada, solo en servidor (sin uso en UI) | **No** |
-| `DATABASE_URL` | Conexión Postgres para Drizzle | **No** |
+| Variable | Uso | Rol DB | Expuesta al browser |
+|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | URL del proyecto Supabase | — | Sí |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Publishable key (`sb_publishable_…`) | — | Sí |
+| `RUNTIME_DATABASE_URL` | Conexión Postgres de la aplicación (runtime) | `app_runtime` | **No**, server-only |
+| `MIGRATION_DATABASE_URL` | Conexión Postgres de `drizzle-kit` (migraciones) | `postgres` | **No**, solo tooling |
+
+Separación runtime / migraciones (ADR-001):
+
+- El runtime lee **solo** `RUNTIME_DATABASE_URL`, a través de `lib/env.server.ts` (`import "server-only"`). La validación rechaza cualquier rol distinto de `app_runtime`. En staging apunta a Supavisor en modo transacción (puerto 6543, usuario `app_runtime.<project_ref>`).
+- `MIGRATION_DATABASE_URL` la usa únicamente `drizzle-kit`. En staging apunta a Supavisor en modo sesión (puerto 5432, usuario `postgres.<project_ref>`). ESLint prohíbe leerla desde código de la aplicación.
+- No existe un `DATABASE_URL` genérico: ninguna herramienta puede tomar la credencial equivocada por defecto.
+- Las variables públicas se leen con `lib/env.public.ts`. Solo lo que lleva prefijo `NEXT_PUBLIC_` llega al browser; una variable server-only nunca lleva ese prefijo.
+- En H0 no hay secret key ni service role de Supabase aprobados (ADR-001 §8), así que no forman parte del contrato.
 
 ## Scripts
 

@@ -34,7 +34,7 @@ Trabajás sobre una baseline ya definida. **No es una fase de ideación.** Tu ro
   - Nunca confiar en un `organization_id` enviado por el cliente sin validarlo contra la membership.
   - Toda tabla con `organization_id` tiene RLS habilitado.
   - ADR-001 está aceptada (`docs/adr/ADR-001-tenant-isolation.md`). Sus reglas obligatorias (§3) aplican a todo código de runtime, migración y privilegios.
-- **Secretos:** jamás en código, en commits ni en el bundle de cliente. `SUPABASE_SECRET_KEY` y `DATABASE_URL` son server-only (usar `import "server-only"`).
+- **Secretos:** jamás en código, en commits ni en el bundle de cliente. `RUNTIME_DATABASE_URL` (rol `app_runtime`) y `MIGRATION_DATABASE_URL` (rol `postgres`, solo `drizzle-kit`) son server-only; el runtime lee su entorno vía `lib/env.server.ts` (`import "server-only"`) y nunca `MIGRATION_DATABASE_URL`. No hay secret key ni service role aprobados en H0.
 - **Proveedores externos** (IA, WhatsApp): siempre detrás de un servicio interno. El dominio no los conoce.
 - **Dependencias:** solo las de DEC-009 más las que la tarea justifique. Toda dependencia nueva se justifica en el resumen.
 - **Migraciones:** única fuente en `db/migrations`. No editar migraciones ya aplicadas.

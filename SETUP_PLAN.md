@@ -145,23 +145,14 @@ Playwright se instala en el commit 17, junto con el primer test E2E, para no des
 
 ### Commit 4 · env
 ```bash
-pnpm add zod server-only
-# crear lib/env.ts (validación con Zod; separa variables públicas y server-only)
-# crear .env.example (abajo); verificar que .gitignore cubre .env*.local
+# crear lib/env.ts (validación pura), lib/env.public.ts y lib/env.server.ts (server-only)
+# crear .env.example (solo placeholders); verificar que .gitignore cubre .env*
 git add -A && git commit -m "chore(env): env validation + .env.example"
 ```
 
-Contenido de `.env.example`:
-```bash
-NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
-SUPABASE_SECRET_KEY=
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
-```
+Sin dependencias nuevas: la validación es TypeScript plano y Next resuelve `server-only` internamente. El contrato vigente está en `.env.example` y en el README: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `RUNTIME_DATABASE_URL` (rol `app_runtime`) y `MIGRATION_DATABASE_URL` (rol `postgres`, solo `drizzle-kit`). No hay `DATABASE_URL` genérico ni `SUPABASE_SECRET_KEY` (ADR-001).
 
-Los nombres de las keys se confirman contra la salida de `supabase status` de la versión instalada. Supabase migró de anon/service_role a publishable/secret; si la CLI muestra otra nomenclatura, se ajusta aquí y en el README.
-
-CI necesita valores dummy para las variables públicas en el paso de build, o un flag explícito de skip de validación. Se decide al implementar `lib/env.ts`.
+La validación no corre en build: los módulos de env se invocan cuando se usan, así que CI no necesita valores dummy mientras nada los consuma.
 
 ### Commit 5 · Supabase + Drizzle + schema base
 ```bash
@@ -191,7 +182,7 @@ A partir del commit 6 empieza el **spike de ADR-001**, que es un gate: no se ava
 ### Commit 18 · staging (referencia)
 ```bash
 pnpm dlx vercel@latest link
-pnpm dlx vercel@latest env add   # variables de staging; DATABASE_URL y SECRET_KEY solo server
-DATABASE_URL=<staging> pnpm db:migrate
+pnpm dlx vercel@latest env add   # variables de staging; RUNTIME_DATABASE_URL solo server (Vercel no recibe MIGRATION_DATABASE_URL)
+MIGRATION_DATABASE_URL=<staging> pnpm db:migrate
 pnpm dlx vercel@latest deploy
 ```
