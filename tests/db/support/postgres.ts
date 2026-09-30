@@ -26,6 +26,12 @@ export type TestDatabase = {
   admin: Sql;
   /** Credencial de migración (`postgres`) para la base de prueba. */
   migrationUrl: string;
+  /**
+   * Credencial de runtime (`app_runtime`) para la base de prueba. Fija una
+   * password aleatoria fuera de las migraciones, como en Supabase (ADR-001
+   * §4). Requiere que 0001_tenant_isolation haya creado el rol.
+   */
+  runtimeUrl(): Promise<string>;
 };
 
 export type TestServer = {
@@ -57,8 +63,14 @@ function connect(url: URL, database: string): Sql {
 
 /*
  * Roles de cluster que Supabase trae y de los que depende la migración.
- * `postgres` imita al de Supabase: LOGIN, sin superuser y con BYPASSRLS.
- * La password es aleatoria por corrida y no sale del proceso.
+ * `postgres` imita al de Supabase: LOGIN, sin superuser, con BYPASSRLS y con
+ * ADMIN OPTION sobre `authenticated` (puede otorgarlo a app_runtime, C9 de
+ * ADR-001), sin heredarlo ni asumirlo. La password es aleatoria por corrida
+ * y no sale del proceso.
+ *
+ * `app_runtime` lo crea la migración 0001. Se borra al empezar cada suite
+ * para que cada una lo vea nacer como en un Supabase nuevo: ningún objeto le
+ * otorga privilegios, así que el DROP no depende de las bases de prueba.
  */
 async function prepareCluster(server: Sql): Promise<string> {
   const [cluster] = await server<
@@ -96,6 +108,8 @@ async function prepareCluster(server: Sql): Promise<string> {
       END IF;
     END
     $$;
+    GRANT authenticated TO postgres WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
+    DROP ROLE IF EXISTS app_runtime;
   `);
 
   // Hex: seguro para interpolar (ALTER ROLE no acepta parámetros).
@@ -130,7 +144,24 @@ export async function startTestServer(): Promise<TestServer> {
       migration.password = password;
       migration.pathname = `/${name}`;
 
-      const database = { name, admin, migrationUrl: migration.toString() };
+      const runtimeUrl = async () => {
+        // Hex: seguro para interpolar (ALTER ROLE no acepta parámetros).
+        const runtimePassword = randomBytes(24).toString("hex");
+        await server.unsafe(
+          `ALTER ROLE app_runtime PASSWORD '${runtimePassword}'`,
+        );
+        const runtime = new URL(migration);
+        runtime.username = "app_runtime";
+        runtime.password = runtimePassword;
+        return runtime.toString();
+      };
+
+      const database = {
+        name,
+        admin,
+        migrationUrl: migration.toString(),
+        runtimeUrl,
+      };
       databases.push(database);
       return database;
     },
@@ -181,7 +212,8 @@ export async function inRolledBackTransaction(
   }
 }
 
-export type DatabaseRole = "anon" | "authenticated" | "postgres";
+export type DatabaseRole =
+  "anon" | "authenticated" | "postgres" | "app_runtime";
 
 /*
  * Ejecuta `fn` como `role` dentro de un savepoint. Si falla, el ROLLBACK TO

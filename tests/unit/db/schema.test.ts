@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 
 import { generateDrizzleJson, generateMigration } from "drizzle-kit/api";
 import { is } from "drizzle-orm";
-import { getTableConfig, PgTable } from "drizzle-orm/pg-core";
+import {
+  getTableConfig,
+  PgDialect,
+  PgRole,
+  PgTable,
+} from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
@@ -126,6 +131,54 @@ describe("db/schema", () => {
       hasDefault: false,
       enumValues: ["admin", "seller"],
     });
+  });
+
+  it("cada tabla declara solo una policy de lectura para authenticated (ADR-001 §4)", () => {
+    const dialect = new PgDialect();
+    const declared = tables
+      .flatMap((t) =>
+        t.policies.map((p) => ({
+          table: t.name,
+          name: p.name,
+          as: p.as ?? "permissive",
+          for: p.for,
+          to: [p.to].flat().map((r) => (is(r, PgRole) ? r.name : r)),
+          using: p.using && dialect.sqlToQuery(p.using).sql,
+          withCheck: p.withCheck,
+        })),
+      )
+      .sort((a, b) => a.table.localeCompare(b.table));
+
+    expect(declared).toEqual([
+      {
+        table: "memberships",
+        name: "memberships_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"memberships"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "organizations",
+        name: "organizations_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using: '"organizations"."id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "profiles",
+        name: "profiles_select_own",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using: '"profiles"."id" = (select auth.uid())',
+        withCheck: undefined,
+      },
+    ]);
   });
 
   it("toda tabla tenant-scoped tiene organization_id NOT NULL, FK e índice que empieza por él", () => {

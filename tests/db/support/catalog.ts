@@ -156,20 +156,53 @@ export async function publicDefaultPrivileges(sql: Sql): Promise<string[]> {
 }
 
 /*
- * Foto normalizada de todo lo que una migración puede tocar: schemas,
- * relaciones (con RLS y ACL), columnas, constraints, índices, tipos,
- * funciones, policies y default privileges. Dos fotos iguales = mismo
- * estado de catálogo.
+ * Foto normalizada de todo lo que una migración puede tocar: roles del
+ * cluster y sus memberships, schemas (con owner y ACL), relaciones (con RLS
+ * y ACL), columnas, constraints, índices, tipos, funciones (con seguridad,
+ * volatilidad, config y ACL), policies y default privileges. Dos fotos
+ * iguales = mismo estado de catálogo.
  */
 export async function catalogSnapshot(sql: Sql): Promise<unknown> {
   const [snapshot] = await sql<{ snapshot: unknown }[]>`
     WITH app_schemas AS (
-      SELECT oid, nspname FROM pg_namespace
+      SELECT oid, nspname, nspowner, nspacl FROM pg_namespace
       WHERE NOT starts_with(nspname, 'pg_') AND nspname <> 'information_schema'
+    ),
+    app_roles AS (
+      SELECT * FROM pg_roles WHERE NOT starts_with(rolname, 'pg_')
     )
     SELECT jsonb_build_object(
+      'roles', (
+        SELECT jsonb_agg(jsonb_build_object(
+          'name', rolname,
+          'super', rolsuper,
+          'inherit', rolinherit,
+          'createRole', rolcreaterole,
+          'createDb', rolcreatedb,
+          'login', rolcanlogin,
+          'replication', rolreplication,
+          'bypassRls', rolbypassrls
+        ) ORDER BY rolname)
+        FROM app_roles
+      ),
+      'roleMemberships', (
+        SELECT jsonb_agg(
+          m.member::regrole::text || ' in ' || m.roleid::regrole::text
+            || ' admin=' || m.admin_option
+            || ' inherit=' || m.inherit_option
+            || ' set=' || m.set_option
+          ORDER BY 1
+        )
+        FROM pg_auth_members m
+        WHERE m.member IN (SELECT oid FROM app_roles)
+      ),
       'schemas', (
-        SELECT jsonb_agg(nspname ORDER BY nspname) FROM app_schemas
+        SELECT jsonb_agg(jsonb_build_object(
+          'name', nspname,
+          'owner', nspowner::regrole::text,
+          'acl', (SELECT jsonb_agg(a::text ORDER BY a::text) FROM unnest(nspacl) a)
+        ) ORDER BY nspname)
+        FROM app_schemas
       ),
       'relations', (
         SELECT jsonb_agg(jsonb_build_object(
@@ -219,13 +252,26 @@ export async function catalogSnapshot(sql: Sql): Promise<unknown> {
         WHERE t.typtype IN ('e', 'd', 'c') AND t.typrelid = 0
       ),
       'functions', (
-        SELECT jsonb_agg(p.oid::regprocedure::text || (CASE WHEN p.prosecdef THEN ' SECURITY DEFINER' ELSE '' END)
-          ORDER BY p.oid::regprocedure::text)
+        SELECT jsonb_agg(jsonb_build_object(
+          'function', p.oid::regprocedure::text,
+          'owner', p.proowner::regrole::text,
+          'securityDefiner', p.prosecdef,
+          'volatility', p.provolatile::text,
+          'config', p.proconfig,
+          'acl', (SELECT jsonb_agg(a::text ORDER BY a::text) FROM unnest(p.proacl) a),
+          'body', p.prosrc
+        ) ORDER BY p.oid::regprocedure::text)
         FROM pg_proc p JOIN app_schemas s ON s.oid = p.pronamespace
       ),
       'policies', (
-        SELECT jsonb_agg(schemaname || '.' || tablename || '.' || policyname
-          ORDER BY schemaname, tablename, policyname)
+        SELECT jsonb_agg(jsonb_build_object(
+          'policy', schemaname || '.' || tablename || '.' || policyname,
+          'permissive', permissive,
+          'roles', roles,
+          'cmd', cmd,
+          'using', qual,
+          'withCheck', with_check
+        ) ORDER BY schemaname, tablename, policyname)
         FROM pg_policies
       ),
       'defaultPrivileges', (
@@ -240,4 +286,52 @@ export async function catalogSnapshot(sql: Sql): Promise<unknown> {
     ) AS snapshot
   `;
   return snapshot?.snapshot;
+}
+
+export type Policy = {
+  table: string;
+  name: string;
+  permissive: string;
+  roles: string[];
+  command: string;
+  using: string | null;
+  withCheck: string | null;
+};
+
+/** Policies de public tal como quedaron en el catálogo (deparseadas). */
+export async function policies(sql: Sql): Promise<Policy[]> {
+  return sql<Policy[]>`
+    SELECT
+      tablename AS table,
+      policyname AS name,
+      permissive,
+      roles::text[] AS roles,
+      cmd AS command,
+      qual AS using,
+      with_check AS "withCheck"
+    FROM pg_policies
+    WHERE schemaname = 'public'
+    ORDER BY tablename, policyname
+  `;
+}
+
+/*
+ * Privilegios de `roles` que permiten crear objetos persistentes: CREATE en
+ * la base (schemas) y en los schemas de la aplicación.
+ */
+export async function createPrivileges(
+  sql: Sql,
+  roles: string[],
+): Promise<string[]> {
+  const rows = await sql<{ grant: string }[]>`
+    SELECT r.role || ' CREATE ' || t.target AS grant
+    FROM unnest(${roles}::text[]) AS r(role)
+    CROSS JOIN (VALUES ('database'), ('public'), ('private'), ('drizzle')) AS t(target)
+    WHERE CASE t.target
+      WHEN 'database' THEN has_database_privilege(r.role, current_database(), 'CREATE')
+      ELSE has_schema_privilege(r.role, t.target, 'CREATE')
+    END
+    ORDER BY 1
+  `;
+  return rows.map((r) => r.grant);
 }

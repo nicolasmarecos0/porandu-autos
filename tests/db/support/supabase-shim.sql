@@ -10,6 +10,18 @@ CREATE TABLE auth.users (id uuid PRIMARY KEY);
 GRANT USAGE ON SCHEMA auth TO postgres;
 GRANT REFERENCES ON auth.users TO postgres;
 
+-- auth.uid() tal como la define Supabase Auth: el `sub` de los claims de la
+-- request, o NULL si no hay claims. EXECUTE queda en PUBLIC (default).
+CREATE FUNCTION auth.uid() RETURNS uuid
+LANGUAGE sql STABLE
+AS $$
+  SELECT coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')
+  )::uuid
+$$;
+GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
+
 -- postgres crea tablas en public (y drizzle-kit, su schema `drizzle`).
 GRANT USAGE, CREATE ON SCHEMA public TO postgres;
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;

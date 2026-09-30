@@ -202,10 +202,9 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
     }
   });
 
-  it("anon y authenticated no tienen privilegios sobre las tablas de public", async () => {
-    expect(await tablePrivileges(db.admin, ["anon", "authenticated"])).toEqual(
-      [],
-    );
+  it("anon no tiene privilegios sobre las tablas de public", async () => {
+    // Los de authenticated (solo SELECT) se prueban en tenant-catalog.test.ts.
+    expect(await tablePrivileges(db.admin, ["anon"])).toEqual([]);
   });
 
   it("los objetos nuevos que cree postgres en public no heredan grants para anon ni authenticated", async () => {
@@ -221,17 +220,12 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
         "postgres",
         (sp) => sp`CREATE TABLE public.probe (id int)`,
       );
-      expect(await tablePrivileges(tx, ["anon", "authenticated"])).toEqual([]);
+      expect(
+        (await tablePrivileges(tx, ["anon", "authenticated"])).filter((grant) =>
+          grant.endsWith(" probe"),
+        ),
+      ).toEqual([]);
     });
-  });
-
-  it("todavía no hay policies ni funciones en public", async () => {
-    const [row] = await db.admin<{ policies: number; functions: number }[]>`
-      SELECT
-        (SELECT count(*)::int FROM pg_policies WHERE schemaname = 'public') AS policies,
-        (SELECT count(*)::int FROM pg_proc WHERE pronamespace = 'public'::regnamespace) AS functions
-    `;
-    expect(row).toEqual({ policies: 0, functions: 0 });
   });
 });
 
@@ -360,51 +354,53 @@ describe("constraints con datos", () => {
   });
 });
 
-describe("estado intermedio: RLS sin policies falla cerrado", () => {
+describe("acceso directo por rol, sin withTenant", () => {
   const tables = ["organizations", "profiles", "memberships"];
 
-  it.each(["anon", "authenticated"] as const)(
-    "%s no puede leer ni escribir (42501, sin grants)",
-    async (role) => {
-      await inRolledBackTransaction(db.admin, async (tx) => {
-        await seed(tx);
-        for (const table of tables) {
-          await expectSqlError(tx, "42501", (sp) =>
-            asRole(
-              sp,
-              role,
-              (as) => as`SELECT * FROM ${as(`public.${table}`)}`,
-            ),
-          );
-          await expectSqlError(tx, "42501", (sp) =>
-            asRole(sp, role, (as) => as`DELETE FROM ${as(`public.${table}`)}`),
-          );
-        }
+  it("anon no puede leer ni escribir (42501, sin grants)", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      for (const table of tables) {
         await expectSqlError(tx, "42501", (sp) =>
           asRole(
             sp,
-            role,
-            (as) =>
-              as`INSERT INTO public.organizations (name) VALUES ('Intrusa')`,
+            "anon",
+            (as) => as`SELECT * FROM ${as(`public.${table}`)}`,
           ),
         );
-      });
-    },
-  );
+        await expectSqlError(tx, "42501", (sp) =>
+          asRole(sp, "anon", (as) => as`DELETE FROM ${as(`public.${table}`)}`),
+        );
+      }
+      await expectSqlError(tx, "42501", (sp) =>
+        asRole(
+          sp,
+          "anon",
+          (as) =>
+            as`INSERT INTO public.organizations (name) VALUES ('Intrusa')`,
+        ),
+      );
+    });
+  });
 
-  it("aun con grants, sin policies authenticated no ve filas ni inserta", async () => {
+  it("authenticated sin claims no ve filas ni escribe", async () => {
     await inRolledBackTransaction(db.admin, async (tx) => {
       await seed(tx);
-      // Simula el grant de H0.5 sin sus policies (se deshace con el ROLLBACK).
-      await tx`GRANT SELECT, INSERT ON public.organizations, public.memberships TO authenticated`;
-
-      const rows = await asRole(
-        tx,
-        "authenticated",
-        (as) => as`SELECT id FROM public.organizations`,
-      );
-      expect(rows).toHaveLength(0);
-
+      for (const table of tables) {
+        const rows = await asRole(
+          tx,
+          "authenticated",
+          (as) => as`SELECT * FROM ${as(`public.${table}`)}`,
+        );
+        expect(rows).toHaveLength(0);
+        await expectSqlError(tx, "42501", (sp) =>
+          asRole(
+            sp,
+            "authenticated",
+            (as) => as`DELETE FROM ${as(`public.${table}`)}`,
+          ),
+        );
+      }
       await expectSqlError(tx, "42501", (sp) =>
         asRole(
           sp,
