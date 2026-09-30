@@ -28,9 +28,10 @@ Trabajás sobre una baseline ya definida. **No es una fase de ideación.** Tu ro
   - `db/`: schema, migraciones y acceso a datos.
   - `lib/`: infraestructura.
 - **Acceso a datos (DEC-016):** `domains/` no carga datos ni depende de `mocks/`. En B1 las páginas llaman loaders que viven junto a la fuente mock (`mocks/*`); en Hito 1 pasan a la capa de datos con el aislamiento multi-tenant aprobado. No introducir repositories, DI containers ni abstracciones que no pida la tarea.
-- **Multi-tenancy (DEC-006 / ADR-001):**
-  - Nunca importar `db/client` fuera de `db/`.
-  - Toda query tenant-scoped pasa por el mecanismo aprobado en ADR-001.
+- **Multi-tenancy (DEC-006 / ADR-001 / DEC-019):**
+  - Nunca importar `db/client` fuera de `db/tenant.ts`. El guard de ESLint lo impide.
+  - Toda query tenant-scoped pasa por `withTenant()` (`db/tenant.ts`), el mecanismo aprobado en ADR-001. `withUser()` solo lee las memberships propias antes de elegir organización.
+  - `withTenant()` no resuelve ni valida la organización activa: recibe un contexto confiable. Esa validación corresponde a `requireTenant()` (Tenant Resolution, H0.7).
   - Nunca confiar en un `organization_id` enviado por el cliente sin validarlo contra la membership.
   - Toda tabla con `organization_id` tiene RLS habilitado.
   - ADR-001 está aceptada (`docs/adr/ADR-001-tenant-isolation.md`). Sus reglas obligatorias (§3) aplican a todo código de runtime, migración y privilegios.
@@ -61,7 +62,8 @@ Commits pequeños con Conventional Commits, siguiendo el orden de la §9 de la B
 ## 6. Comandos
 ```bash
 pnpm dev | build | typecheck | lint | format | test | test:e2e
-pnpm db:generate | db:migrate | db:studio
+pnpm test:db    # migraciones y aislamiento contra un PostgreSQL 17 desechable, nunca staging (DEC-018)
+pnpm db:generate | db:migrate
 pnpm sb:start | sb:stop | sb:status
 ```
 

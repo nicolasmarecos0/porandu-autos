@@ -31,6 +31,8 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-015 | Opportunities Visual Architecture | Aceptada | 2026-09-28 |
 | DEC-016 | Loaders de datos fuera de `domains/` | Aceptada | 2026-09-28 |
 | DEC-017 | Opportunities Surface Boundaries | Aceptada | 2026-09-28 |
+| DEC-018 | H0.4 SaaS Core Schema | Aceptada | 2026-09-29 |
+| DEC-019 | H0.5 Tenant Isolation | Aceptada | 2026-09-30 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -202,6 +204,48 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 - **Consecuencias:** la pantalla Opportunities construida bajo DEC-015 absorbió parte del alcance originalmente previsto para Opportunity Workspace / Intelligence Workspace / Vehicle Rail. Los futuros módulos deben reutilizar esas capacidades y evitar duplicación.
   - La Build Baseline, el Master Context y el Visual Blueprint no se reescriben: DEC-017 prevalece sobre ellos en estos puntos (DEC-002).
 
+## DEC-018 — H0.4 SaaS Core Schema
+- **Estado:** Aceptada · 2026-09-29
+- **Decisión:** el schema base de la SaaS foundation es el de la migración oficial `0000_saas_core_schema` (`db/migrations`), mergeada en `main` con H0.4:
+  - `organizations`: raíz del tenant. UUID, `name` y timestamps, sin `organization_id`.
+  - `profiles`: identidad de aplicación 1:1 con Supabase Auth.
+    - `profiles.id = auth.users.id`, con FK `ON DELETE CASCADE`.
+    - `profiles.full_name` es nullable: un dato de presentación no bloquea la creación del perfil.
+    - El email vive en `auth.users` y no se duplica.
+    - No lleva `organization_id`: el perfil pertenece al usuario, no a una organización.
+  - `memberships`: tabla tenant-scoped.
+    - `organization_id` `NOT NULL` con FK a `organizations` (`RESTRICT`) y `user_id` con FK a `profiles` (`CASCADE`).
+    - `role` sin default y unique `(organization_id, user_id)`.
+    - `memberships.active` (`boolean`, default `true`): solo una membership activa da acceso. Revocar es pasar a `false`.
+  - Roles: enum `membership_role` = `admin | seller`.
+  - RLS habilitado en las tres tablas desde `0000`. Se revocan los privilegios por defecto que Supabase otorga a `anon` y `authenticated` sobre objetos nuevos de `public` (ADR-001 §3.6).
+  - Harness sobre PostgreSQL 17 local y desechable (`pnpm test:db`, job `db` de CI), nunca contra staging. Aplica las migraciones desde cero con `pnpm db:migrate` y crea el mínimo de Supabase que necesitan (`tests/db/support/`).
+- **Aclara:** la Build Baseline B1 §3.1 ("`memberships (role: admin | vendedor)`"). El identificador en la base es `seller` (DEC-011); el copy visible sigue en español.
+- **Consecuencias:**
+  - `0000` no otorga privilegios a `authenticated`: los grants de lectura y sus policies llegan con `0001` (DEC-019).
+  - El harness verifica migraciones, schema y aislamiento en CI. No reemplaza las validaciones cloud pendientes de E3 (ADR-001 §7).
+  - La Build Baseline no se reescribe: DEC-018 prevalece sobre ella en este punto (DEC-002).
+
+## DEC-019 — H0.5 Tenant Isolation
+- **Estado:** Aceptada · 2026-09-30
+- **Decisión:** H0.5 implementa ADR-001 en `main` (migración oficial `0001_tenant_isolation` y `db/tenant.ts`) sin cambiar su arquitectura ni sus reglas. Además de lo que fija ADR-001, queda decidido:
+  - **`app_runtime`:** `0001` lo crea `LOGIN NOINHERIT NOBYPASSRLS` y sin password, miembro de `authenticated` `WITH INHERIT FALSE, SET TRUE` (SET permitido, sin herencia). Al final, `0001` verifica las invariantes de ADR-001 §3.6 sobre la base real y, si alguna falla, no aplica nada.
+  - **`private.user_org_ids()`** devuelve solo las organizaciones con membership **activa** del usuario de la request.
+  - **Policies de lectura de H0.** `authenticated` solo tiene `SELECT` sobre estas tres tablas:
+    - `organizations`: solo las organizaciones permitidas (`id IN (SELECT private.user_org_ids())`).
+    - `memberships`: solo las de organizaciones permitidas (`organization_id IN (SELECT private.user_org_ids())`).
+    - `profiles`: solo el perfil propio (`id = auth.uid()`). Compartir organización no expone el perfil de otro usuario.
+  - **Sin policies ni grants de escritura en H0** (default deny). Una escritura se habilita cuando un flujo aprobado la necesite, con la condición de ADR-001 §4 en `USING` y `WITH CHECK`.
+  - **`withUser()` y `withTenant()`** (`db/tenant.ts`) usan contexto transaccional local: una transacción por llamada, cuyo primer statement fija claims y rol `authenticated` con `set_config(..., true)`. `withUser()` solo sirve para leer las memberships propias antes de elegir organización. No se permiten claims ni rol a nivel de sesión.
+  - **`withTenant()` no resuelve ni valida por sí solo la organización activa.** Recibe un contexto confiable (claims verificados y organización ya validada) y solo rechaza un contexto mal formado. Los claims verificados llegan con Supabase Auth (H0.6); resolver y validar la organización activa contra las memberships activas del usuario corresponde a Tenant Resolution (H0.7), mediante `requireTenant()`. Hasta entonces solo los tests construyen contextos.
+  - **Guard de ESLint:** `db/client` solo se importa desde `db/tenant.ts` (y dos archivos de test), incluidos imports relativos y dinámicos. Ningún otro módulo puede saltear el boundary.
+  - **Tests** sobre el harness de PostgreSQL 17 (DEC-018): aislamiento tenant A ↔ B (C1), contexto falsificado (A-03), membership inactiva o revocada (A-09), fallo cerrado fuera del boundary (C2), invariantes de catálogo (C3) y contaminación de sesión entre transacciones, incluidos COMMIT, ROLLBACK y error (C6).
+- **Aclara:** la Build Baseline B1 §7 ("Aislamiento de tenant"), puntos 3 y 5, y ADR-001 §6, hipótesis 3. El guard de import y los tests obligatorios quedan implementados, y el guard es más estricto que "fuera de `db/`". El punto 4 (service role) sigue sin aprobarse. El tenant context de la Build Baseline §3.1 y el selector de organización quedan para Tenant Resolution (H0.7).
+- **Consecuencias:**
+  - `CLAUDE.md` §3 se alinea con esta decisión (guard de `db/client` y alcance de `withTenant()`).
+  - El aislamiento ya lo validaron E1 y E2 (ADR-001) y el harness lo cubre en CI. E3 no lo vuelve a validar.
+  - La Build Baseline no se reescribe: DEC-019 prevalece sobre ella en estos puntos (DEC-002).
+
 ---
 
 ## ADR-001 — Tenant isolation y SaaS foundation
@@ -226,11 +270,14 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Ninguna tabla de aplicación en `public` queda sin RLS.
   - Las migraciones y los privilegios preservan el aislamiento multi-tenant (invariantes de catálogo en el documento, §3).
 - **Evidencia:** E1 (Supabase local, [run 36493339590](https://github.com/nicolasmarecos0/porandu-autos/actions/runs/36493339590)) y E2 (staging `sa-east-1`, [run 36590229247](https://github.com/nicolasmarecos0/porandu-autos/actions/runs/36590229247)) validaron el aislamiento. Ningún criterio de aislamiento falló; los únicos fail de E2 son la medición de latencia, que no tiene umbral.
-- **Pendiente (E3):** únicamente latencia real Vercel → Supabase en la misma región, pool y serverless, JWKS (caché y rotación), TLS `verify-full` y manejo y rotación de la credencial de `app_runtime`. E3 no vuelve a validar el aislamiento. Si un resultado de E3 obliga a cambiar la decisión, se registra en el documento y se consulta al fundador.
+- **Pendiente (E3):** únicamente latencia real y topología de deployment Vercel → Supabase en la misma región, el runtime oficial por Supavisor en modo transacción (pool y serverless), la integración y las pruebas de la verificación de claims del runtime oficial de H0.6 en serverless (fetch, caché y rotación del JWKS; E2 ya validó tokens contra el JWKS real de staging), TLS `verify-full` y la credencial real de `app_runtime` en staging y en el runtime (dónde vive y cómo se rota). E3 no vuelve a validar el aislamiento. Si un resultado de E3 obliga a cambiar la decisión, se registra en el documento y se consulta al fundador.
 - **Follow-ups no bloqueantes:** el test de token vencido con firma válida (A-14b) y la causa del `503 PGRST002` con la Data API deshabilitada. No son requisito para aprobar ADR-001 ni forman parte de E3.
 - **Supersede:** la hipótesis y los criterios de la entrada ADR-001 del 2026-09-21 (su resultado queda en el documento, §6) y, de la Build Baseline B1 §7 ("Aislamiento de tenant"), los puntos 1 y 2 en lo que difieren. En particular, `is_member()` queda reemplazada por `private.user_org_ids()`, el patrón de referencia aprobado para H0 porque es el mecanismo validado por E1 y E2.
 - **Aclara:** cierra el gate del commit 6 de la Build Baseline §9 y el punto abierto de §10. Los puntos 3 a 5 de la Build Baseline §7 siguen vigentes. El spike no cubrió el guardrail de import de `db/client` (3) ni el service role (4), y este ADR no los aprueba. Los tests obligatorios (5) se escriben en H0.
 - **Consecuencias:**
-  - H0 implementa esta arquitectura en `db/`. El código del spike (`spike/h0-saas-foundation`) es experimental y no se trae a `main`.
+  - H0 implementa esta arquitectura en `db/`: H0.4 (DEC-018) y H0.5 (DEC-019), ya en `main`. El código del spike (`spike/h0-saas-foundation`) es experimental y no se trae a `main`.
   - `CLAUDE.md` §3 se alinea con esta decisión. La Build Baseline no se reescribe: ADR-001 prevalece sobre ella en estos puntos (DEC-002).
-  - Staging conserva el schema que dejó E2. Antes de las migraciones reales de H0 se resetea o recibe una migración de limpieza; la elección queda abierta.
+  - Staging (actualizado el 2026-09-30): la limpieza del schema que dejó E2 ya se ejecutó y verificó, y la elección entre reset y limpieza ya no está abierta.
+    - No quedan `organizations`, `profiles`, `memberships`, el enum `membership_role`, el schema `private`, el historial ni el schema experimental de Drizzle, ni el rol `app_runtime`.
+    - `public` volvió al baseline limpio, con ACL y default privileges restaurados y verificados. Los objetos administrados por Supabase quedaron intactos.
+    - Staging está listo para las migraciones oficiales `0000` y `0001`.
