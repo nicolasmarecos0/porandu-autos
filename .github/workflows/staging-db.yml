@@ -1,0 +1,172 @@
+name: Staging DB
+
+# Operaciones oficiales de base de datos sobre el proyecto Supabase de
+# staging (H0.8): preflight, migraciones de db/migrations, credencial de
+# app_runtime, verificación post-migración y acceptance. Reutilizable para
+# cada migración futura de staging.
+#
+# Solo manual (workflow_dispatch), solo desde main (código y migraciones ya
+# mergeados) y solo con los secrets del environment `staging`, que exige la
+# aprobación del fundador antes de que el job arranque.
+#
+# Seguridad:
+# - Cada paso recibe solo los secrets que usa, nunca a nivel job. Las URLs
+#   con credenciales se arman dentro de Node (scripts/staging/target.mts) y
+#   nunca pasan por el shell ni por los logs.
+# - Antes de conectar se valida el destino: el project ref tiene que
+#   coincidir entre vars.STAGING_PROJECT_REF, el input de confirmación,
+#   STAGING_SUPABASE_URL y el usuario del Session pooler, que tiene que ser
+#   el de Supabase en sa-east-1. Cualquier otro proyecto aborta.
+# - migrate usa solo la credencial de postgres. El acceptance del runtime no
+#   recibe la credencial de postgres: solo la de app_runtime.
+# - Nada limpia un estado inesperado: el preflight aborta y lo nombra. Solo
+#   cleanup-synthetic borra, y solo datos sintéticos marcados.
+# - Contra staging nunca corren controles negativos de sesión (ADR-001,
+#   Hallazgo 2): todo intento de cambiar rol o claims es local a una
+#   transacción.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operación (README → Staging DB)
+        type: choice
+        required: true
+        default: preflight
+        options:
+          - preflight
+          - migrate
+          - provision-runtime
+          - verify
+          - runtime-acceptance
+          - auth-tenant-acceptance
+          - cleanup-synthetic
+      confirm_project_ref:
+        description: Project ref de staging (tiene que coincidir con vars.STAGING_PROJECT_REF)
+        type: string
+        required: true
+      expected_migrations:
+        description: "Solo migrate: tags pendientes esperados, separados por coma"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-db
+  cancel-in-progress: false
+
+jobs:
+  staging-db:
+    name: ${{ inputs.operation }} · staging
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 30
+    env:
+      STAGING_OPERATION: ${{ inputs.operation }}
+      STAGING_PROJECT_REF: ${{ vars.STAGING_PROJECT_REF }}
+      STAGING_CONFIRM_PROJECT_REF: ${{ inputs.confirm_project_ref }}
+      STAGING_SYNTHETIC_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Guard (solo main de este repositorio)
+        env:
+          REPOSITORY: ${{ github.repository }}
+          GIT_REF: ${{ github.ref }}
+        run: |
+          if [ "$REPOSITORY" != "nicolasmarecos0/porandu-autos" ] || [ "$GIT_REF" != "refs/heads/main" ]; then
+            echo "::error::Staging DB solo corre desde main de nicolasmarecos0/porandu-autos."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # pnpm version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Preflight (solo lectura)
+        id: preflight
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SESSION_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_EXPECTED_MIGRATIONS: ${{ inputs.expected_migrations }}
+        run: node scripts/staging/cli.mts preflight
+
+      - name: Migraciones oficiales (db/migrations, rol postgres)
+        if: inputs.operation == 'migrate'
+        timeout-minutes: 15
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SESSION_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_EXPECTED_MIGRATIONS: ${{ inputs.expected_migrations }}
+        run: node scripts/staging/cli.mts migrate
+
+      - name: Credencial de app_runtime (STAGING_RUNTIME_DB_PASSWORD)
+        if: inputs.operation == 'provision-runtime'
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SESSION_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_RUNTIME_DB_PASSWORD: ${{ secrets.STAGING_RUNTIME_DB_PASSWORD }}
+        run: node scripts/staging/cli.mts provision-runtime
+
+      - name: Verificación post-migración (catálogo y Data API)
+        if: inputs.operation == 'migrate' || inputs.operation == 'verify'
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SESSION_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_PUBLISHABLE_KEY: ${{ secrets.STAGING_PUBLISHABLE_KEY }}
+        run: node scripts/staging/cli.mts verify
+
+      - name: Acceptance del runtime (app_runtime por Supavisor 6543)
+        if: inputs.operation == 'provision-runtime' || inputs.operation == 'runtime-acceptance'
+        timeout-minutes: 15
+        # Sin STAGING_DB_PASSWORD: el runtime no puede usar postgres ni por error.
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SESSION_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+          STAGING_RUNTIME_DB_PASSWORD: ${{ secrets.STAGING_RUNTIME_DB_PASSWORD }}
+        run: pnpm test:staging tests/staging/runtime.test.ts
+
+      - name: Acceptance Auth → Tenant (usuarios y organizaciones sintéticos)
+        if: inputs.operation == 'auth-tenant-acceptance'
+        timeout-minutes: 15
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SESSION_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_RUNTIME_DB_PASSWORD: ${{ secrets.STAGING_RUNTIME_DB_PASSWORD }}
+          STAGING_PUBLISHABLE_KEY: ${{ secrets.STAGING_PUBLISHABLE_KEY }}
+          STAGING_SECRET_KEY: ${{ secrets.STAGING_SECRET_KEY }}
+        run: pnpm test:staging tests/staging/auth-tenant.test.ts
+
+      # Red de seguridad: borra lo sintético de ESTA corrida aunque el
+      # acceptance haya fallado o se haya cortado. Nunca toca otra cosa.
+      - name: Limpieza de los datos sintéticos de esta corrida
+        if: always() && inputs.operation == 'auth-tenant-acceptance' && steps.preflight.outcome == 'success'
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SESSION_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_SECRET_KEY: ${{ secrets.STAGING_SECRET_KEY }}
+        run: node scripts/staging/cli.mts cleanup-synthetic --run-id "$STAGING_SYNTHETIC_RUN_ID"
+
+      # Manual: sobrantes de corridas interrumpidas (el preflight del
+      # acceptance aborta mientras existan).
+      - name: Limpieza de datos sintéticos de corridas anteriores
+        if: inputs.operation == 'cleanup-synthetic'
+        env:
+          STAGING_SUPABASE_URL: ${{ secrets.STAGING_SUPABASE_URL }}
+          STAGING_SESSION_POOLER_URL: ${{ secrets.STAGING_SESSION_POOLER_URL }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_SECRET_KEY: ${{ secrets.STAGING_SECRET_KEY }}
+        run: node scripts/staging/cli.mts cleanup-synthetic --all
