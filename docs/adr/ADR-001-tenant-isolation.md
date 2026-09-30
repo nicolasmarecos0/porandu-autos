@@ -5,6 +5,7 @@
 - **Autoridad:** nivel 2 según DEC-002, registrada en el [Decisions Log](../05_DECISIONS_LOG.md#adr-001--tenant-isolation-y-saas-foundation). Prevalece sobre la Build Baseline, `CLAUDE.md`, el Master Context y los blueprints.
 - **Evidencia:** entornos E1 y E2 del spike de ADR-001, documentados en [`spikes/adr-001/RESULTS.md`](https://github.com/nicolasmarecos0/porandu-autos/blob/318f33af1fd3210e35ddcd74617adbad4623c0a1/spikes/adr-001/RESULTS.md) (rama `spike/h0-saas-foundation`, commit `318f33a`). El spike es experimental: su código, workflows, tests y scripts no forman parte del producto.
 - **Pendiente:** E3, solo para los puntos operativos de §7. E3 no vuelve a validar el aislamiento. Además, dos follow-ups no bloqueantes (§7).
+- **Implementación:** H0.4 (migración `0000_saas_core_schema`, [DEC-018](../05_DECISIONS_LOG.md#dec-018--h04-saas-core-schema)) y H0.5 (migración `0001_tenant_isolation` y `db/tenant.ts`, [DEC-019](../05_DECISIONS_LOG.md#dec-019--h05-tenant-isolation)), mergeados en `main`. Staging ya no tiene residuos de E2 y está listo para `0000` y `0001` (§9).
 
 ---
 
@@ -149,15 +150,15 @@ Criterios de aceptación:
 
 ## 7. Pendientes
 
-**E3** (preview de Vercel contra Supabase en la misma región) queda pendiente únicamente para:
+**E3** (preview de Vercel contra Supabase en la misma región, con el runtime oficial de H0) queda pendiente únicamente para:
 
-1. **Latencia real** Vercel → Supabase en la misma región, incluido el overhead de `withTenant`.
-2. **Pool y serverless:** tamaño de pool, límites de conexión y comportamiento de las conexiones en las funciones de Vercel.
+1. **Latencia real y topología de deployment** Vercel → Supabase en la misma región, incluido el overhead de `withTenant`.
+2. **Runtime oficial por Supavisor en modo transacción, pool y serverless:** el cliente de H0 (`db/client.ts`) por el pooler cloud (puerto 6543, usuario `app_runtime.<project_ref>`) desde las funciones de Vercel, con tamaño de pool, límites de conexión y comportamiento de las conexiones. E2 ya validó el pooler cloud con el spike (C4, C6).
 3. **JWKS:** fetch, caché y rotación de claves al verificar claims en serverless.
 4. **TLS `verify-full`** con el certificado de Supabase. E2 usó `sslmode=require` (TLS sin verificar la CA).
-5. **Credencial de `app_runtime`:** dónde vive y cómo se rota. En el spike fue efímera por corrida y quedó anulada al terminar.
+5. **Credencial real de `app_runtime`** en staging y en el runtime: dónde vive y cómo se rota. Staging no tiene hoy `app_runtime`: lo crea `0001`, sin password, y la password se fija fuera de las migraciones. En el spike fue efímera por corrida y quedó anulada al terminar.
 
-E3 no vuelve a validar el aislamiento, que ya validaron E1 y E2. Si un resultado de E3 obliga a cambiar alguna pieza de §2 o alguna regla de §3, se registra en este ADR y se consulta al fundador antes de cambiarla.
+E3 no vuelve a validar el aislamiento, que ya validaron E1 y E2 y que el harness de PostgreSQL 17 cubre en CI (DEC-019). Si un resultado de E3 obliga a cambiar alguna pieza de §2 o alguna regla de §3, se registra en este ADR y se consulta al fundador antes de cambiarla.
 
 **Follow-ups no bloqueantes.** No son requisito para aprobar este ADR ni forman parte de E3:
 
@@ -181,5 +182,8 @@ E3 no vuelve a validar el aislamiento, que ya validaron E1 y E2. Si un resultado
 
 - `withTenant()` sobre RLS es el mecanismo aprobado al que remiten DEC-016 y `CLAUDE.md` §3. En Hito 1, los loaders que hoy leen `mocks/` pasan a la capa de datos a través de `withTenant`.
 - El runtime y las migraciones usan credenciales distintas. H0 las configura por separado y ambas son server-only.
-- Staging conserva el schema que dejó E2: las tablas vacías `organizations`, `profiles` y `memberships`, el enum `membership_role`, el schema `private` con su función, el rol `app_runtime` sin password, el historial de migraciones en el schema `drizzle` y privilegios por defecto modificados en `public`. Antes de aplicar las migraciones reales de H0, staging se resetea o recibe una migración de limpieza. La elección queda abierta.
+- Staging (actualizado el 2026-09-30): la limpieza del schema que dejó E2 ya se ejecutó y verificó, y la elección entre reset y limpieza ya no está abierta.
+  - No quedan las tablas `organizations`, `profiles` y `memberships`, el enum `membership_role`, el schema `private`, el historial ni el schema experimental de Drizzle, ni el rol `app_runtime`.
+  - `public` volvió al baseline limpio, con ACL y default privileges restaurados y verificados. Los objetos administrados por Supabase quedaron intactos.
+  - Staging está listo para las migraciones oficiales `0000` y `0001` (DEC-018 y DEC-019).
 - La Build Baseline no se reescribe. Este ADR prevalece sobre la Build Baseline §7 ("Aislamiento de tenant") en lo que difiere (DEC-002), y cierra el gate del commit 6 (§9) y el punto abierto de §10.
