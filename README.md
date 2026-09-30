@@ -57,6 +57,14 @@ pnpm db:migrate        # usa MIGRATION_DATABASE_URL (rol postgres)
 pnpm dev               # http://localhost:3000
 ```
 
+La migración crea el rol `app_runtime` **sin password**. En local, fijala con la credencial de migración y usala en `RUNTIME_DATABASE_URL` (nunca en un archivo versionado):
+
+```bash
+psql "<MIGRATION_DATABASE_URL local>" -c "ALTER ROLE app_runtime PASSWORD '<password-local>'"
+```
+
+En staging, dónde vive y cómo se rota esa credencial queda para E3 (ADR-001 §7).
+
 Para detener Supabase local: `pnpm sb:stop`.
 
 ## Variables de entorno
@@ -89,7 +97,7 @@ Separación runtime / migraciones (ADR-001):
 | `pnpm format` / `pnpm format:check` | Prettier |
 | `pnpm test` | Vitest (unit e integración), una sola corrida |
 | `pnpm test:watch` | Vitest en modo watch |
-| `pnpm test:db` | Migraciones y schema contra un PostgreSQL 17 desechable (ver "Base de datos") |
+| `pnpm test:db` | Migraciones, schema y aislamiento de tenant contra un PostgreSQL 17 desechable (ver "Base de datos") |
 | `pnpm test:e2e` | Playwright |
 | `pnpm db:generate` | Genera una migración desde el schema de Drizzle (no se conecta a la base) |
 | `pnpm db:migrate` | Aplica las migraciones con `MIGRATION_DATABASE_URL` (rol `postgres`) |
@@ -100,8 +108,9 @@ Antes de abrir un PR deben pasar: `pnpm typecheck && pnpm lint && pnpm format:ch
 ## Base de datos
 
 - El schema de Drizzle vive en `db/schema/` y las migraciones en `db/migrations/` (única fuente). `db:generate` y `db:migrate` leen `MIGRATION_DATABASE_URL` del entorno o de `.env.local`; la variable del entorno prevalece.
-- Las migraciones apuntan a Supabase: dependen de `auth.users` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
-- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`). El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
+- Las migraciones apuntan a Supabase: dependen de `auth.users`, `auth.uid()` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
+- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
+- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
 
 ```bash
 docker run -d --rm --name porandu-pg17 -p 127.0.0.1:55432:5432 \
@@ -125,6 +134,17 @@ supabase/     Configuración de Supabase local
 tests/        unit/, db/ (PostgreSQL real), tenant/, e2e/
 docs/         Baselines, Build Baseline y Decisions Log
 ```
+
+## Acceso a datos y tenant isolation
+
+Implementa ADR-001 (`db/tenant.ts` y la migración `0001_tenant_isolation`):
+
+- El runtime se conecta como `app_runtime`, que no tiene privilegios directos: toda query fuera del boundary falla cerrado (`42501`).
+- `withUser(ctx, fn)` y `withTenant(ctx, fn)` abren una transacción que fija los claims y el rol `authenticated` con `set_config(..., true)`. Al terminar, la conexión vuelve a ser `app_runtime` sin claims. Nunca se usa `SET` de sesión ni `set_config(..., false)`.
+- RLS limita cada fila a las organizaciones con membership activa del usuario (`private.user_org_ids()`). Las queries tenant-scoped filtran además por `ctx.organizationId`.
+- En H0 solo hay lectura: `organizations` y `memberships` de las organizaciones del usuario, y su propio `profiles`. No hay grants ni policies de escritura.
+- ESLint impide importar `db/client` fuera de `db/tenant.ts` (y de dos archivos de test).
+- El contexto (claims verificados y organización validada) lo construirá la autenticación en H0.6.
 
 ## Convenciones
 
