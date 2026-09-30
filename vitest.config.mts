@@ -12,8 +12,9 @@ export default defineConfig({
     ],
   },
   test: {
-    // Unit y lógica de servidor, sin DOM. tests/tenant/ (Postgres real) y
-    // tests/e2e/ (Playwright) tendrán su propia configuración cuando existan.
+    // Unit y lógica de servidor, sin DOM ni base de datos. Los tests contra
+    // PostgreSQL real (tests/db/) usan vitest.db.config.mts; los E2E
+    // (Playwright) tendrán su propia configuración cuando existan.
     include: ["tests/unit/**/*.test.ts"],
     environment: "node",
   },
