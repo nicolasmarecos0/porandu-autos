@@ -11,7 +11,9 @@ import { describe, expect, it } from "vitest";
  * - nada que llegue al navegador alcanza Supabase, cookies de servidor,
  *   credenciales ni db/;
  * - la autorización server-side usa getClaims(), nunca getSession();
- * - ninguna credencial privilegiada se referencia;
+ * - ninguna credencial privilegiada se referencia, y la aplicación no importa
+ *   el tooling de staging (scripts/), que sí maneja la secret key y la
+ *   credencial de migración;
  * - el proxy y la autenticación no dependen de Postgres;
  * - db/client solo lo importa db/tenant.ts, withUser() solo lo llama la
  *   query de memberships propias y resolveTenant() solo requireTenant().
@@ -317,6 +319,15 @@ describe("credenciales", () => {
         /service_role|secret_key|sb_secret_/i.test(token),
       );
       expect([rel(info.path), privileged]).toEqual([rel(info.path), []]);
+    }
+  });
+
+  it("ningún módulo de la aplicación importa el tooling de staging (scripts/)", () => {
+    for (const info of modules.values()) {
+      const tooling = info.imports
+        .map(rel)
+        .filter((target) => target.startsWith("scripts/"));
+      expect([rel(info.path), tooling]).toEqual([rel(info.path), []]);
     }
   });
 

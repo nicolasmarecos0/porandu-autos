@@ -1,0 +1,611 @@
+import { randomBytes, randomUUID } from "node:crypto";
+
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+import {
+  migrateCommand,
+  preflightCommand,
+  provisionRuntimeCommand,
+  type CommandContext,
+} from "../../scripts/staging/commands.mts";
+import { connect, readOnly } from "../../scripts/staging/connect.mts";
+import { runOfficialMigrations } from "../../scripts/staging/migrate.mts";
+import { readRepoMigrations } from "../../scripts/staging/migrations.mts";
+import {
+  evaluatePreflight,
+  readFacts,
+  type Operation,
+  type PreflightResult,
+} from "../../scripts/staging/preflight.mts";
+import {
+  checkRuntimeLogin,
+  provisionRuntimePassword,
+} from "../../scripts/staging/provision.mts";
+import {
+  parseScramVerifier,
+  SCRAM_VERIFIER,
+  scramSha256Verifier,
+} from "../../scripts/staging/scram.mts";
+import {
+  cleanupSynthetic,
+  syntheticAppMetadata,
+  syntheticEmail,
+  syntheticOrganizationName,
+  type AdminAuth,
+  type SyntheticCandidate,
+} from "../../scripts/staging/synthetic.mts";
+import { verifyCatalog } from "../../scripts/staging/verify.mts";
+import { describeRuntimeAcceptance } from "../staging/support/runtime-spec";
+import {
+  startTestServer,
+  type TestDatabase,
+  type TestServer,
+} from "./support/postgres";
+import { closeRuntimePool } from "./support/runtime";
+
+// `server-only` lo resuelve Next; en Vitest (entorno node) es un no-op.
+vi.mock("server-only", () => ({}));
+
+/*
+ * Tooling de staging (scripts/staging/) contra el PostgreSQL 17 desechable:
+ * el preflight frente a residuos, la migración oficial con `pnpm db:migrate`,
+ * la verificación post-migración, el provisioning de app_runtime, el spec
+ * del acceptance del runtime y la limpieza de datos sintéticos. Nunca
+ * staging: acá se valida el mismo código que el workflow corre allá.
+ */
+
+const REPO = readRepoMigrations();
+const ALL_TAGS = REPO.map((migration) => migration.tag);
+// La base del harness no se llama `postgres`: es lo único que difiere de
+// Supabase en el preflight.
+const HARNESS_ONLY = ["postgres.database"];
+
+let server: TestServer;
+/** Base con las migraciones oficiales aplicadas por el tooling. */
+let migrated: TestDatabase;
+let runtimePassword = "";
+
+beforeAll(async () => {
+  server = await startTestServer();
+});
+
+afterAll(async () => {
+  await closeRuntimePool();
+  vi.unstubAllEnvs();
+  await server?.close();
+});
+
+async function preflightOf(
+  db: TestDatabase,
+  operation: Operation,
+  expected: string[] = [],
+  synthetic = false,
+): Promise<PreflightResult> {
+  const sql = connect(db.migrationUrl);
+  try {
+    const facts = await readOnly(sql, (tx) => readFacts(tx, { synthetic }));
+    return evaluatePreflight(facts, REPO, operation, expected);
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+function failures(result: PreflightResult): string[] {
+  return result.findings.filter((f) => !f.ok).map((f) => f.check);
+}
+
+function runtimeUrl(db: TestDatabase, password: string): string {
+  const url = new URL(db.migrationUrl);
+  url.username = "app_runtime";
+  url.password = password;
+  return url.toString();
+}
+
+async function storedPassword(db: TestDatabase): Promise<string | null> {
+  const [row] = await db.admin<{ password: string | null }[]>`
+    SELECT rolpassword AS password FROM pg_authid WHERE rolname = 'app_runtime'
+  `;
+  return row?.password ?? null;
+}
+
+describe("preflight del primer rollout (base sin migraciones)", () => {
+  it("base limpia: pasa y quedan pendientes exactamente 0000 y 0001", async () => {
+    const db = await server.createDatabase();
+    const result = await preflightOf(db, "migrate", ALL_TAGS);
+    expect(failures(result)).toEqual(HARNESS_ONLY);
+    expect(result.history).toEqual({
+      kind: "consistent",
+      applied: [],
+      pending: REPO,
+    });
+    expect(ALL_TAGS).toEqual([
+      "0000_saas_core_schema",
+      "0001_tenant_isolation",
+    ]);
+  });
+
+  it("migrate exige declarar exactamente las migraciones pendientes", async () => {
+    const db = await server.createDatabase();
+    for (const expected of [
+      [],
+      ["0000_saas_core_schema"],
+      [...ALL_TAGS].reverse(),
+    ]) {
+      expect(failures(await preflightOf(db, "migrate", expected))).toEqual([
+        ...HARNESS_ONLY,
+        "operation.pending",
+      ]);
+    }
+  });
+
+  it("las demás operaciones exigen staging al día con el repositorio", async () => {
+    const db = await server.createDatabase();
+    for (const operation of [
+      "provision-runtime",
+      "verify",
+      "runtime-acceptance",
+    ] as const) {
+      expect(failures(await preflightOf(db, operation))).toEqual([
+        ...HARNESS_ONLY,
+        "operation.up-to-date",
+      ]);
+    }
+  });
+
+  it.each([
+    [
+      "tabla en public",
+      "CREATE TABLE public.organizations (id uuid)",
+      "public.relations",
+    ],
+    [
+      "vista en public",
+      "CREATE VIEW public.probe AS SELECT 1 AS x",
+      "public.relations",
+    ],
+    [
+      "secuencia suelta en public",
+      "CREATE SEQUENCE public.probe_seq",
+      "public.relations",
+    ],
+    [
+      "enum en public",
+      "CREATE TYPE public.membership_role AS ENUM ('admin')",
+      "public.types",
+    ],
+    [
+      "función en public",
+      "CREATE FUNCTION public.probe() RETURNS int LANGUAGE sql AS 'SELECT 1'",
+      "public.functions",
+    ],
+    ["schema private", "CREATE SCHEMA private", "residue.private-schema"],
+    [
+      "historial de otro experimento",
+      `SET LOCAL ROLE postgres;
+       CREATE SCHEMA drizzle;
+       CREATE TABLE drizzle.__drizzle_migrations (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint);
+       INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('spike', 1)`,
+      "migrations.history",
+    ],
+    [
+      "objetos ajenos en drizzle",
+      `SET LOCAL ROLE postgres;
+       CREATE SCHEMA drizzle;
+       CREATE TABLE drizzle.probe (id int)`,
+      "migrations.history",
+    ],
+    [
+      "anon puede crear en public",
+      "GRANT CREATE ON SCHEMA public TO anon",
+      "privileges.create",
+    ],
+  ])("aborta ante un estado inesperado: %s", async (_, ddl, check) => {
+    const db = await server.createDatabase();
+    await db.admin.begin((tx) => tx.unsafe(ddl));
+    const result = await preflightOf(db, "migrate", ALL_TAGS);
+    expect(failures(result)).toContain(check);
+  });
+
+  it("un historial de drizzle vacío (migración que falló antes) cuenta como sin historial", async () => {
+    const db = await server.createDatabase();
+    // Lo que drizzle-kit crea antes de la transacción de las migraciones.
+    await db.admin.begin((tx) =>
+      tx.unsafe(`
+        SET LOCAL ROLE postgres;
+        CREATE SCHEMA drizzle;
+        CREATE TABLE drizzle.__drizzle_migrations (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint);
+      `),
+    );
+    const result = await preflightOf(db, "migrate", ALL_TAGS);
+    expect(failures(result)).toEqual(HARNESS_ONLY);
+    expect(
+      result.findings.find((f) => f.check === "migrations.history")?.detail,
+    ).toContain("empty drizzle history table");
+  });
+});
+
+describe("migración que falla", () => {
+  it("es atómica y su salida no incluye credenciales", async () => {
+    const db = await server.createDatabase();
+    // Un objeto que choca con 0000 (el preflight lo habría frenado antes).
+    await db.admin`CREATE TABLE public.profiles (id uuid)`;
+    const password = new URL(db.migrationUrl).password;
+    const error = await runOfficialMigrations(db.migrationUrl, [password]).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(error?.message).toMatch(/pnpm db:migrate failed/);
+    expect(error?.message).not.toContain(password);
+
+    const [state] = await db.admin<
+      { organizations: string | null; history: number }[]
+    >`
+      SELECT to_regclass('public.organizations')::text AS organizations,
+        (SELECT count(*)::int FROM drizzle.__drizzle_migrations) AS history
+    `;
+    expect(state).toEqual({ organizations: null, history: 0 });
+  });
+});
+
+describe("comandos del workflow (scripts/staging/commands.mts)", () => {
+  let db: TestDatabase;
+  const lines: string[] = [];
+  let ctx: CommandContext;
+
+  beforeAll(async () => {
+    db = await server.createDatabase();
+    const password = new URL(db.migrationUrl).password;
+    ctx = {
+      migrationUrl: db.migrationUrl,
+      supabaseUrl: "http://127.0.0.1:9",
+      secrets: [password],
+      log: (line) => lines.push(line),
+    };
+  });
+
+  it("migrate no aplica nada si lo pendiente no es exactamente lo declarado", async () => {
+    // La base del harness no se llama `postgres`: el preflight ya falla por
+    // eso. Acá importa que no se aplique nada.
+    expect(
+      await migrateCommand({
+        ...ctx,
+        expectedMigrations: ["0001_tenant_isolation"],
+      }),
+    ).toBe(false);
+    const [row] = await db.admin<{ drizzle: boolean }[]>`
+      SELECT to_regnamespace('drizzle') IS NOT NULL AS drizzle
+    `;
+    expect(row?.drizzle).toBe(false);
+    expect(lines.join("\n")).toContain("✗ operation.pending");
+  });
+
+  it("el preflight imprime cada verificación, sin credenciales", async () => {
+    lines.length = 0;
+    expect(await preflightCommand(ctx, "preflight")).toBe(false);
+    const output = lines.join("\n");
+    expect(output).toContain("✗ postgres.database");
+    expect(output).toContain(
+      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation",
+    );
+    expect(output).not.toContain(ctx.secrets[0]!);
+    expect(output).not.toMatch(/postgres(ql)?:\/\//);
+  });
+
+  it("provision-runtime exige staging al día y no toca app_runtime si no lo está", async () => {
+    await expect(provisionRuntimeCommand(ctx)).rejects.toThrow(
+      /requires the runtime credential/,
+    );
+    expect(
+      await provisionRuntimeCommand({
+        ...ctx,
+        runtimePassword: randomBytes(32).toString("hex"),
+        runtimeUrl: runtimeUrl(db, "unused"),
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("migración oficial y verificación post-migración", () => {
+  beforeAll(async () => {
+    migrated = await server.createDatabase();
+  });
+
+  it("aplica 0000 y 0001 con pnpm db:migrate y deja el historial exacto", async () => {
+    const password = new URL(migrated.migrationUrl).password;
+    const output = await runOfficialMigrations(migrated.migrationUrl, [
+      password,
+    ]);
+    expect(output).not.toContain(password);
+    expect(output).not.toMatch(/postgres(ql)?:\/\/[^*]/);
+
+    const result = await preflightOf(migrated, "verify");
+    expect(failures(result)).toEqual(HARNESS_ONLY);
+    expect(result.history).toEqual({
+      kind: "consistent",
+      applied: REPO,
+      pending: [],
+    });
+  });
+
+  it("todas las verificaciones de catálogo pasan", async () => {
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+      expect(findings.map((f) => f.check)).toEqual([
+        "migrations.history",
+        "schema.tables",
+        "schema.rls",
+        "schema.membership_role",
+        "schema.tenant-scoped",
+        "rls.policies",
+        "private.schema",
+        "private.user_org_ids",
+        "app_runtime.attributes",
+        "app_runtime.membership",
+        "app_runtime.assumable-roles",
+        "privileges.app_runtime",
+        "privileges.anon",
+        "privileges.authenticated",
+        "privileges.policy-coverage",
+        "privileges.create",
+        "public.security-definer",
+        "privileges.default-acl",
+        "adr-001.pg_graphql",
+      ]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it("sin nada pendiente, migrate no tiene nada que aplicar y aborta", async () => {
+    expect(
+      failures(await preflightOf(migrated, "migrate", ALL_TAGS)),
+    ).toContain("operation.pending");
+  });
+
+  it("detecta un historial que no coincide con los archivos del repositorio", async () => {
+    await migrated.admin`
+      UPDATE drizzle.__drizzle_migrations SET hash = 'edited' WHERE created_at = ${REPO[0]!.when}
+    `;
+    try {
+      expect(failures(await preflightOf(migrated, "verify"))).toContain(
+        "migrations.history",
+      );
+    } finally {
+      await migrated.admin`
+        UPDATE drizzle.__drizzle_migrations SET hash = ${REPO[0]!.hash}
+        WHERE created_at = ${REPO[0]!.when}
+      `;
+    }
+  });
+
+  it("detecta objetos ajenos a las migraciones", async () => {
+    await migrated.admin`CREATE TABLE public.extra (id int)`;
+    try {
+      expect(failures(await preflightOf(migrated, "verify"))).toEqual([
+        ...HARNESS_ONLY,
+        "public.relations",
+      ]);
+    } finally {
+      await migrated.admin`DROP TABLE public.extra`;
+    }
+  });
+
+  it("la verificación detecta grants de escritura y roles asumibles de más", async () => {
+    await migrated.admin.unsafe(`
+      GRANT INSERT ON public.organizations TO authenticated;
+      GRANT anon TO app_runtime;
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "app_runtime.membership",
+        "app_runtime.assumable-roles",
+        "privileges.authenticated",
+        "privileges.policy-coverage",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(`
+        REVOKE INSERT ON public.organizations FROM authenticated;
+        REVOKE anon FROM app_runtime;
+      `);
+    }
+  });
+
+  it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
+    const fresh = await server.createDatabase();
+    expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
+      ...HARNESS_ONLY,
+      "residue.app_runtime",
+    ]);
+  });
+});
+
+describe("provisioning de app_runtime", () => {
+  it("fija la password como verificador SCRAM-SHA-256: el texto plano no llega a la base", async () => {
+    runtimePassword = randomBytes(32).toString("hex");
+    const sql = connect(migrated.migrationUrl);
+    try {
+      await provisionRuntimePassword(sql, runtimePassword);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+    const stored = await storedPassword(migrated);
+    expect(stored).toMatch(SCRAM_VERIFIER);
+    const parsed = parseScramVerifier(stored ?? "");
+    expect(parsed?.iterations).toBe(4096);
+    expect(scramSha256Verifier(runtimePassword, parsed?.salt)).toBe(stored);
+  });
+
+  it("el verificador es el mismo que calcula PostgreSQL para esa password", async () => {
+    const plain = randomBytes(24).toString("hex");
+    await migrated.admin.unsafe(`
+      SET password_encryption = 'scram-sha-256';
+      ALTER ROLE app_runtime PASSWORD '${plain}';
+    `);
+    const stored = await storedPassword(migrated);
+    const parsed = parseScramVerifier(stored ?? "");
+    expect(scramSha256Verifier(plain, parsed?.salt, parsed?.iterations)).toBe(
+      stored,
+    );
+
+    const sql = connect(migrated.migrationUrl);
+    await provisionRuntimePassword(sql, runtimePassword);
+    await sql.end({ timeout: 5 });
+  });
+
+  it("no le da una credencial a un app_runtime que no cumple ADR-001", async () => {
+    const before = await storedPassword(migrated);
+    await migrated.admin`ALTER ROLE app_runtime INHERIT`;
+    const sql = connect(migrated.migrationUrl);
+    try {
+      await expect(
+        provisionRuntimePassword(sql, randomBytes(32).toString("hex")),
+      ).rejects.toThrow(/does not match ADR-001/);
+    } finally {
+      await sql.end({ timeout: 5 });
+      await migrated.admin`ALTER ROLE app_runtime NOINHERIT`;
+    }
+    expect(await storedPassword(migrated)).toBe(before);
+  });
+
+  it("inicia sesión como app_runtime con la credencial provista", async () => {
+    const login = await checkRuntimeLogin(
+      runtimeUrl(migrated, runtimePassword),
+      {
+        attempts: 1,
+      },
+    );
+    expect(login).toMatchObject({ check: "app_runtime.login", ok: true });
+  });
+});
+
+// El mismo spec que corre contra staging por el Transaction pooler.
+describeRuntimeAcceptance({
+  runtimeUrl: () => runtimeUrl(migrated, runtimePassword),
+  iterations: 30,
+});
+
+describe("limpieza de datos sintéticos (Admin API simulada)", () => {
+  const RUN = "local-1";
+  const users: SyntheticCandidate[] = [];
+  const realUser = randomUUID();
+  let realOrg = "";
+  let syntheticOrgs: string[] = [];
+
+  function fakeAdmin(): AdminAuth {
+    return {
+      async listUsers({ page }) {
+        return { data: { users: page === 1 ? [...users] : [] }, error: null };
+      },
+      async deleteUser(id) {
+        await migrated.admin`DELETE FROM auth.users WHERE id = ${id}`;
+        users.splice(
+          users.findIndex((user) => user.id === id),
+          1,
+        );
+        return { error: null };
+      },
+    };
+  }
+
+  beforeAll(async () => {
+    // En Supabase, auth.users tiene email y postgres puede leerla; el shim
+    // del harness solo tiene lo que necesita la FK de profiles.
+    await migrated.admin.unsafe(`
+      ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS email text;
+      GRANT SELECT ON auth.users TO postgres;
+    `);
+    for (const key of ["a", "b"]) {
+      const id = randomUUID();
+      const email = syntheticEmail(RUN, key);
+      users.push({ id, email, app_metadata: syntheticAppMetadata(RUN) });
+      await migrated.admin`INSERT INTO auth.users (id, email) VALUES (${id}, ${email})`;
+      await migrated.admin`INSERT INTO public.profiles (id) VALUES (${id})`;
+    }
+    // Un usuario real con el dominio sintético pero sin la marca de
+    // app_metadata: nunca se borra.
+    users.push({
+      id: realUser,
+      email: syntheticEmail("other", "x"),
+      app_metadata: {},
+    });
+    await migrated.admin`INSERT INTO auth.users (id, email) VALUES (${realUser}, 'real@example.test')`;
+    await migrated.admin`INSERT INTO public.profiles (id) VALUES (${realUser})`;
+
+    const orgs = await migrated.admin<{ id: string }[]>`
+      INSERT INTO public.organizations (name) VALUES
+        (${syntheticOrganizationName(RUN, "A")}),
+        (${syntheticOrganizationName(RUN, "B")}),
+        ('Organización real')
+      RETURNING id
+    `;
+    syntheticOrgs = orgs.slice(0, 2).map((o) => o.id);
+    realOrg = orgs[2]!.id;
+    await migrated.admin`
+      INSERT INTO public.memberships (organization_id, user_id, role) VALUES
+        (${syntheticOrgs[0]!}, ${users[0]!.id}, 'admin'),
+        (${syntheticOrgs[1]!}, ${users[1]!.id}, 'seller'),
+        (${realOrg}, ${realUser}, 'admin')
+    `;
+  });
+
+  it("el preflight del acceptance Auth → Tenant detecta sobrantes de otra corrida", async () => {
+    expect(
+      failures(await preflightOf(migrated, "auth-tenant-acceptance", [], true)),
+    ).toEqual([...HARNESS_ONLY, "synthetic.leftovers"]);
+  });
+
+  it("no borra nada si una organización sintética tiene miembros reales", async () => {
+    await migrated.admin`
+      INSERT INTO public.memberships (organization_id, user_id, role)
+      VALUES (${syntheticOrgs[0]!}, ${realUser}, 'seller')
+    `;
+    const sql = connect(migrated.migrationUrl);
+    try {
+      await expect(cleanupSynthetic(sql, fakeAdmin(), RUN)).rejects.toThrow(
+        /non-synthetic users/,
+      );
+    } finally {
+      await sql.end({ timeout: 5 });
+      await migrated.admin`
+        DELETE FROM public.memberships
+        WHERE organization_id = ${syntheticOrgs[0]!} AND user_id = ${realUser}
+      `;
+    }
+    const [count] = await migrated.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.organizations
+    `;
+    expect(count?.count).toBe(3);
+    expect(users).toHaveLength(3);
+  });
+
+  it("borra solo lo sintético de la corrida, sin CASCADE ni DDL", async () => {
+    const sql = connect(migrated.migrationUrl);
+    try {
+      expect(await cleanupSynthetic(sql, fakeAdmin(), RUN)).toEqual({
+        users: 2,
+        profiles: 2,
+        memberships: 2,
+        organizations: 2,
+      });
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+    expect(users.map((user) => user.id)).toEqual([realUser]);
+    const remaining = await migrated.admin<{ name: string }[]>`
+      SELECT name FROM public.organizations ORDER BY name
+    `;
+    expect(remaining.map((row) => row.name)).toEqual(["Organización real"]);
+    const [profiles] = await migrated.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.profiles
+    `;
+    expect(profiles?.count).toBe(1);
+    expect(
+      failures(await preflightOf(migrated, "auth-tenant-acceptance", [], true)),
+    ).toEqual(HARNESS_ONLY);
+  });
+});
