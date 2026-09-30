@@ -84,7 +84,7 @@ Separación runtime / migraciones (ADR-001):
 - `MIGRATION_DATABASE_URL` la usa únicamente `drizzle-kit`. En staging apunta a Supavisor en modo sesión (puerto 5432, usuario `postgres.<project_ref>`). ESLint prohíbe leerla desde código de la aplicación.
 - No existe un `DATABASE_URL` genérico: ninguna herramienta puede tomar la credencial equivocada por defecto.
 - Las variables públicas se leen con `lib/env.public.ts`. Solo lo que lleva prefijo `NEXT_PUBLIC_` llega al browser; una variable server-only nunca lleva ese prefijo.
-- En H0 no hay secret key ni service role de Supabase aprobados (ADR-001 §8), así que no forman parte del contrato.
+- En H0 no hay secret key ni service role de Supabase aprobados para la aplicación (ADR-001 §8), así que no forman parte del contrato. La única excepción es operacional y fuera de la app: `STAGING_SECRET_KEY` en el workflow Staging DB (DEC-022).
 
 ## Scripts
 
@@ -135,6 +135,9 @@ El workflow manual **Staging DB** (`.github/workflows/staging-db.yml`) opera la 
 - `migrate` usa solo la credencial `postgres` y aplica con `pnpm db:migrate` (drizzle-kit). Exige declarar las migraciones pendientes (`expected_migrations`) y que coincidan exactamente. drizzle-kit aplica todas las pendientes en una sola transacción.
 - `provision-runtime` fija la password de `app_runtime` desde `STAGING_RUNTIME_DB_PASSWORD`, que no puede ser la de `postgres`. La hashea en el runner (SCRAM-SHA-256) y a la base solo llega el verificador: Supabase registra los `ALTER ROLE` en el log de Postgres, y con este método el texto plano nunca queda ahí.
 - El acceptance del runtime no recibe la credencial de `postgres`. Contra staging nunca corren controles negativos de sesión: todo intento de cambiar rol o claims es local a una transacción.
+- **Data API:** el contrato no es un status concreto. Ninguna request REST o GraphQL, con la publishable key o con el token de un usuario sintético, puede devolver tablas, datos o schema de la app: cualquier respuesta exitosa que los exponga hace fallar la verificación. Las respuestas de API deshabilitada, no disponible o no autorizada pueden variar según Supabase y todas pasan; solo se registran status y categoría. La comprobación fuerte de que no hay vía lateral es el acceptance Auth → Tenant con datos sintéticos.
+
+**`STAGING_SECRET_KEY` (excepción operacional, DEC-022).** Solo en GitHub Actions, solo en el environment `staging` y solo para la Supabase Auth Admin API: crear y eliminar usuarios sintéticos en `auth-tenant-acceptance` y `cleanup-synthetic`. Nunca en el runtime, en Vercel ni en el navegador, y nunca para queries de producto ni la Data API. En el código, el cliente con la secret key no sale de `scripts/staging/synthetic.mts`, que solo expone crear y eliminar usuarios (los sintéticos se buscan con una lectura SQL de `auth.users`), y ningún módulo de la aplicación puede importar `scripts/`.
 
 **Operaciones** (input `operation`)
 
@@ -143,9 +146,9 @@ El workflow manual **Staging DB** (`.github/workflows/staging-db.yml`) opera la 
 | `preflight` | Solo el preflight | `STAGING_SUPABASE_URL`, `STAGING_SESSION_POOLER_URL`, `STAGING_DB_PASSWORD` |
 | `migrate` | Preflight → `pnpm db:migrate` → historial exacto → verificación | los anteriores y `STAGING_PUBLISHABLE_KEY` |
 | `provision-runtime` | Preflight → password de `app_runtime` → login por 6543 → acceptance del runtime | los de `preflight` y `STAGING_RUNTIME_DB_PASSWORD` |
-| `verify` | Verificación de catálogo (roles, grants, RLS, policies, `private`) y de la Data API (no devuelve datos) | los de `preflight` y `STAGING_PUBLISHABLE_KEY` |
+| `verify` | Verificación de catálogo (roles, grants, RLS, policies, `private`) y de la Data API (ninguna respuesta expone datos ni schema de la app) | los de `preflight` y `STAGING_PUBLISHABLE_KEY` |
 | `runtime-acceptance` | `app_runtime` por Supavisor 6543 con `db/tenant.ts`: falla cerrado, contexto limpio tras COMMIT/ROLLBACK/error, no asume otros roles | `STAGING_RUNTIME_DB_PASSWORD` (sin la de `postgres`) |
-| `auth-tenant-acceptance` | Supabase Auth real → `getClaims()` → memberships → `requireTenant()` → `withTenant()` → RLS, con usuarios y organizaciones sintéticos que se borran al terminar | todos, incluida `STAGING_SECRET_KEY` (solo Admin API) |
+| `auth-tenant-acceptance` | Supabase Auth real → `getClaims()` → memberships → `requireTenant()` → `withTenant()` → RLS, con usuarios y organizaciones sintéticos que se borran al terminar | todos, incluida `STAGING_SECRET_KEY` (solo Auth Admin API) |
 | `cleanup-synthetic` | Borra datos sintéticos de corridas interrumpidas | los de `preflight` y `STAGING_SECRET_KEY` |
 
 Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@porandu-synthetic.test` con `app_metadata.porandu_synthetic`, y organizaciones `SYNTHETIC H0 <corrida> · <clave>`. La limpieza solo borra filas con esas marcas, en orden explícito (memberships → organizaciones → profiles → usuarios de Auth) y nunca el schema, las migraciones ni `app_runtime`. Si una organización sintética tiene miembros reales, no borra nada.

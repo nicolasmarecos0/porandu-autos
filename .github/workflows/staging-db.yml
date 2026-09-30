@@ -19,6 +19,9 @@ name: Staging DB
 #   el de Supabase en sa-east-1. Cualquier otro proyecto aborta.
 # - migrate usa solo la credencial de postgres. El acceptance del runtime no
 #   recibe la credencial de postgres: solo la de app_runtime.
+# - STAGING_SECRET_KEY (DEC-022): solo en los pasos de datos sintéticos y
+#   solo para la Auth Admin API (crear y eliminar usuarios sintéticos).
+#   Nunca runtime, Vercel, navegador, queries de producto ni Data API.
 # - Nada limpia un estado inesperado: el preflight aborta y lo nombra. Solo
 #   cleanup-synthetic borra, y solo datos sintéticos marcados.
 # - Contra staging nunca corren controles negativos de sesión (ADR-001,
