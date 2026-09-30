@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { NavRail } from "./nav-rail";
+import { SignOutButton } from "./sign-out-button";
 import { TopBar } from "./top-bar";
 
 /**
@@ -22,7 +23,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       >
         Saltar al contenido
       </a>
-      <TopBar />
+      {/* Sesión (H0.6). El selector de organización llega con H0.7. */}
+      <TopBar>
+        <SignOutButton />
+      </TopBar>
       <div className="flex min-h-0 flex-1">
         <NavRail />
         <main

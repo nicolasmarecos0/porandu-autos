@@ -1,5 +1,10 @@
-/** Banda superior de marca. Ancla la identidad de Porandú en todo el shell. */
-export function TopBar() {
+import type { ReactNode } from "react";
+
+/**
+ * Banda superior de marca. Ancla la identidad de Porandú en todo el shell y
+ * en el login. `children` se alinea a la derecha (p. ej. la sesión).
+ */
+export function TopBar({ children }: { children?: ReactNode }) {
   return (
     <header className="flex h-top-bar shrink-0 items-center bg-brand text-brand-contrast">
       <div className="flex w-nav-rail shrink-0 justify-center">
@@ -8,7 +13,11 @@ export function TopBar() {
       <p className="text-heading">
         Porandú <span className="font-normal">Autos</span>
       </p>
-      {/* B1 commit 8: selector de organización y sesión van a la derecha. */}
+      {children ? (
+        <div className="ml-auto flex items-center gap-2 pr-gutter">
+          {children}
+        </div>
+      ) : null}
     </header>
   );
 }
