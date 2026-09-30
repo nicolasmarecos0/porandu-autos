@@ -144,7 +144,7 @@ Implementa ADR-001 (`db/tenant.ts` y la migración `0001_tenant_isolation`):
 - RLS limita cada fila a las organizaciones con membership activa del usuario (`private.user_org_ids()`). Las queries tenant-scoped filtran además por `ctx.organizationId`.
 - En H0 solo hay lectura: `organizations` y `memberships` de las organizaciones del usuario, y su propio `profiles`. No hay grants ni policies de escritura.
 - ESLint impide importar `db/client` fuera de `db/tenant.ts` (y de dos archivos de test).
-- `withTenant()` no resuelve ni valida la organización activa: recibe un contexto confiable (claims verificados y organización ya validada). Resolverla y validarla contra las memberships activas corresponde al bloque Auth/Tenant Context (H0.6), mediante `requireTenant()` (DEC-019).
+- `withTenant()` no resuelve ni valida la organización activa: recibe un contexto confiable (claims verificados y organización ya validada). Los claims verificados llegan con Supabase Auth (H0.6); resolver y validar la organización activa contra las memberships activas corresponde a Tenant Resolution (H0.7), mediante `requireTenant()` (DEC-019).
 
 ## Convenciones
 

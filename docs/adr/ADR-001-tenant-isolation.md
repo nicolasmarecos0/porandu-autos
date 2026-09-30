@@ -154,7 +154,7 @@ Criterios de aceptación:
 
 1. **Latencia real y topología de deployment** Vercel → Supabase en la misma región, incluido el overhead de `withTenant`.
 2. **Runtime oficial por Supavisor en modo transacción, pool y serverless:** el cliente de H0 (`db/client.ts`) por el pooler cloud (puerto 6543, usuario `app_runtime.<project_ref>`) desde las funciones de Vercel, con tamaño de pool, límites de conexión y comportamiento de las conexiones. E2 ya validó el pooler cloud con el spike (C4, C6).
-3. **JWKS:** fetch, caché y rotación de claves al verificar claims en serverless.
+3. **Verificación de claims en el runtime oficial:** integrar la verificación de H0.6 contra el JWKS del proyecto en las funciones de Vercel y probarla, con fetch, caché y rotación de claves. E2 ya validó tokens contra el JWKS real de staging (§4 y §5): no queda pendiente demostrar que la verificación contra JWKS funciona.
 4. **TLS `verify-full`** con el certificado de Supabase. E2 usó `sslmode=require` (TLS sin verificar la CA).
 5. **Credencial real de `app_runtime`** en staging y en el runtime: dónde vive y cómo se rota. Staging no tiene hoy `app_runtime`: lo crea `0001`, sin password, y la password se fija fuera de las migraciones. En el spike fue efímera por corrida y quedó anulada al terminar.
 

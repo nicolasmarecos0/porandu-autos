@@ -31,7 +31,7 @@ Trabajás sobre una baseline ya definida. **No es una fase de ideación.** Tu ro
 - **Multi-tenancy (DEC-006 / ADR-001 / DEC-019):**
   - Nunca importar `db/client` fuera de `db/tenant.ts`. El guard de ESLint lo impide.
   - Toda query tenant-scoped pasa por `withTenant()` (`db/tenant.ts`), el mecanismo aprobado en ADR-001. `withUser()` solo lee las memberships propias antes de elegir organización.
-  - `withTenant()` no resuelve ni valida la organización activa: recibe un contexto confiable. Esa validación corresponde a `requireTenant()` (bloque Auth/Tenant Context).
+  - `withTenant()` no resuelve ni valida la organización activa: recibe un contexto confiable. Esa validación corresponde a `requireTenant()` (Tenant Resolution, H0.7).
   - Nunca confiar en un `organization_id` enviado por el cliente sin validarlo contra la membership.
   - Toda tabla con `organization_id` tiene RLS habilitado.
   - ADR-001 está aceptada (`docs/adr/ADR-001-tenant-isolation.md`). Sus reglas obligatorias (§3) aplican a todo código de runtime, migración y privilegios.
