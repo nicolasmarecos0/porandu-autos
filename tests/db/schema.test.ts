@@ -109,7 +109,7 @@ describe("profiles", () => {
     expect(await columns(db.admin, "profiles")).toEqual([
       // Sin default: el id es siempre el de auth.users.
       { name: "id", type: "uuid", notNull: true, default: null },
-      { name: "full_name", type: "text", notNull: true, default: null },
+      { name: "full_name", type: "text", notNull: false, default: null },
       ...TIMESTAMPS,
     ]);
     expect(await constraints(db.admin, "profiles")).toEqual({
@@ -319,6 +319,18 @@ describe("constraints con datos", () => {
         (sp) =>
           sp`INSERT INTO public.profiles (id, full_name) VALUES (${unknown}, 'Sin usuario')`,
       );
+    });
+  });
+
+  it("un perfil ligado a auth.users se crea sin full_name", async () => {
+    const userC = "00000000-0000-4000-8000-00000000000c";
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await tx`INSERT INTO auth.users (id) VALUES (${userC})`;
+      const [profile] = await tx<{ id: string; fullName: string | null }[]>`
+        INSERT INTO public.profiles (id) VALUES (${userC})
+        RETURNING id, full_name AS "fullName"
+      `;
+      expect(profile).toEqual({ id: userC, fullName: null });
     });
   });
 

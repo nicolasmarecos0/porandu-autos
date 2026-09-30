@@ -65,7 +65,7 @@ describe("db/schema", () => {
     expect(foreignKeys("organizations")).toEqual([]);
   });
 
-  it("profiles: el PK es el id de auth.users", () => {
+  it("profiles: el PK es el id de auth.users y full_name es opcional", () => {
     expect(column("profiles", "id")).toMatchObject({
       columnType: "PgUUID",
       primary: true,
@@ -74,6 +74,10 @@ describe("db/schema", () => {
     expect(foreignKeys("profiles")).toEqual([
       "id -> auth.users(id) ON DELETE cascade",
     ]);
+    expect(column("profiles", "full_name")).toMatchObject({
+      notNull: false,
+      hasDefault: false,
+    });
   });
 
   it("organizations y profiles no tienen organization_id", () => {
