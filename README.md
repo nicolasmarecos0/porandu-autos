@@ -135,6 +135,16 @@ tests/        unit/, db/ (PostgreSQL real), tenant/, e2e/
 docs/         Baselines, Build Baseline y Decisions Log
 ```
 
+## Autenticación (H0.6)
+
+Supabase Auth con email + password (DEC-012), solo del lado del servidor:
+
+- `lib/supabase/server.ts` crea, por request, un cliente de `@supabase/ssr` que solo expone `auth`, con `NEXT_PUBLIC_SUPABASE_URL` y la publishable key. No hay cliente de Supabase en el navegador, ni secret key, ni service role.
+- La identidad sale de `requireUser()` / `getAuthenticatedUser()` (`lib/auth/session.ts`), que usan `auth.getClaims()`: firma verificada contra el JWKS del proyecto y expiración. Nunca `getSession()`. `lib/auth/claims.ts` exige `sub` UUID y `role = authenticated`, rechaza usuarios anónimos y solo deja pasar los claims obligatorios de Supabase: ninguna organización sale de los claims.
+- `/login` (Server Component) llama a la Server Action `signIn`. `signOut` (botón "Cerrar sesión" del shell) revoca la sesión actual y vuelve a `/login`. No hay registro público, magic link, OAuth ni reset de password.
+- `proxy.ts` (la convención de Next 16 que reemplaza a `middleware.ts`) refresca las cookies de sesión (`HttpOnly`, `SameSite=Lax`, `Secure` en producción) y manda a `/login` las navegaciones sin usuario verificado. No consulta Postgres ni resuelve tenant, y no es la barrera de autorización.
+- El layout de `(app)` exige un usuario verificado. **No valida membership ni organización**: eso llega con Tenant Resolution (H0.7, `requireTenant()`).
+
 ## Acceso a datos y tenant isolation
 
 Implementa ADR-001 (`db/tenant.ts` y la migración `0001_tenant_isolation`):
