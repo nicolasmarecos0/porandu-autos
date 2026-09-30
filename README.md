@@ -89,13 +89,26 @@ Separación runtime / migraciones (ADR-001):
 | `pnpm format` / `pnpm format:check` | Prettier |
 | `pnpm test` | Vitest (unit e integración), una sola corrida |
 | `pnpm test:watch` | Vitest en modo watch |
+| `pnpm test:db` | Migraciones y schema contra un PostgreSQL 17 desechable (ver "Base de datos") |
 | `pnpm test:e2e` | Playwright |
-| `pnpm db:generate` | Genera una migración desde el schema de Drizzle |
-| `pnpm db:migrate` | Aplica las migraciones |
-| `pnpm db:studio` | Drizzle Studio |
+| `pnpm db:generate` | Genera una migración desde el schema de Drizzle (no se conecta a la base) |
+| `pnpm db:migrate` | Aplica las migraciones con `MIGRATION_DATABASE_URL` (rol `postgres`) |
 | `pnpm sb:start` / `sb:stop` / `sb:status` | Supabase local |
 
 Antes de abrir un PR deben pasar: `pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build`.
+
+## Base de datos
+
+- El schema de Drizzle vive en `db/schema/` y las migraciones en `db/migrations/` (única fuente). `db:generate` y `db:migrate` leen `MIGRATION_DATABASE_URL` del entorno o de `.env.local`; la variable del entorno prevalece.
+- Las migraciones apuntan a Supabase: dependen de `auth.users` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
+- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`). El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
+
+```bash
+docker run -d --rm --name porandu-pg17 -p 127.0.0.1:55432:5432 \
+  -e POSTGRES_USER=test_admin -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17
+TEST_ADMIN_DATABASE_URL=postgresql://test_admin@127.0.0.1:55432/postgres pnpm test:db
+docker stop porandu-pg17
+```
 
 ---
 
@@ -109,7 +122,7 @@ db/           Schema Drizzle, migraciones y acceso tenant-scoped
 mocks/        Fixtures tipados para el vertical slice
 lib/          env, auth, logger y utilidades de infraestructura
 supabase/     Configuración de Supabase local
-tests/        unit/, tenant/, e2e/
+tests/        unit/, db/ (PostgreSQL real), tenant/, e2e/
 docs/         Baselines, Build Baseline y Decisions Log
 ```
 
