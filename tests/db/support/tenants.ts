@@ -1,6 +1,7 @@
 import type { Sql } from "postgres";
 
 import type { TenantContext, UserContext } from "@/db/tenant";
+import { resolveTenant } from "@/lib/tenant/resolution";
 
 /*
  * Tenants de prueba. Se insertan con el superusuario y quedan committeados:
@@ -79,9 +80,12 @@ export async function seedTenants(admin: Sql): Promise<void> {
 
 /*
  * Contextos que en runtime salen de la identidad verificada por Supabase Auth
- * (H0.6) y, con la organización activa validada, de Tenant Resolution (H0.7).
- * En los tests se construyen directo: un contexto "falsificado" (usuario de
- * una organización ajena) es solo otra combinación.
+ * (H0.6) y, con la organización activa validada, de Tenant Resolution (H0.7,
+ * requireTenant()). withTenant() solo acepta un TenantContext emitido por
+ * resolveTenant(), así que los tests lo piden ahí con la membership que
+ * quieren probar. Un contexto "falsificado" (usuario con una organización
+ * donde no tiene membership activa) modela una resolución salteada o con un
+ * bug: RLS igual lo contiene.
  */
 export function userContext(userId: string): UserContext {
   return { userId, claims: { sub: userId, role: "authenticated" } };
@@ -91,5 +95,15 @@ export function tenantContext(
   userId: string,
   organizationId: string,
 ): TenantContext {
-  return { ...userContext(userId), organizationId };
+  const role =
+    MEMBERSHIPS.find(
+      (m) => m.userId === userId && m.organizationId === organizationId,
+    )?.role ?? "seller";
+  const resolution = resolveTenant(
+    userContext(userId),
+    [{ organizationId, organizationName: "Organización", role }],
+    undefined,
+  );
+  if (resolution.kind !== "resolved") throw new Error("unresolved tenant");
+  return resolution.context;
 }
