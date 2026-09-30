@@ -62,6 +62,28 @@ const noDbClientRelativeDynamicImport = {
   message: DB_CLIENT_MESSAGE,
 };
 
+// H0.7 (ADR-001 §4): withUser() lee las memberships propias antes de elegir
+// organización y no tiene organización: solo lo usa la query oficial
+// (db/queries/memberships.ts). Todo lo demás pasa por withTenant().
+const WITH_USER_MESSAGE =
+  "withUser() only reads the user's own memberships (db/queries/memberships.ts). Tenant-scoped data goes through requireTenant() + withTenant().";
+const withUserImport = {
+  regex: "(^|/)db/tenant$|^\\.{1,2}/tenant$",
+  importNames: ["withUser"],
+  message: WITH_USER_MESSAGE,
+};
+
+// H0.7: resolveTenant() es el único que emite un TenantContext. Solo lo
+// llama requireTenant() (lib/tenant/session.ts), después de verificar al
+// usuario y leer sus memberships activas.
+const RESOLVE_TENANT_MESSAGE =
+  "Only requireTenant() (lib/tenant/session.ts) resolves the tenant. Get a TenantContext with requireTenant().";
+const resolveTenantImport = {
+  regex: "(^|/)lib/tenant/resolution$|^\\.{1,2}/(tenant/)?resolution$",
+  importNames: ["resolveTenant"],
+  message: RESOLVE_TENANT_MESSAGE,
+};
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -73,7 +95,10 @@ const eslintConfig = defineConfig([
         ...noMigrationUrl,
         noDbClientDynamicImport,
       ],
-      "no-restricted-imports": ["error", { patterns: [dbClientImport] }],
+      "no-restricted-imports": [
+        "error",
+        { patterns: [dbClientImport, withUserImport, resolveTenantImport] },
+      ],
     },
   },
   {
@@ -87,7 +112,14 @@ const eslintConfig = defineConfig([
       ],
       "no-restricted-imports": [
         "error",
-        { patterns: [dbClientImport, dbClientRelativeImport] },
+        {
+          patterns: [
+            dbClientImport,
+            dbClientRelativeImport,
+            withUserImport,
+            resolveTenantImport,
+          ],
+        },
       ],
     },
   },
@@ -103,14 +135,51 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // Los tests arman escenarios (contextos falsificados, memberships
+  // revocadas) con withUser() y resolveTenant(). db/client sigue vedado.
+  {
+    files: ["tests/**"],
+    rules: {
+      "no-restricted-imports": ["error", { patterns: [dbClientImport] }],
+    },
+  },
+  // Único módulo que importa withUser(): la query de memberships propias.
+  {
+    files: ["db/queries/memberships.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            dbClientImport,
+            dbClientRelativeImport,
+            resolveTenantImport,
+          ],
+        },
+      ],
+    },
+  },
+  // Único módulo que importa resolveTenant(): requireTenant().
+  {
+    files: ["lib/tenant/session.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [dbClientImport, withUserImport] },
+      ],
+    },
+  },
   // Únicos módulos que acceden a db/client: el boundary y, en tests, la
   // prueba del propio cliente y el acceso de bajo nivel de tests/db.
   {
-    files: [
-      "db/tenant.ts",
-      "tests/unit/db/client.test.ts",
-      "tests/db/support/runtime.ts",
-    ],
+    files: ["db/tenant.ts"],
+    rules: {
+      "no-restricted-syntax": ["error", ...noMigrationUrl],
+      "no-restricted-imports": ["error", { patterns: [resolveTenantImport] }],
+    },
+  },
+  {
+    files: ["tests/unit/db/client.test.ts", "tests/db/support/runtime.ts"],
     rules: {
       "no-restricted-syntax": ["error", ...noMigrationUrl],
       "no-restricted-imports": "off",

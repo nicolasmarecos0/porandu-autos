@@ -23,7 +23,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       >
         Saltar al contenido
       </a>
-      {/* Sesión (H0.6). El selector de organización llega con H0.7. */}
+      {/* Sesión (H0.6). La organización se elige en /select-organization (H0.7). */}
       <TopBar>
         <SignOutButton />
       </TopBar>

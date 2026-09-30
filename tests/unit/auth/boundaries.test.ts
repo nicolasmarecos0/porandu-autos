@@ -6,13 +6,15 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /*
- * Fronteras de H0.6, verificadas sobre el código fuente con el AST de
+ * Fronteras de H0.6 y H0.7, verificadas sobre el código fuente con el AST de
  * TypeScript (los comentarios no cuentan):
  * - nada que llegue al navegador alcanza Supabase, cookies de servidor,
  *   credenciales ni db/;
  * - la autorización server-side usa getClaims(), nunca getSession();
  * - ninguna credencial privilegiada se referencia;
- * - el proxy y la autenticación no dependen de Postgres.
+ * - el proxy y la autenticación no dependen de Postgres;
+ * - db/client solo lo importa db/tenant.ts, withUser() solo lo llama la
+ *   query de memberships propias y resolveTenant() solo requireTenant().
  * Next además falla el build si un Client Component importa un módulo con
  * `import "server-only"`.
  */
@@ -167,6 +169,23 @@ function methodCalls(info: ModuleInfo, method: string): number {
   return count;
 }
 
+/** Llamadas directas `name(...)` en el código (no en comentarios). */
+function functionCalls(info: ModuleInfo, name: string): number {
+  let count = 0;
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === name
+    ) {
+      count += 1;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(info.source);
+  return count;
+}
+
 /** Identificadores, nombres de propiedad y strings del código. */
 function codeTokens(info: ModuleInfo): string[] {
   const tokens: string[] = [];
@@ -189,6 +208,8 @@ const SERVER_ONLY_TARGETS = [
   /^db\//,
   /^lib\/supabase\//,
   /^lib\/auth\/session\.ts$/,
+  /^lib\/tenant\/session\.ts$/,
+  /^lib\/tenant\/cookie\.ts$/,
   /^lib\/env\.server\.ts$/,
 ];
 
@@ -213,6 +234,21 @@ describe("frontera cliente / servidor", () => {
     },
   );
 
+  it("encuentra el selector de organización", () => {
+    expect(clientModules.map((info) => rel(info.path))).toContain(
+      "components/tenant/organization-picker.tsx",
+    );
+  });
+
+  it("el selector llega al servidor solo como referencia a una Server Action", () => {
+    const picker = modules.get(
+      join(ROOT, "components/tenant/organization-picker.tsx"),
+    );
+    const actions = modules.get(join(ROOT, "lib/tenant/actions.ts"));
+    expect(picker?.imports).toContain(join(ROOT, "lib/tenant/actions.ts"));
+    expect(actions?.directive).toBe("use server");
+  });
+
   it("el login llega al servidor solo como referencia a una Server Action", () => {
     const form = modules.get(join(ROOT, "components/auth/login-form.tsx"));
     const actions = modules.get(join(ROOT, "lib/auth/actions.ts"));
@@ -225,8 +261,11 @@ describe("frontera cliente / servidor", () => {
     "lib/supabase/proxy.ts",
     "lib/auth/session.ts",
     "lib/env.server.ts",
+    "lib/tenant/session.ts",
+    "lib/tenant/cookie.ts",
     "db/client.ts",
     "db/tenant.ts",
+    "db/queries/memberships.ts",
   ])("%s es server-only", (path) => {
     expect(modules.get(join(ROOT, path))?.imports).toContain("server-only");
   });
@@ -308,4 +347,44 @@ describe("credenciales", () => {
       expect(database).toEqual([]);
     },
   );
+});
+
+describe("Tenant Resolution (H0.7)", () => {
+  function importersOf(target: string): string[] {
+    return [...modules.values()]
+      .filter((info) => info.imports.includes(join(ROOT, target)))
+      .map((info) => rel(info.path));
+  }
+
+  function callersOf(name: string): string[] {
+    return [...modules.values()]
+      .filter((info) => functionCalls(info, name) > 0)
+      .map((info) => rel(info.path));
+  }
+
+  it("db/client solo lo importa db/tenant.ts: no hay bypass del boundary", () => {
+    expect(importersOf("db/client.ts")).toEqual(["db/tenant.ts"]);
+  });
+
+  it("withUser() solo lo llama la query de memberships propias", () => {
+    expect(callersOf("withUser")).toEqual(["db/queries/memberships.ts"]);
+  });
+
+  it("resolveTenant() (el único que emite TenantContext) solo lo llama requireTenant()", () => {
+    expect(callersOf("resolveTenant")).toEqual(["lib/tenant/session.ts"]);
+  });
+
+  it("la cookie de organización solo se escribe en el selector y se borra en el logout", () => {
+    expect(callersOf("writeActiveOrganization")).toEqual([
+      "lib/tenant/actions.ts",
+    ]);
+    expect(callersOf("clearActiveOrganization")).toEqual([
+      "lib/auth/actions.ts",
+    ]);
+  });
+
+  it("el área (app) está detrás de requireTenant()", () => {
+    const layout = modules.get(join(ROOT, "app/(app)/layout.tsx"));
+    expect(layout && functionCalls(layout, "requireTenant")).toBe(1);
+  });
 });

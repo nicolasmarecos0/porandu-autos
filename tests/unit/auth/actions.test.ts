@@ -6,6 +6,9 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { signIn, signOut } from "@/lib/auth/actions";
+import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
+
+import { cookieJar, type CookieJar } from "../support/cookie-jar";
 
 /*
  * Server Actions de login y logout con el cliente de Supabase Auth simulado.
@@ -31,6 +34,7 @@ const mocks = vi.hoisted(() => {
     RedirectSignal,
     auth,
     createAuthClient: vi.fn(async () => auth),
+    jar: null as CookieJar | null,
     redirect: vi.fn((path: string) => {
       throw new RedirectSignal(path);
     }),
@@ -41,6 +45,12 @@ vi.mock("@/lib/supabase/server", () => ({
   createAuthClient: mocks.createAuthClient,
 }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next/headers", () => ({
+  cookies: async () => {
+    if (!mocks.jar) throw new Error("no cookie jar");
+    return mocks.jar.store;
+  },
+}));
 
 const EMAIL = "vendedor@example.test";
 const PASSWORD = "  pw-que-no-se-loguea  ";
@@ -85,7 +95,19 @@ beforeEach(() => {
     error: null,
   });
   mocks.auth.signOut.mockResolvedValue({ error: null });
+  mocks.jar = cookieJar({ [ACTIVE_ORGANIZATION_COOKIE]: ORG });
 });
+
+/** Set-Cookie que borra la cookie de organización activa (H0.7). */
+function expectOrganizationCookieCleared(): void {
+  const cleared = (mocks.jar?.setCookies() ?? []).filter((header) =>
+    header.startsWith(`${ACTIVE_ORGANIZATION_COOKIE}=`),
+  );
+  expect(cleared).toHaveLength(1);
+  expect(cleared[0]).toMatch(new RegExp(`^${ACTIVE_ORGANIZATION_COOKIE}=;`));
+  expect(cleared[0]).toMatch(/; Expires=Thu, 01 Jan 1970 00:00:00 GMT(;|$)/);
+  expect(cleared[0]).toMatch(/; Path=\/(;|$)/);
+}
 
 afterEach(() => {
   // Ningún camino de login o logout loguea credenciales.
@@ -245,6 +267,69 @@ describe("signIn", () => {
   );
 });
 
+describe("signIn y la cookie de organización (H0.7)", () => {
+  it("login exitoso elimina la preferencia de organización previa", async () => {
+    expect(
+      await redirectOf(
+        signIn(null, form({ email: EMAIL, password: PASSWORD })),
+      ),
+    ).toBe("/cockpit");
+
+    expectOrganizationCookieCleared();
+  });
+
+  it("login exitoso sin cookie previa no crea una organización", async () => {
+    mocks.jar = cookieJar();
+
+    await redirectOf(signIn(null, form({ email: EMAIL, password: PASSWORD })));
+
+    const written = mocks.jar
+      .setCookies()
+      .filter((header) => header.startsWith(`${ACTIVE_ORGANIZATION_COOKIE}=`));
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatch(new RegExp(`^${ACTIVE_ORGANIZATION_COOKIE}=;`));
+  });
+
+  it.each([
+    [
+      "credenciales inválidas",
+      () =>
+        mocks.auth.signInWithPassword.mockResolvedValue({
+          data: { user: null, session: null },
+          error: new AuthApiError("x", 400, "invalid_credentials"),
+        }),
+    ],
+    [
+      "proveedor caído",
+      () =>
+        mocks.auth.signInWithPassword.mockRejectedValue(
+          new Error("fetch failed"),
+        ),
+    ],
+  ])(
+    "login fallido (%s): no borra, no crea ni usa una organización",
+    async (_, arrange) => {
+      arrange();
+
+      const state = await signIn(
+        null,
+        form({ email: EMAIL, password: PASSWORD, organizationId: ORG }),
+      );
+
+      expect(state?.error).toBeDefined();
+      expect(mocks.redirect).not.toHaveBeenCalled();
+      expect(mocks.jar?.setCookies()).toEqual([]);
+      expect(mocks.jar?.store.get(ACTIVE_ORGANIZATION_COOKIE)?.value).toBe(ORG);
+    },
+  );
+
+  it("una validación fallida del formulario tampoco toca la cookie", async () => {
+    await signIn(null, form({ email: "vendedor", password: PASSWORD }));
+
+    expect(mocks.jar?.setCookies()).toEqual([]);
+  });
+});
+
 describe("signOut", () => {
   it("cierra la sesión actual en Supabase y redirige a /login", async () => {
     const path = await redirectOf(signOut());
@@ -254,18 +339,26 @@ describe("signOut", () => {
     expect(path).toBe("/login");
   });
 
-  it("redirige a /login aunque la revocación remota falle", async () => {
+  it("borra la cookie de organización activa", async () => {
+    await redirectOf(signOut());
+
+    expectOrganizationCookieCleared();
+  });
+
+  it("redirige a /login aunque la revocación remota falle, y borra la cookie de organización", async () => {
     mocks.auth.signOut.mockResolvedValue({
       error: new AuthRetryableFetchError("fetch failed", 0),
     });
 
     expect(await redirectOf(signOut())).toBe("/login");
     expect(consoleSpies.error).toHaveBeenCalledTimes(1);
+    expectOrganizationCookieCleared();
   });
 
-  it("redirige a /login aunque el cliente lance", async () => {
+  it("redirige a /login aunque el cliente lance, y borra la cookie de organización", async () => {
     mocks.auth.signOut.mockRejectedValue(new Error("boom"));
 
     expect(await redirectOf(signOut())).toBe("/login");
+    expectOrganizationCookieCleared();
   });
 });

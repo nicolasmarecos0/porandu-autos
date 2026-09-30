@@ -3,6 +3,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 
 import type { VerifiedClaims } from "@/lib/auth/claims";
+import { isTenantContext, type TenantContext } from "@/lib/tenant/resolution";
 
 import { getDb, type RuntimeDatabase } from "./client";
 
@@ -26,9 +27,13 @@ import { getDb, type RuntimeDatabase } from "./client";
  *
  * Este módulo no verifica tokens ni valida organizaciones: recibe un contexto
  * confiable. Supabase Auth (H0.6, lib/auth/) produce la identidad con claims
- * verificados; Tenant Resolution (H0.7, `requireTenant()`) construirá el
- * TenantContext con la organización activa validada contra las memberships
- * activas del usuario. Hasta entonces solo los tests construyen contextos.
+ * verificados; Tenant Resolution (H0.7, `requireTenant()` en
+ * lib/tenant/session.ts) construye el TenantContext con la organización
+ * activa validada contra las memberships activas del usuario. withTenant()
+ * lo consume pero no puede inventarlo: rechaza todo objeto que no haya
+ * emitido lib/tenant/resolution.ts, aunque tenga la forma correcta.
+ * withUser() solo lo usa la query de memberships propias
+ * (db/queries/memberships.ts); ESLint lo impide en cualquier otro módulo.
  */
 
 /** Usuario autenticado, todavía sin organización elegida. */
@@ -37,8 +42,11 @@ export type UserContext = Readonly<{
   claims: VerifiedClaims;
 }>;
 
-/** Usuario autenticado y organización ya validada contra sus memberships. */
-export type TenantContext = UserContext & Readonly<{ organizationId: string }>;
+/**
+ * Usuario autenticado y organización ya validada contra sus memberships. Es
+ * opaco: solo Tenant Resolution lo construye (lib/tenant/resolution.ts).
+ */
+export type { TenantContext };
 
 /** Transacción de withUser/withTenant: rol `authenticated` y claims locales. */
 export type ScopedTransaction = Parameters<
@@ -116,6 +124,11 @@ export async function withTenant<T>(
   ctx: TenantContext,
   fn: (tx: ScopedTransaction) => Promise<T>,
 ): Promise<T> {
+  // Un objeto plano, un AuthenticatedUser o una copia de un contexto con
+  // otra organización no pasan: solo lo que emitió Tenant Resolution.
+  if (!isTenantContext(ctx)) {
+    throw new TenantContextError("not issued by Tenant Resolution");
+  }
   const claims = claimsOf(ctx);
   if (!isUuid(ctx.organizationId)) {
     throw new TenantContextError("organizationId must be a UUID");

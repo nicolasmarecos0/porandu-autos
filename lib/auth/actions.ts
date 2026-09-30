@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { createAuthClient } from "@/lib/supabase/server";
+import { clearActiveOrganization } from "@/lib/tenant/cookie";
 
 import {
   loginErrorFrom,
@@ -54,6 +55,10 @@ export async function signIn(
   }
   if (failure) return { error: failure, email };
 
+  // La preferencia de organización (H0.7) pertenece a la sesión anterior: no
+  // se hereda al cambiar de cuenta en el mismo navegador. Solo tras un login
+  // exitoso; un intento fallido no toca la sesión vigente.
+  await clearActiveOrganization();
   // Fuera del try: redirect() lanza para cortar la acción.
   redirect(HOME_PATH);
 }
@@ -69,5 +74,8 @@ export async function signOut(): Promise<void> {
   } catch (error) {
     logAuthFailure("signOut", error);
   }
+  // La preferencia de organización (H0.7) no sobrevive a la sesión: se
+  // borra siempre, aunque la revocación remota haya fallado.
+  await clearActiveOrganization();
   redirect(LOGIN_PATH);
 }

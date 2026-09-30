@@ -34,6 +34,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-018 | H0.4 SaaS Core Schema | Aceptada | 2026-09-29 |
 | DEC-019 | H0.5 Tenant Isolation | Aceptada | 2026-09-30 |
 | DEC-020 | H0.6 Supabase Auth | Aceptada | 2026-09-30 |
+| DEC-021 | H0.7 Tenant Resolution | Aceptada | 2026-09-30 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -265,6 +266,27 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 - **Consecuencias:**
   - E3 no reinventa la verificación contra el JWKS: valida el comportamiento de `getClaims()` en el runtime serverless real, incluidas la caché y la rotación de claves y la topología de deployment.
   - La Build Baseline no se reescribe: DEC-020 prevalece sobre ella en estos puntos (DEC-002).
+
+## DEC-021 — H0.7 Tenant Resolution
+- **Estado:** Aceptada · 2026-09-30
+- **Decisión:** H0.7 completa la cadena `AuthenticatedUser → memberships activas → organización activa → TenantContext confiable → withTenant()`:
+  - **`requireTenant()`** resuelve el tenant a partir del `AuthenticatedUser` verificado (H0.6) y de sus memberships activas leídas en la base en cada request:
+    - 0 memberships activas → `/no-access`;
+    - 1 membership activa → esa organización, automáticamente;
+    - 2+ memberships activas → una cookie válida selecciona la organización; cookie ausente o inválida → `/select-organization`.
+  - **Cookie de organización:** es solo un hint no confiable. Nunca autoriza por sí misma: se valida contra las memberships activas en cada request.
+  - **Fuente de autoridad:** el `organizationId` final y el `role` del `TenantContext` provienen de una membership activa validada en la base. JWT, formulario, query string y cookie nunca son fuente de autoridad para role ni tenant.
+  - **`TenantContext` opaco:** es un tipo branded y solo lo emite el boundary oficial de Tenant Resolution. `withTenant()` rechaza cualquier contexto no emitido por ese boundary.
+  - **`withUser()`** queda restringido a la query oficial de memberships propias.
+  - **Hito 1:** todo loader o Server Action tenant-scoped ejecuta `requireTenant()` junto a sus queries y pasa ese contexto a `withTenant()`. El layout de `(app)` es solo un gate de UX.
+  - **Selector:** revalida la membership en la base antes de escribir la cookie.
+  - **Logout y login exitoso** eliminan la preferencia de organización anterior.
+  - **Fuera de H0.7:** parámetro `next`, provisioning y gestión de miembros.
+- **Aclara:** la Build Baseline B1 §3.1 (tenant context validado en cada request y selector de organización), DEC-019 (quién construye el contexto que recibe `withTenant()`) y DEC-020 (Tenant Resolution como alcance de H0.7).
+- **Consecuencias:**
+  - `CLAUDE.md` §3 se alinea con esta decisión (`requireTenant() → TenantContext → withTenant()`).
+  - Los detalles de implementación que no forman parte de la decisión (nombre, atributos y duración de la cookie) quedan documentados en el README y pueden ajustarse sin cambiar el modelo de seguridad.
+  - La Build Baseline no se reescribe: DEC-021 prevalece sobre ella en estos puntos (DEC-002).
 
 ---
 
