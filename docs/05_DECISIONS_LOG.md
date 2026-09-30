@@ -35,6 +35,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-019 | H0.5 Tenant Isolation | Aceptada | 2026-09-30 |
 | DEC-020 | H0.6 Supabase Auth | Aceptada | 2026-09-30 |
 | DEC-021 | H0.7 Tenant Resolution | Aceptada | 2026-09-30 |
+| DEC-022 | Official Staging Database Operations | Aceptada | 2026-09-30 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -287,6 +288,22 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - `CLAUDE.md` §3 se alinea con esta decisión (`requireTenant() → TenantContext → withTenant()`).
   - Los detalles de implementación que no forman parte de la decisión (nombre, atributos y duración de la cookie) quedan documentados en el README y pueden ajustarse sin cambiar el modelo de seguridad.
   - La Build Baseline no se reescribe: DEC-021 prevalece sobre ella en estos puntos (DEC-002).
+
+## DEC-022 — Official Staging Database Operations
+- **Estado:** Aceptada · 2026-09-30
+- **Decisión:** `.github/workflows/staging-db.yml` (Staging DB) es la vía oficial para las operaciones de base de datos de staging: preflight, migraciones, credencial de `app_runtime`, verificación y acceptance.
+  - **Ejecución:** manual (`workflow_dispatch`), exclusivamente desde `main` y con el environment `staging`. Antes de conectar valida que el project ref coincida entre `vars.STAGING_PROJECT_REF`, la confirmación del input, `STAGING_SUPABASE_URL` y el usuario del Session pooler.
+  - **Migraciones:** usan exclusivamente la credencial `postgres` (Session pooler) y solo `db/migrations`, con `pnpm db:migrate`.
+  - **Runtime:** usa exclusivamente `app_runtime` por el Supavisor transaction pooler (6543).
+  - **Password de `app_runtime`:** vive en el GitHub secret `STAGING_RUNTIME_DB_PASSWORD`, nunca en migraciones ni en el repositorio, y no puede ser la de `postgres`. El provisioning manda a Postgres un verificador SCRAM-SHA-256, no el texto plano. Rotar es volver a correr el provisioning con el secret nuevo.
+  - **`STAGING_SECRET_KEY`:** excepción operacional, permitida únicamente para la Supabase Auth Admin API (crear y eliminar usuarios sintéticos) dentro del acceptance y la limpieza sintética de staging. Solo en GitHub Actions y en el environment `staging`. Jamás se despliega al runtime: nunca Vercel, navegador, queries de producto ni Data API.
+  - **Preflight:** de solo lectura, falla cerrado ante cualquier estado inesperado (historial, objetos ajenos, residuos, privilegios) y nunca limpia automáticamente ni usa `CASCADE`.
+  - **Datos sintéticos:** llevan marcas explícitas y se eliminan al terminar cada acceptance. El schema, el historial de migraciones y `app_runtime` permanecen como infraestructura oficial de staging.
+  - **Data API:** en este gate se considera segura si no existe acceso lateral a datos: ninguna request REST o GraphQL, con la publishable key o con un token sintético, devuelve tablas, datos o schema de la app. No se fija un código HTTP concreto como contrato. La comprobación fuerte es el acceptance Auth → Tenant con datos sintéticos.
+- **Aclara:** ADR-001 §7, punto 5 (credencial real de `app_runtime`: en staging vive en `STAGING_RUNTIME_DB_PASSWORD` y se rota con el workflow), y ADR-001 §8 y `CLAUDE.md` §3 respecto de la secret key, que sigue sin aprobarse para la aplicación.
+- **Consecuencias:**
+  - `CLAUDE.md` §3 registra la excepción de `STAGING_SECRET_KEY`. El README documenta el workflow, sus operaciones y el runbook.
+  - H0.9/E3 cubre Vercel, la misma región, el runtime oficial desplegado, la latencia, el JWKS en serverless y el TLS `verify-full` pendiente.
 
 ---
 
