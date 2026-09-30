@@ -1,21 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   isSyntheticUser,
-  listSyntheticUsers,
   parseRunId,
   readSecretKey,
   syntheticAppMetadata,
   syntheticEmail,
   syntheticOrganizationName,
-  type AdminAuth,
-  type SyntheticCandidate,
+  wrapAuthAdmin,
 } from "../../../scripts/staging/synthetic.mts";
 
 /*
  * Marcas de los datos sintéticos del acceptance Auth → Tenant
- * (scripts/staging/synthetic.mts). La limpieza contra la base está en
- * tests/db/staging-tooling.test.ts.
+ * (scripts/staging/synthetic.mts). El listado por SQL y la limpieza contra
+ * la base están en tests/db/staging-tooling.test.ts.
  */
 
 describe("marcas", () => {
@@ -63,54 +61,48 @@ describe("marcas", () => {
   });
 });
 
-describe("listSyntheticUsers", () => {
-  it("recorre todas las páginas de la Admin API y filtra por marca", async () => {
-    const pages: SyntheticCandidate[][] = [
-      Array.from({ length: 1000 }, (_, i) => ({
-        id: `real-${i}`,
-        email: `u${i}@example.test`,
-        app_metadata: {},
-      })),
-      [
-        {
-          id: "s1",
-          email: syntheticEmail("r1", "a"),
-          app_metadata: syntheticAppMetadata("r1"),
-        },
-        {
-          id: "s2",
-          email: syntheticEmail("r2", "a"),
-          app_metadata: syntheticAppMetadata("r2"),
-        },
-      ],
-    ];
-    const admin: AdminAuth = {
-      async listUsers({ page }) {
-        return { data: { users: pages[page - 1] ?? [] }, error: null };
-      },
-      async deleteUser() {
-        throw new Error("not used");
-      },
-    };
-    expect((await listSyntheticUsers(admin)).map((u) => u.id)).toEqual([
-      "s1",
-      "s2",
-    ]);
-    expect((await listSyntheticUsers(admin, "r2")).map((u) => u.id)).toEqual([
-      "s2",
-    ]);
+describe("wrapAuthAdmin (STAGING_SECRET_KEY, DEC-022)", () => {
+  it("solo crea usuarios con las dos marcas sintéticas, confirmados", async () => {
+    const createUser = vi.fn(async () => ({
+      data: { user: { id: "u1" } },
+      error: null,
+    }));
+    const admin = wrapAuthAdmin({ createUser, deleteUser: vi.fn() });
+    expect(Object.keys(admin).sort()).toEqual(["createUser", "deleteUser"]);
+    expect(
+      await admin.createUser({ runId: "r1", key: "a", password: "pw" }),
+    ).toEqual({ id: "u1", email: syntheticEmail("r1", "a") });
+    expect(createUser).toHaveBeenCalledWith({
+      email: "synthetic-a-r1@porandu-synthetic.test",
+      password: "pw",
+      email_confirm: true,
+      app_metadata: { porandu_synthetic: "h0-staging-rollout", run_id: "r1" },
+    });
   });
 
-  it("falla si la Admin API falla", async () => {
-    const admin: AdminAuth = {
-      async listUsers() {
-        return { data: null, error: new Error("401") };
-      },
-      async deleteUser() {
-        return { error: null };
-      },
-    };
-    await expect(listSyntheticUsers(admin)).rejects.toThrow(/listUsers failed/);
+  it("rechaza claves o corridas inválidas antes de llamar a la API", async () => {
+    const createUser = vi.fn();
+    const admin = wrapAuthAdmin({ createUser, deleteUser: vi.fn() });
+    await expect(
+      admin.createUser({ runId: "r1", key: "../x", password: "pw" }),
+    ).rejects.toThrow();
+    await expect(
+      admin.createUser({ runId: "R 1", key: "a", password: "pw" }),
+    ).rejects.toThrow();
+    expect(createUser).not.toHaveBeenCalled();
+  });
+
+  it("un error de la API nombra solo el código", async () => {
+    const admin = wrapAuthAdmin({
+      createUser: async () => ({
+        data: { user: null },
+        error: { code: "email_exists" },
+      }),
+      deleteUser: vi.fn(),
+    });
+    await expect(
+      admin.createUser({ runId: "r1", key: "a", password: "pw-secret" }),
+    ).rejects.toThrow("Auth Admin API: createUser failed (email_exists).");
   });
 });
 

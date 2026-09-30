@@ -25,12 +25,12 @@ import { resolveTenant } from "@/lib/tenant/resolution";
 import { getActiveMemberships, requireTenant } from "@/lib/tenant/session";
 
 import {
-  adminClient,
   cleanupSynthetic,
   listSyntheticUsers,
-  syntheticAppMetadata,
   syntheticEmail,
   syntheticOrganizationName,
+  syntheticUserAdmin,
+  type SyntheticUserAdmin,
 } from "../../../scripts/staging/synthetic.mts";
 import { probeDataApi } from "../../../scripts/staging/verify.mts";
 import { closeRuntimePool } from "../../db/support/runtime";
@@ -92,7 +92,8 @@ export function describeAuthTenantAcceptance(
   describe("Supabase Auth → getClaims() → memberships → requireTenant() → withTenant() → RLS", () => {
     let t: AuthTenantTarget;
     let fixtures: Sql;
-    let admin: ReturnType<typeof adminClient>;
+    /** STAGING_SECRET_KEY: solo crear y eliminar usuarios (DEC-022). */
+    let admin: SyntheticUserAdmin;
     const users = {} as Record<UserKey, SyntheticUser>;
     const orgs = {} as Record<OrgKey, string>;
 
@@ -182,24 +183,17 @@ export function describeAuthTenantAcceptance(
         prepare: false,
         onnotice: () => {},
       });
-      admin = adminClient(t.supabaseUrl, t.secretKey);
+      admin = syntheticUserAdmin(t.supabaseUrl, t.secretKey);
 
-      // Usuarios reales de Supabase Auth, solo por la Admin API.
+      // Usuarios reales de Supabase Auth, solo por la Auth Admin API.
       for (const key of USER_KEYS) {
-        const email = syntheticEmail(t.runId, key);
         const password = randomBytes(24).toString("base64url");
-        const { data, error } = await admin.auth.admin.createUser({
-          email,
+        const { id, email } = await admin.createUser({
+          runId: t.runId,
+          key,
           password,
-          email_confirm: true,
-          app_metadata: syntheticAppMetadata(t.runId),
         });
-        if (error || !data.user) {
-          throw new Error(
-            `createUser ${key} failed: ${error?.code ?? "no user"}`,
-          );
-        }
-        users[key] = { id: data.user.id, email, password };
+        users[key] = { id, email, password };
       }
 
       // Profiles, organizaciones y memberships con la credencial de migración.
@@ -232,7 +226,7 @@ export function describeAuthTenantAcceptance(
       try {
         // Idempotente: el último test ya limpió si llegó a correr.
         if (fixtures && admin) {
-          await cleanupSynthetic(fixtures, admin.auth.admin, t.runId);
+          await cleanupSynthetic(fixtures, admin, t.runId);
         }
       } finally {
         await fixtures?.end({ timeout: 5 });
@@ -249,7 +243,7 @@ export function describeAuthTenantAcceptance(
         email: syntheticEmail(t.runId, "signup"),
         password: randomBytes(24).toString("base64url"),
       });
-      if (data.user) await admin.auth.admin.deleteUser(data.user.id);
+      if (data.user) await admin.deleteUser(data.user.id);
       expect(error).not.toBeNull();
       expect(data.user).toBeNull();
     });
@@ -467,18 +461,14 @@ export function describeAuthTenantAcceptance(
     });
 
     it("limpieza: borra usuarios, profiles, organizaciones y memberships sintéticos", async () => {
-      const report = await cleanupSynthetic(
-        fixtures,
-        admin.auth.admin,
-        t.runId,
-      );
+      const report = await cleanupSynthetic(fixtures, admin, t.runId);
       expect(report).toEqual({
         users: USER_KEYS.length,
         profiles: USER_KEYS.length,
         memberships: MEMBERSHIPS.length,
         organizations: ORG_KEYS.length,
       });
-      expect(await listSyntheticUsers(admin.auth.admin, t.runId)).toEqual([]);
+      expect(await listSyntheticUsers(fixtures, t.runId)).toEqual([]);
       const [left] = await fixtures<{ count: number }[]>`
         SELECT count(*)::int AS count FROM public.organizations
         WHERE starts_with(name, ${syntheticOrganizationName(t.runId, "")})

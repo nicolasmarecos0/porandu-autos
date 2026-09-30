@@ -28,11 +28,11 @@ import {
 } from "../../scripts/staging/scram.mts";
 import {
   cleanupSynthetic,
+  listSyntheticUsers,
   syntheticAppMetadata,
   syntheticEmail,
   syntheticOrganizationName,
-  type AdminAuth,
-  type SyntheticCandidate,
+  type SyntheticUserAdmin,
 } from "../../scripts/staging/synthetic.mts";
 import { verifyCatalog } from "../../scripts/staging/verify.mts";
 import { describeRuntimeAcceptance } from "../staging/support/runtime-spec";
@@ -489,52 +489,49 @@ describeRuntimeAcceptance({
   iterations: 30,
 });
 
-describe("limpieza de datos sintéticos (Admin API simulada)", () => {
+describe("limpieza de datos sintéticos (Auth Admin API simulada)", () => {
   const RUN = "local-1";
-  const users: SyntheticCandidate[] = [];
+  const synthetic: string[] = [];
   const realUser = randomUUID();
+  /** Dominio sintético pero sin la marca de app_metadata: nunca se borra. */
+  const unmarkedUser = randomUUID();
+  const deleted: string[] = [];
   let realOrg = "";
   let syntheticOrgs: string[] = [];
 
-  function fakeAdmin(): AdminAuth {
-    return {
-      async listUsers({ page }) {
-        return { data: { users: page === 1 ? [...users] : [] }, error: null };
-      },
-      async deleteUser(id) {
-        await migrated.admin`DELETE FROM auth.users WHERE id = ${id}`;
-        users.splice(
-          users.findIndex((user) => user.id === id),
-          1,
-        );
-        return { error: null };
-      },
-    };
-  }
+  /** Lo único que la limpieza hace con la secret key: eliminar usuarios. */
+  const fakeAdmin: Pick<SyntheticUserAdmin, "deleteUser"> = {
+    async deleteUser(id) {
+      await migrated.admin`DELETE FROM auth.users WHERE id = ${id}`;
+      deleted.push(id);
+      return { error: null };
+    },
+  };
 
   beforeAll(async () => {
-    // En Supabase, auth.users tiene email y postgres puede leerla; el shim
-    // del harness solo tiene lo que necesita la FK de profiles.
+    // En Supabase, auth.users tiene email y raw_app_meta_data, y postgres
+    // puede leerla; el shim del harness solo tiene lo que necesita la FK.
     await migrated.admin.unsafe(`
       ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS email text;
+      ALTER TABLE auth.users ADD COLUMN IF NOT EXISTS raw_app_meta_data jsonb;
       GRANT SELECT ON auth.users TO postgres;
     `);
+    const addUser = async (id: string, email: string, metadata: object) => {
+      await migrated.admin`
+        INSERT INTO auth.users (id, email, raw_app_meta_data)
+        VALUES (${id}, ${email}, ${migrated.admin.json(metadata as never)})
+      `;
+      await migrated.admin`INSERT INTO public.profiles (id) VALUES (${id})`;
+    };
     for (const key of ["a", "b"]) {
       const id = randomUUID();
-      const email = syntheticEmail(RUN, key);
-      users.push({ id, email, app_metadata: syntheticAppMetadata(RUN) });
-      await migrated.admin`INSERT INTO auth.users (id, email) VALUES (${id}, ${email})`;
-      await migrated.admin`INSERT INTO public.profiles (id) VALUES (${id})`;
+      synthetic.push(id);
+      await addUser(id, syntheticEmail(RUN, key), syntheticAppMetadata(RUN));
     }
-    // Un usuario real con el dominio sintético pero sin la marca de
-    // app_metadata: nunca se borra.
-    users.push({
-      id: realUser,
-      email: syntheticEmail("other", "x"),
-      app_metadata: {},
+    await addUser(realUser, "real@example.test", { provider: "email" });
+    await addUser(unmarkedUser, syntheticEmail(RUN, "x"), {
+      provider: "email",
     });
-    await migrated.admin`INSERT INTO auth.users (id, email) VALUES (${realUser}, 'real@example.test')`;
-    await migrated.admin`INSERT INTO public.profiles (id) VALUES (${realUser})`;
 
     const orgs = await migrated.admin<{ id: string }[]>`
       INSERT INTO public.organizations (name) VALUES
@@ -547,13 +544,25 @@ describe("limpieza de datos sintéticos (Admin API simulada)", () => {
     realOrg = orgs[2]!.id;
     await migrated.admin`
       INSERT INTO public.memberships (organization_id, user_id, role) VALUES
-        (${syntheticOrgs[0]!}, ${users[0]!.id}, 'admin'),
-        (${syntheticOrgs[1]!}, ${users[1]!.id}, 'seller'),
+        (${syntheticOrgs[0]!}, ${synthetic[0]!}, 'admin'),
+        (${syntheticOrgs[1]!}, ${synthetic[1]!}, 'seller'),
         (${realOrg}, ${realUser}, 'admin')
     `;
   });
 
-  it("el preflight del acceptance Auth → Tenant detecta sobrantes de otra corrida", async () => {
+  it("encuentra por SQL solo usuarios con las dos marcas, sin la secret key", async () => {
+    const sql = connect(migrated.migrationUrl);
+    try {
+      expect(
+        (await listSyntheticUsers(sql, RUN)).map((u) => u.id).sort(),
+      ).toEqual([...synthetic].sort());
+      expect(await listSyntheticUsers(sql, "other-run")).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it("el preflight del acceptance Auth → Tenant detecta sobrantes", async () => {
     expect(
       failures(await preflightOf(migrated, "auth-tenant-acceptance", [], true)),
     ).toEqual([...HARNESS_ONLY, "synthetic.leftovers"]);
@@ -566,7 +575,7 @@ describe("limpieza de datos sintéticos (Admin API simulada)", () => {
     `;
     const sql = connect(migrated.migrationUrl);
     try {
-      await expect(cleanupSynthetic(sql, fakeAdmin(), RUN)).rejects.toThrow(
+      await expect(cleanupSynthetic(sql, fakeAdmin, RUN)).rejects.toThrow(
         /non-synthetic users/,
       );
     } finally {
@@ -580,13 +589,13 @@ describe("limpieza de datos sintéticos (Admin API simulada)", () => {
       SELECT count(*)::int AS count FROM public.organizations
     `;
     expect(count?.count).toBe(3);
-    expect(users).toHaveLength(3);
+    expect(deleted).toEqual([]);
   });
 
   it("borra solo lo sintético de la corrida, sin CASCADE ni DDL", async () => {
     const sql = connect(migrated.migrationUrl);
     try {
-      expect(await cleanupSynthetic(sql, fakeAdmin(), RUN)).toEqual({
+      expect(await cleanupSynthetic(sql, fakeAdmin, RUN)).toEqual({
         users: 2,
         profiles: 2,
         memberships: 2,
@@ -595,15 +604,23 @@ describe("limpieza de datos sintéticos (Admin API simulada)", () => {
     } finally {
       await sql.end({ timeout: 5 });
     }
-    expect(users.map((user) => user.id)).toEqual([realUser]);
+    expect(deleted.sort()).toEqual([...synthetic].sort());
     const remaining = await migrated.admin<{ name: string }[]>`
       SELECT name FROM public.organizations ORDER BY name
     `;
     expect(remaining.map((row) => row.name)).toEqual(["Organización real"]);
-    const [profiles] = await migrated.admin<{ count: number }[]>`
-      SELECT count(*)::int AS count FROM public.profiles
+    const profiles = await migrated.admin<{ id: string }[]>`
+      SELECT id FROM public.profiles ORDER BY id
     `;
-    expect(profiles?.count).toBe(1);
+    expect(profiles.map((p) => p.id)).toEqual([realUser, unmarkedUser].sort());
+
+    // Sin la marca no se borra, pero el preflight lo sigue señalando: se
+    // resuelve a mano.
+    expect(
+      failures(await preflightOf(migrated, "auth-tenant-acceptance", [], true)),
+    ).toEqual([...HARNESS_ONLY, "synthetic.leftovers"]);
+    await migrated.admin`DELETE FROM public.profiles WHERE id = ${unmarkedUser}`;
+    await migrated.admin`DELETE FROM auth.users WHERE id = ${unmarkedUser}`;
     expect(
       failures(await preflightOf(migrated, "auth-tenant-acceptance", [], true)),
     ).toEqual(HARNESS_ONLY);

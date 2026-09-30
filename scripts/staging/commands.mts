@@ -12,7 +12,7 @@ import {
   writeSummary,
   type Finding,
 } from "./report.mts";
-import { adminClient, cleanupSynthetic } from "./synthetic.mts";
+import { cleanupSynthetic, syntheticUserAdmin } from "./synthetic.mts";
 import { redact } from "./target.mts";
 import {
   probeDataApi,
@@ -196,9 +196,9 @@ export async function cleanupSyntheticCommand(
   if (!ctx.secretKey) {
     throw new Error("cleanup-synthetic requires STAGING_SECRET_KEY.");
   }
-  const admin = adminClient(ctx.supabaseUrl, ctx.secretKey);
+  const admin = syntheticUserAdmin(ctx.supabaseUrl, ctx.secretKey);
   const result = await withConnection(ctx.migrationUrl, (sql) =>
-    cleanupSynthetic(sql, admin.auth.admin, runId),
+    cleanupSynthetic(sql, admin, runId),
   );
   return report(
     ctx,

@@ -73,16 +73,41 @@ export function isSyntheticUser(
   );
 }
 
-/** Lo que usa la limpieza de la Admin API de Supabase Auth. */
-export type AdminAuth = {
-  listUsers(params: { page: number; perPage: number }): Promise<{
-    data: { users: SyntheticCandidate[] } | null;
-    error: unknown;
+/*
+ * STAGING_SECRET_KEY (DEC-022): excepción operacional, solo en el workflow
+ * Staging DB (environment `staging`) y solo para la Auth Admin API: crear y
+ * eliminar usuarios sintéticos. Nunca runtime, Vercel ni navegador, y nunca
+ * queries de producto ni Data API. Por eso el cliente con la secret key no
+ * sale de este módulo: syntheticUserAdmin() expone solo esas dos
+ * operaciones, y buscar usuarios sintéticos es una lectura SQL de
+ * auth.users con la credencial de migración.
+ */
+
+/** Lo único que el tooling puede hacer con la secret key. */
+export type SyntheticUserAdmin = {
+  createUser(input: {
+    runId: string;
+    key: string;
+    password: string;
+  }): Promise<{ id: string; email: string }>;
+  deleteUser(id: string): Promise<{ error: unknown }>;
+};
+
+/** La parte de la Admin API de Supabase Auth que usa el wrapper. */
+export type AuthAdminApi = {
+  createUser(attributes: {
+    email: string;
+    password: string;
+    email_confirm: boolean;
+    app_metadata: Record<string, string>;
+  }): Promise<{
+    data: { user: { id: string } | null };
+    error: { code?: unknown } | null;
   }>;
   deleteUser(id: string): Promise<{ error: unknown }>;
 };
 
-/** STAGING_SECRET_KEY: solo tooling de datos sintéticos, nunca runtime. */
+/** STAGING_SECRET_KEY: solo Auth Admin API de datos sintéticos (DEC-022). */
 export function readSecretKey(env: EnvSource): string {
   const key = env.STAGING_SECRET_KEY?.trim() ?? "";
   if (!key.startsWith("sb_secret_")) {
@@ -93,33 +118,71 @@ export function readSecretKey(env: EnvSource): string {
   return key;
 }
 
+/** Crea solo usuarios con las dos marcas sintéticas. */
+export function wrapAuthAdmin(admin: AuthAdminApi): SyntheticUserAdmin {
+  return {
+    async createUser({ runId, key, password }) {
+      const email = syntheticEmail(runId, key);
+      const { data, error } = await admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        app_metadata: syntheticAppMetadata(runId),
+      });
+      if (error || !data.user) {
+        const code = typeof error?.code === "string" ? error.code : "no user";
+        throw new Error(`Auth Admin API: createUser failed (${code}).`);
+      }
+      return { id: data.user.id, email };
+    },
+    deleteUser: (id) => admin.deleteUser(id),
+  };
+}
+
 /**
- * Admin API de Supabase Auth con la secret key. Sin sesión persistida ni
- * refresh: es un cliente de servidor efímero del tooling.
+ * Auth Admin API con la secret key, sin sesión persistida ni refresh. El
+ * cliente de Supabase no se devuelve: solo crear y eliminar usuarios.
  */
-export function adminClient(supabaseUrl: string, secretKey: string) {
-  return createClient(supabaseUrl, secretKey, {
+export function syntheticUserAdmin(
+  supabaseUrl: string,
+  secretKey: string,
+): SyntheticUserAdmin {
+  const client = createClient(supabaseUrl, secretKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
       detectSessionInUrl: false,
     },
   });
+  return wrapAuthAdmin(client.auth.admin);
 }
 
-const PAGE_SIZE = 1000;
-
+/**
+ * Usuarios sintéticos (dominio y marca de app_metadata) de una corrida o de
+ * todas. Lectura de auth.users con la credencial de migración: no usa la
+ * secret key.
+ */
 export async function listSyntheticUsers(
-  admin: AdminAuth,
+  sql: Sql,
   runId?: string,
 ): Promise<SyntheticCandidate[]> {
-  const found: SyntheticCandidate[] = [];
-  for (let page = 1; ; page++) {
-    const { data, error } = await admin.listUsers({ page, perPage: PAGE_SIZE });
-    if (error || !data) throw new Error("Auth Admin API: listUsers failed.");
-    found.push(...data.users.filter((user) => isSyntheticUser(user, runId)));
-    if (data.users.length < PAGE_SIZE) return found;
-  }
+  const rows = await sql<
+    { id: string; email: string | null; app_metadata: unknown }[]
+  >`
+    SELECT id, email, raw_app_meta_data AS app_metadata FROM auth.users
+    WHERE email LIKE ${`%@${SYNTHETIC_EMAIL_DOMAIN}`}
+    ORDER BY id
+  `;
+  return rows
+    .map((row) => ({
+      id: row.id,
+      email: row.email,
+      app_metadata:
+        typeof row.app_metadata === "object" && row.app_metadata !== null
+          ? (row.app_metadata as Record<string, unknown>)
+          : null,
+    }))
+    .filter((user) => isSyntheticUser(user, runId));
 }
 
 export type CleanupReport = Readonly<{
@@ -136,11 +199,11 @@ export type CleanupReport = Readonly<{
  */
 export async function cleanupSynthetic(
   sql: Sql,
-  admin: AdminAuth,
+  admin: Pick<SyntheticUserAdmin, "deleteUser">,
   runId?: string,
 ): Promise<CleanupReport> {
   if (runId !== undefined) parseRunId(runId);
-  const users = await listSyntheticUsers(admin, runId);
+  const users = await listSyntheticUsers(sql, runId);
   const userIds = users.map((user) => user.id);
   const orgPrefix =
     runId === undefined
