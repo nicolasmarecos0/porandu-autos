@@ -55,6 +55,10 @@ export async function signIn(
   }
   if (failure) return { error: failure, email };
 
+  // La preferencia de organización (H0.7) pertenece a la sesión anterior: no
+  // se hereda al cambiar de cuenta en el mismo navegador. Solo tras un login
+  // exitoso; un intento fallido no toca la sesión vigente.
+  await clearActiveOrganization();
   // Fuera del try: redirect() lanza para cortar la acción.
   redirect(HOME_PATH);
 }

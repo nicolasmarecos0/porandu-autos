@@ -144,7 +144,7 @@ Supabase Auth con email + password (DEC-012), solo del lado del servidor:
 - `/login` (Server Component) llama a la Server Action `signIn`. `signOut` (botón "Cerrar sesión" del shell) revoca la sesión actual y vuelve a `/login`. No hay registro público, magic link, OAuth ni reset de password.
 - `proxy.ts` (la convención de Next 16 que reemplaza a `middleware.ts`) refresca las cookies de sesión (`HttpOnly`, `SameSite=Lax`, `Secure` en producción) y manda a `/login` las navegaciones sin usuario verificado. No consulta Postgres ni resuelve tenant, y no es la barrera de autorización.
 - El layout de `(app)` exige un usuario verificado y además resuelve el tenant (ver "Tenant Resolution (H0.7)").
-- `signOut` también borra la cookie de organización activa.
+- Un login exitoso y `signOut` borran la cookie de organización activa: la preferencia no se hereda entre cuentas. Un login fallido no la toca.
 
 ## Tenant Resolution (H0.7)
 

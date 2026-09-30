@@ -267,6 +267,69 @@ describe("signIn", () => {
   );
 });
 
+describe("signIn y la cookie de organización (H0.7)", () => {
+  it("login exitoso elimina la preferencia de organización previa", async () => {
+    expect(
+      await redirectOf(
+        signIn(null, form({ email: EMAIL, password: PASSWORD })),
+      ),
+    ).toBe("/cockpit");
+
+    expectOrganizationCookieCleared();
+  });
+
+  it("login exitoso sin cookie previa no crea una organización", async () => {
+    mocks.jar = cookieJar();
+
+    await redirectOf(signIn(null, form({ email: EMAIL, password: PASSWORD })));
+
+    const written = mocks.jar
+      .setCookies()
+      .filter((header) => header.startsWith(`${ACTIVE_ORGANIZATION_COOKIE}=`));
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatch(new RegExp(`^${ACTIVE_ORGANIZATION_COOKIE}=;`));
+  });
+
+  it.each([
+    [
+      "credenciales inválidas",
+      () =>
+        mocks.auth.signInWithPassword.mockResolvedValue({
+          data: { user: null, session: null },
+          error: new AuthApiError("x", 400, "invalid_credentials"),
+        }),
+    ],
+    [
+      "proveedor caído",
+      () =>
+        mocks.auth.signInWithPassword.mockRejectedValue(
+          new Error("fetch failed"),
+        ),
+    ],
+  ])(
+    "login fallido (%s): no borra, no crea ni usa una organización",
+    async (_, arrange) => {
+      arrange();
+
+      const state = await signIn(
+        null,
+        form({ email: EMAIL, password: PASSWORD, organizationId: ORG }),
+      );
+
+      expect(state?.error).toBeDefined();
+      expect(mocks.redirect).not.toHaveBeenCalled();
+      expect(mocks.jar?.setCookies()).toEqual([]);
+      expect(mocks.jar?.store.get(ACTIVE_ORGANIZATION_COOKIE)?.value).toBe(ORG);
+    },
+  );
+
+  it("una validación fallida del formulario tampoco toca la cookie", async () => {
+    await signIn(null, form({ email: "vendedor", password: PASSWORD }));
+
+    expect(mocks.jar?.setCookies()).toEqual([]);
+  });
+});
+
 describe("signOut", () => {
   it("cierra la sesión actual en Supabase y redirige a /login", async () => {
     const path = await redirectOf(signOut());
