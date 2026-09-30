@@ -33,6 +33,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-017 | Opportunities Surface Boundaries | Aceptada | 2026-09-28 |
 | DEC-018 | H0.4 SaaS Core Schema | Aceptada | 2026-09-29 |
 | DEC-019 | H0.5 Tenant Isolation | Aceptada | 2026-09-30 |
+| DEC-020 | H0.6 Supabase Auth | Aceptada | 2026-09-30 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -245,6 +246,25 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - `CLAUDE.md` §3 se alinea con esta decisión (guard de `db/client` y alcance de `withTenant()`).
   - El aislamiento ya lo validaron E1 y E2 (ADR-001) y el harness lo cubre en CI. E3 no lo vuelve a validar.
   - La Build Baseline no se reescribe: DEC-019 prevalece sobre ella en estos puntos (DEC-002).
+
+## DEC-020 — H0.6 Supabase Auth
+- **Estado:** Aceptada · 2026-09-30
+- **Decisión:** H0.6 implementa Supabase Auth (DEC-012) solo para autenticación e identidad verificada:
+  - **Server-side only.** Se usan únicamente `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. No hay cliente de Supabase de datos ni de navegador en B1.
+  - **Credenciales.** La Auth web nunca usa service role, la credencial de migración (`MIGRATION_DATABASE_URL`) ni la de runtime (`RUNTIME_DATABASE_URL`).
+  - **Identidad confiable.** Se obtiene con `auth.getClaims()`, que verifica el access token. `getSession()` no se usa para decisiones de autorización.
+  - **Usuario válido.** `sub` es un UUID válido, `role` es `authenticated` y el usuario no es anónimo.
+  - **Sin organización.** H0.6 no acepta ni deriva `organizationId` desde el JWT, el formulario, la query ni ningún otro input del cliente.
+  - **Cookies de sesión:** `HttpOnly`, `SameSite=Lax` y `Secure` en producción.
+  - **Login B1:** solo email + password. Quedan fuera el signup público, Magic Link, OAuth, reset de password e invitaciones.
+  - **Redirects.** El login exitoso redirige a `/cockpit`. En H0 no existe parámetro `next`, para no introducir redirects arbitrarios.
+  - **Logout** usa `scope: "local"` y cierra solo la sesión del dispositivo actual.
+  - **`proxy.ts`** refresca la sesión y sus cookies y hace redirects optimistas de autenticación. No es la barrera final de autorización.
+  - **Alcance.** H0.6 valida solo autenticación. Membership, organización activa, cookie de organización, `requireTenant()`, selector de organización y `/no-access` pertenecen a Tenant Resolution (H0.7).
+- **Aclara:** la Build Baseline B1 §3.1 (Supabase Auth: login, logout y sesión) y ADR-001 §7, punto 3 de E3.
+- **Consecuencias:**
+  - E3 no reinventa la verificación contra el JWKS: valida el comportamiento de `getClaims()` en el runtime serverless real, incluidas la caché y la rotación de claves y la topología de deployment.
+  - La Build Baseline no se reescribe: DEC-020 prevalece sobre ella en estos puntos (DEC-002).
 
 ---
 
