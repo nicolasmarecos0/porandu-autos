@@ -16,8 +16,9 @@ import { getServerEnv } from "@/lib/env.server";
  * - `prepare: false`: Supavisor en modo transacción no soporta prepared
  *   statements con nombre (ADR-001 §4).
  *
- * Fuera de db/ solo lo importan sus tests. El acceso tenant-scoped pasará por
- * withTenant() (db/tenant.ts), que operará sobre este cliente.
+ * Como app_runtime no tiene privilegios directos, una query sobre este
+ * cliente fuera de withUser()/withTenant() (db/tenant.ts) falla cerrado.
+ * ESLint solo permite importarlo desde db/tenant.ts y sus tests.
  */
 
 export type RuntimeDatabase = PostgresJsDatabase & { $client: Sql };

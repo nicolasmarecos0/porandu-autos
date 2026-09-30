@@ -1,14 +1,18 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
   pgEnum,
+  pgPolicy,
   pgTable,
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import { authenticatedRole } from "drizzle-orm/supabase";
 
 import { timestamps } from "./columns";
 import { organizations } from "./organizations";
+import { userOrgIds } from "./policies";
 import { profiles } from "./profiles";
 
 /*
@@ -28,6 +32,9 @@ export const membershipRole = pgEnum("membership_role", ["admin", "seller"]);
  *   pasar a `false`.
  * - Borrar una organización con memberships se rechaza (RESTRICT). Borrar un
  *   usuario de `auth.users` borra su perfil y sus memberships (CASCADE).
+ *
+ * Lectura: las memberships de las organizaciones donde el usuario tiene
+ * membership activa. Sin policies de escritura (default deny).
  */
 export const memberships = pgTable(
   "memberships",
@@ -48,8 +55,13 @@ export const memberships = pgTable(
       t.organizationId,
       t.userId,
     ),
-    // Memberships de un usuario (resolución del tenant y, en H0.5,
+    // Memberships de un usuario (resolución del tenant y
     // private.user_org_ids()).
     index("memberships_user_id_idx").on(t.userId),
+    pgPolicy("memberships_select_member", {
+      for: "select",
+      to: authenticatedRole,
+      using: sql`${t.organizationId} IN ${userOrgIds}`,
+    }),
   ],
 ).enableRLS();
