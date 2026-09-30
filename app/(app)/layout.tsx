@@ -1,20 +1,23 @@
 import { AppShell } from "@/components/shell/app-shell";
-import { requireUser } from "@/lib/auth/session";
+import { requireTenant } from "@/lib/tenant/session";
 
 /*
- * Auth guard de H0.6: sin usuario verificado (claims de `auth.getClaims()`),
- * redirect a /login.
+ * Gate de Tenant Resolution (H0.7) para el área (app):
+ * - sin usuario verificado → /login;
+ * - usuario sin memberships activas → /no-access;
+ * - varias organizaciones y ninguna elección válida → /select-organization;
+ * - tenant válido → el producto.
  *
- * Es SOLO autenticación: NO valida membership ni organización. Tenant
- * Resolution (H0.7) suma `requireTenant()` y el selector de organización. En
- * H0.6 las páginas muestran mock data y no hacen queries tenant-scoped.
- *
- * Un layout no se vuelve a renderizar en las navegaciones del cliente
- * (partial rendering). Esas navegaciones pasan por el redirect optimista de
- * proxy.ts, y la autorización sobre datos se verifica junto a los datos
- * (`requireTenant()` en H0.7).
+ * Es un gate de UX, NO la autorización sobre los datos. Un layout no se
+ * vuelve a renderizar en las navegaciones del cliente (partial rendering) y
+ * no le pasa el contexto a las páginas. Todo loader o Server Action
+ * tenant-scoped (Hito 1) llama a `requireTenant()` junto a sus queries y le
+ * pasa ese TenantContext a `withTenant()`, que no acepta ningún otro. Dentro
+ * de una misma request, `cache()` hace que esa segunda llamada no repita la
+ * verificación ni las queries. En H0 las páginas muestran mock data y no
+ * hacen queries tenant-scoped.
  */
 export default async function AppLayout({ children }: LayoutProps<"/">) {
-  await requireUser();
+  await requireTenant();
   return <AppShell>{children}</AppShell>;
 }

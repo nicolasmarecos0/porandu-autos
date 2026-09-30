@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { createAuthClient } from "@/lib/supabase/server";
+import { clearActiveOrganization } from "@/lib/tenant/cookie";
 
 import {
   loginErrorFrom,
@@ -69,5 +70,8 @@ export async function signOut(): Promise<void> {
   } catch (error) {
     logAuthFailure("signOut", error);
   }
+  // La preferencia de organización (H0.7) no sobrevive a la sesión: se
+  // borra siempre, aunque la revocación remota haya fallado.
+  await clearActiveOrganization();
   redirect(LOGIN_PATH);
 }
