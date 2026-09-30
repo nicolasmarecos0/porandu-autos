@@ -488,60 +488,117 @@ export async function serviceRolePrivileges(
   return tablePrivileges(tx, "service_role");
 }
 
-type ProbeResponse = {
-  status: number;
-  code: string | null;
-  rows: number | null;
-};
+/*
+ * Data API (ADR-001 §3.3 y §3.4, DEC-022). El contrato no es un status
+ * concreto: cómo responde una Data API deshabilitada, no disponible o no
+ * autorizada depende de Supabase (E2 vio 503 PGRST002). El contrato es que
+ * ninguna respuesta exitosa exponga tablas, datos o schema de Porandú. Solo
+ * se registran status y categoría: nunca el cuerpo.
+ */
 
-async function probe(url: string, init: RequestInit): Promise<ProbeResponse> {
+/** Tablas de la app; pg_graphql las expone como `<tabla>Collection`. */
+const DATA_API_TABLES = ["organizations", "profiles", "memberships"];
+/** Nombres que pg_graphql daría a los tipos de la app. */
+const GRAPHQL_APP_TYPES = [
+  "Organizations",
+  "Profiles",
+  "Memberships",
+  "MembershipRole",
+];
+
+export type DataApiProbeKind =
+  "rest-table" | "rest-root" | "graphql-collection" | "graphql-schema";
+
+export function responseCategory(status: number): string {
+  if (status >= 200 && status < 300) return "success";
+  if (status >= 300 && status < 400) return "redirect";
+  if (status === 401 || status === 403) return "unauthorized";
+  if (status === 404) return "not found";
+  if (status >= 400 && status < 500) return "rejected";
+  return "unavailable";
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * ¿La respuesta expone algo de Porandú? Solo una respuesta exitosa puede:
+ * - REST por tabla: cualquier éxito (aun vacío, confirma la tabla expuesta);
+ * - REST raíz (OpenAPI): si menciona una tabla de la app;
+ * - GraphQL por colección: si `data.<tabla>Collection` no es null;
+ * - GraphQL introspección: si aparece un tipo de la app.
+ */
+export function exposesPoranduData(
+  kind: DataApiProbeKind,
+  status: number,
+  body: string,
+  table?: string,
+): boolean {
+  if (status < 200 || status >= 300) return false;
+  if (kind === "rest-table") return true;
+  if (kind === "rest-root") {
+    return DATA_API_TABLES.some((name) => body.includes(name));
+  }
+  let data: Record<string, unknown> | null = null;
+  try {
+    data = record(record(JSON.parse(body))?.data);
+  } catch {
+    return false;
+  }
+  if (kind === "graphql-collection") {
+    return data?.[`${table}Collection`] != null;
+  }
+  const schema = record(data?.__schema);
+  const types = Array.isArray(schema?.types) ? schema.types : [];
+  return types.some((type) => {
+    const name = record(type)?.name;
+    return typeof name === "string" && GRAPHQL_APP_TYPES.includes(name);
+  });
+}
+
+type ProbeResult = { label: string; status: number; exposed: boolean };
+
+async function probe(
+  label: string,
+  kind: DataApiProbeKind,
+  url: string,
+  init: RequestInit,
+  table?: string,
+): Promise<ProbeResult> {
   const response = await fetch(url, {
     ...init,
     redirect: "manual",
     signal: AbortSignal.timeout(15_000),
   });
-  let code: string | null = null;
-  let rows: number | null = null;
-  try {
-    const body: unknown = await response.json();
-    if (Array.isArray(body)) rows = body.length;
-    else if (typeof body === "object" && body !== null) {
-      const record = body as Record<string, unknown>;
-      if (typeof record.code === "string") code = record.code;
-      const data = record.data as Record<string, unknown> | null | undefined;
-      const collection = data?.organizationsCollection as
-        { edges?: unknown[] } | null | undefined;
-      if (collection) rows = collection.edges?.length ?? 0;
-    }
-  } catch {
-    // Cuerpo no JSON: solo cuenta el status.
-  }
-  return { status: response.status, code, rows };
+  const body = await response.text();
+  return {
+    label,
+    status: response.status,
+    exposed: exposesPoranduData(kind, response.status, body, table),
+  };
 }
 
-/*
- * Firma de la Data API deshabilitada que observó E2 en staging
- * (ADR-001 §5, Hallazgo 4). Cualquier otra respuesta se reporta.
- */
-const DISABLED = { status: 503, code: "PGRST002" };
-
-function dataApiFinding(check: string, response: ProbeResponse): Finding {
-  const disabled =
-    response.status === DISABLED.status && response.code === DISABLED.code;
-  const leaked = response.status >= 200 && response.status < 300;
+function surfaceFinding(check: string, results: ProbeResult[]): Finding {
+  const exposed = results.filter((r) => r.exposed);
   return finding(
     check,
-    disabled && !leaked,
-    `HTTP ${response.status}${response.code ? ` ${response.code}` : ""}${
-      response.rows === null ? "" : `, ${response.rows} rows`
-    }${disabled ? " (Data API disabled)" : " (expected 503 PGRST002: Data API disabled, ADR-001 §3.3)"}`,
+    exposed.length === 0,
+    results
+      .map(
+        (r) =>
+          `${r.label}: ${r.status} ${responseCategory(r.status)}${r.exposed ? " (EXPOSES PORANDÚ DATA)" : ""}`,
+      )
+      .join(" · "),
   );
 }
 
 /**
- * La Data API no es una ruta lateral a las tablas de la app (ADR-001 §3.3 y
- * §3.4): /rest/v1 y /graphql/v1 no devuelven datos, ni como anon
- * (publishable key) ni, si se pasa, con el access token de un usuario.
+ * La Data API no es una ruta lateral a las tablas de la app: ni con la
+ * publishable key (anon) ni, si se pasa, con el access token de un usuario
+ * sintético. Falla solo si una respuesta expone tablas, datos o schema.
  */
 export async function probeDataApi(
   supabaseUrl: string,
@@ -551,19 +608,49 @@ export async function probeDataApi(
   const headers: Record<string, string> = { apikey: publishableKey };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   const who = accessToken ? "authenticated" : "anon";
-
-  const rest = await probe(`${supabaseUrl}/rest/v1/organizations?select=id`, {
-    headers: { ...headers, Accept: "application/json" },
-  });
-  const graphql = await probe(`${supabaseUrl}/graphql/v1`, {
+  const graphql = (query: string): RequestInit => ({
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query: "{ organizationsCollection { edges { node { id } } } }",
-    }),
+    body: JSON.stringify({ query }),
   });
+  const rest: RequestInit = {
+    headers: { ...headers, Accept: "application/json" },
+  };
+
+  const restResults = [
+    await probe("root", "rest-root", `${supabaseUrl}/rest/v1/`, rest),
+  ];
+  const graphqlResults = [
+    await probe(
+      "schema",
+      "graphql-schema",
+      `${supabaseUrl}/graphql/v1`,
+      graphql("{ __schema { types { name } } }"),
+    ),
+  ];
+  for (const table of DATA_API_TABLES) {
+    restResults.push(
+      await probe(
+        table,
+        "rest-table",
+        `${supabaseUrl}/rest/v1/${table}?select=*&limit=1`,
+        rest,
+      ),
+    );
+    graphqlResults.push(
+      await probe(
+        table,
+        "graphql-collection",
+        `${supabaseUrl}/graphql/v1`,
+        graphql(
+          `{ ${table}Collection(first: 1) { edges { node { __typename } } } }`,
+        ),
+        table,
+      ),
+    );
+  }
   return [
-    dataApiFinding(`data-api.rest (${who})`, rest),
-    dataApiFinding(`data-api.graphql (${who})`, graphql),
+    surfaceFinding(`data-api.rest (${who})`, restResults),
+    surfaceFinding(`data-api.graphql (${who})`, graphqlResults),
   ];
 }
