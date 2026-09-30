@@ -78,9 +78,10 @@ export async function seedTenants(admin: Sql): Promise<void> {
 }
 
 /*
- * Contextos que en H0.6 construirá la autenticación a partir de claims
- * verificados. En los tests se construyen directo: un contexto "falsificado"
- * (usuario de una organización ajena) es solo otra combinación.
+ * Contextos que en runtime salen de la identidad verificada por Supabase Auth
+ * (H0.6) y, con la organización activa validada, de Tenant Resolution (H0.7).
+ * En los tests se construyen directo: un contexto "falsificado" (usuario de
+ * una organización ajena) es solo otra combinación.
  */
 export function userContext(userId: string): UserContext {
   return { userId, claims: { sub: userId, role: "authenticated" } };

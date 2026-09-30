@@ -2,6 +2,8 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
+import type { VerifiedClaims } from "@/lib/auth/claims";
+
 import { getDb, type RuntimeDatabase } from "./client";
 
 /*
@@ -22,15 +24,12 @@ import { getDb, type RuntimeDatabase } from "./client";
  * filtro explícito (defense in depth) y las escrituras lo toman de ahí,
  * nunca del input del cliente.
  *
- * H0.5 no verifica tokens. El contexto lo construirá H0.6 a partir de claims
- * verificados por Supabase Auth y de una organización validada contra las
- * memberships activas del usuario; hasta entonces solo lo construyen tests.
+ * Este módulo no verifica tokens ni valida organizaciones: recibe un contexto
+ * confiable. Supabase Auth (H0.6, lib/auth/) produce la identidad con claims
+ * verificados; Tenant Resolution (H0.7, `requireTenant()`) construirá el
+ * TenantContext con la organización activa validada contra las memberships
+ * activas del usuario. Hasta entonces solo los tests construyen contextos.
  */
-
-/** Claims de un access token verificado por Supabase Auth (H0.6). */
-export type VerifiedClaims = Readonly<
-  Record<string, unknown> & { sub: string; role: "authenticated" }
->;
 
 /** Usuario autenticado, todavía sin organización elegida. */
 export type UserContext = Readonly<{
