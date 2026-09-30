@@ -63,7 +63,7 @@ La migración crea el rol `app_runtime` **sin password**. En local, fijala con l
 psql "<MIGRATION_DATABASE_URL local>" -c "ALTER ROLE app_runtime PASSWORD '<password-local>'"
 ```
 
-En staging, dónde vive y cómo se rota esa credencial queda para E3 (ADR-001 §7).
+En staging, la password vive en el GitHub secret `STAGING_RUNTIME_DB_PASSWORD` y la fija el workflow Staging DB (ver "Staging DB (H0.8)"). Su uso desde Vercel queda para H0.9/E3.
 
 Para detener Supabase local: `pnpm sb:stop`.
 
@@ -98,6 +98,7 @@ Separación runtime / migraciones (ADR-001):
 | `pnpm test` | Vitest (unit e integración), una sola corrida |
 | `pnpm test:watch` | Vitest en modo watch |
 | `pnpm test:db` | Migraciones, schema y aislamiento de tenant contra un PostgreSQL 17 desechable (ver "Base de datos") |
+| `pnpm test:staging` | Acceptance contra el Supabase de staging. Solo lo corre el workflow Staging DB, nunca CI ni una máquina local |
 | `pnpm test:e2e` | Playwright |
 | `pnpm db:generate` | Genera una migración desde el schema de Drizzle (no se conecta a la base) |
 | `pnpm db:migrate` | Aplica las migraciones con `MIGRATION_DATABASE_URL` (rol `postgres`) |
@@ -121,6 +122,53 @@ docker stop porandu-pg17
 
 ---
 
+## Staging DB (H0.8)
+
+El workflow manual **Staging DB** (`.github/workflows/staging-db.yml`) opera la base del proyecto Supabase de staging con el código y las migraciones de `main`: preflight, migraciones oficiales, credencial de `app_runtime`, verificación y acceptance. Sirve para cada migración futura de staging. La lógica vive en `scripts/staging/` (Node 24 ejecuta los `.mts` sin build) y en `tests/staging/`.
+
+**Garantías**
+
+- Solo `workflow_dispatch` desde `main`, con el environment `staging` (aprobación del fundador) y un job a la vez.
+- Antes de conectar valida el destino: el project ref tiene que coincidir entre `vars.STAGING_PROJECT_REF`, el input `confirm_project_ref`, `STAGING_SUPABASE_URL` y el usuario del Session pooler, que tiene que ser el de Supabase en `sa-east-1`. Cualquier otro proyecto aborta.
+- Cada paso recibe solo los secrets que usa. Las URLs con credenciales se arman en memoria y nunca se imprimen; los errores nombran variables, no valores.
+- Cada operación corre primero el preflight de solo lectura (transacción `READ ONLY`): PostgreSQL 17, base `postgres`, rol `postgres` sin superuser, dependencias de Supabase, `pg_graphql` ausente, historial de drizzle igual a un prefijo exacto de `db/migrations` (mismos hashes) y `public` igual a lo que dejan esas migraciones (snapshot de drizzle-kit). Sin historial, tampoco puede existir `private` ni `app_runtime`. Ante cualquier diferencia aborta y la nombra: no limpia nada ni usa `CASCADE`.
+- `migrate` usa solo la credencial `postgres` y aplica con `pnpm db:migrate` (drizzle-kit). Exige declarar las migraciones pendientes (`expected_migrations`) y que coincidan exactamente. drizzle-kit aplica todas las pendientes en una sola transacción.
+- `provision-runtime` fija la password de `app_runtime` desde `STAGING_RUNTIME_DB_PASSWORD`, que no puede ser la de `postgres`. La hashea en el runner (SCRAM-SHA-256) y a la base solo llega el verificador: Supabase registra los `ALTER ROLE` en el log de Postgres, y con este método el texto plano nunca queda ahí.
+- El acceptance del runtime no recibe la credencial de `postgres`. Contra staging nunca corren controles negativos de sesión: todo intento de cambiar rol o claims es local a una transacción.
+
+**Operaciones** (input `operation`)
+
+| Operación | Qué hace | Secrets |
+|---|---|---|
+| `preflight` | Solo el preflight | `STAGING_SUPABASE_URL`, `STAGING_SESSION_POOLER_URL`, `STAGING_DB_PASSWORD` |
+| `migrate` | Preflight → `pnpm db:migrate` → historial exacto → verificación | los anteriores y `STAGING_PUBLISHABLE_KEY` |
+| `provision-runtime` | Preflight → password de `app_runtime` → login por 6543 → acceptance del runtime | los de `preflight` y `STAGING_RUNTIME_DB_PASSWORD` |
+| `verify` | Verificación de catálogo (roles, grants, RLS, policies, `private`) y de la Data API (no devuelve datos) | los de `preflight` y `STAGING_PUBLISHABLE_KEY` |
+| `runtime-acceptance` | `app_runtime` por Supavisor 6543 con `db/tenant.ts`: falla cerrado, contexto limpio tras COMMIT/ROLLBACK/error, no asume otros roles | `STAGING_RUNTIME_DB_PASSWORD` (sin la de `postgres`) |
+| `auth-tenant-acceptance` | Supabase Auth real → `getClaims()` → memberships → `requireTenant()` → `withTenant()` → RLS, con usuarios y organizaciones sintéticos que se borran al terminar | todos, incluida `STAGING_SECRET_KEY` (solo Admin API) |
+| `cleanup-synthetic` | Borra datos sintéticos de corridas interrumpidas | los de `preflight` y `STAGING_SECRET_KEY` |
+
+Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@porandu-synthetic.test` con `app_metadata.porandu_synthetic`, y organizaciones `SYNTHETIC H0 <corrida> · <clave>`. La limpieza solo borra filas con esas marcas, en orden explícito (memberships → organizaciones → profiles → usuarios de Auth) y nunca el schema, las migraciones ni `app_runtime`. Si una organización sintética tiene miembros reales, no borra nada.
+
+**Configuración en GitHub (una vez)**
+
+- Environment `staging`: required reviewer (el fundador) y deployment branches solo `main`.
+- Variable `STAGING_PROJECT_REF` (no secreta): el project ref de staging.
+- Secrets: `STAGING_SUPABASE_URL`, `STAGING_SESSION_POOLER_URL` (el string del Session pooler; puede conservar `[YOUR-PASSWORD]`), `STAGING_DB_PASSWORD`, `STAGING_PUBLISHABLE_KEY`, `STAGING_SECRET_KEY` y `STAGING_RUNTIME_DB_PASSWORD` (32 a 128 caracteres de `[A-Za-z0-9._~-]`, por ejemplo `openssl rand -hex 32`).
+
+**Runbook de una migración**
+
+1. `preflight`: revisar el estado y las migraciones pendientes.
+2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`).
+3. Primer rollout o rotación: `provision-runtime`.
+4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution o el aislamiento.
+
+**`RUNTIME_DATABASE_URL` de staging.** `postgresql://app_runtime.<project_ref>:<password>@aws-<n>-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require`, con la password URL-encoded. El workflow la arma en memoria. Dónde se configura para el runtime desplegado (Vercel) es H0.9/E3; nunca va a un archivo del repositorio.
+
+**Rotación de `app_runtime`.** Actualizar el secret `STAGING_RUNTIME_DB_PASSWORD`, correr `provision-runtime` y actualizar `RUNTIME_DATABASE_URL` donde corra el runtime. Entre esos dos pasos el runtime desplegado no puede conectarse.
+
+`pnpm test:db` valida este tooling contra el PostgreSQL 17 desechable (`tests/db/staging-tooling.test.ts`), incluido el mismo spec del acceptance del runtime. Los acceptance de `tests/staging/` solo corren en el workflow.
+
 ## Estructura
 
 ```text
@@ -131,7 +179,8 @@ db/           Schema Drizzle, migraciones y acceso tenant-scoped
 mocks/        Fixtures tipados para el vertical slice
 lib/          env, auth, logger y utilidades de infraestructura
 supabase/     Configuración de Supabase local
-tests/        unit/, db/ (PostgreSQL real), tenant/, e2e/
+scripts/      Tooling operativo (staging/: workflow Staging DB). La app no lo importa
+tests/        unit/, db/ (PostgreSQL real), staging/ (acceptance en staging), e2e/
 docs/         Baselines, Build Baseline y Decisions Log
 ```
 
