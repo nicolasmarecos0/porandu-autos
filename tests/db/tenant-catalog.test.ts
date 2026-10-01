@@ -12,8 +12,9 @@ import {
 } from "./support/postgres";
 
 /*
- * Roles, grants, función y policies que dejan 0001_tenant_isolation y
- * 0002_opportunities_persistence, leídos del catálogo de PostgreSQL 17
+ * Roles, grants, función y policies que dejan 0001_tenant_isolation,
+ * 0002_opportunities_persistence y 0003_contact_identity_opportunity_create,
+ * leídos del catálogo de PostgreSQL 17
  * (ADR-001 §2, §3.6 y §4; criterios C2, C3 y C9). El acceso a datos se
  * prueba en tenant-isolation.test.ts y opportunities.test.ts.
  */
@@ -162,8 +163,18 @@ describe("rol de runtime app_runtime (ADR-001 §2)", () => {
 });
 
 describe("policies (ADR-001 §4)", () => {
-  it("solo lectura para authenticated, con la forma de referencia", async () => {
+  it("lectura para authenticated y alta de contacts y opportunities con WITH CHECK, con la forma de referencia", async () => {
     expect(await policies(db.admin)).toEqual([
+      {
+        table: "contacts",
+        name: "contacts_insert_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "INSERT",
+        using: null,
+        withCheck:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+      },
       {
         table: "contacts",
         name: "contacts_select_member",
@@ -183,6 +194,16 @@ describe("policies (ADR-001 §4)", () => {
         using:
           "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
         withCheck: null,
+      },
+      {
+        table: "opportunities",
+        name: "opportunities_insert_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "INSERT",
+        using: null,
+        withCheck:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
       },
       {
         table: "opportunities",
@@ -226,9 +247,31 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated solo tiene SELECT sobre las tablas de la app (sin escrituras)", async () => {
-    expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual(
-      TABLES.map((table) => `authenticated SELECT ${table}`),
+  it("authenticated tiene SELECT sobre las tablas de la app e INSERT solo sobre contacts y opportunities", async () => {
+    expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
+      "authenticated INSERT contacts",
+      "authenticated INSERT opportunities",
+      ...TABLES.map((table) => `authenticated SELECT ${table}`),
+    ]);
+  });
+
+  it("authenticated no puede modificar, borrar ni vaciar ninguna tabla", async () => {
+    const writes = (await tablePrivileges(db.admin, ["authenticated"])).filter(
+      (grant) => !/^authenticated (SELECT|INSERT) /.test(grant),
+    );
+    expect(writes).toEqual([]);
+  });
+
+  it("toda policy de escritura tiene WITH CHECK", async () => {
+    const writePolicies = (await policies(db.admin)).filter((policy) =>
+      ["INSERT", "UPDATE", "ALL"].includes(policy.command),
+    );
+    expect(writePolicies.map((policy) => policy.name)).toEqual([
+      "contacts_insert_member",
+      "opportunities_insert_member",
+    ]);
+    expect(writePolicies.every((policy) => policy.withCheck !== null)).toBe(
+      true,
     );
   });
 

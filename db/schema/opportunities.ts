@@ -67,8 +67,9 @@ function oneOf(column: PgColumn, values: readonly string[]): SQL {
  * No se persisten scores, urgencia, NBA, señales, matches, trade-in ni
  * responsable: no tienen fuente todavía (H1.1).
  *
- * Lectura: las oportunidades de las organizaciones donde el usuario tiene
- * membership activa. Sin policies de escritura (default deny).
+ * Lectura y alta (H1.2): las oportunidades de las organizaciones donde el
+ * usuario tiene membership activa. La etapa inicial la fija el código
+ * (`new`), nunca el cliente. Sin UPDATE ni DELETE (default deny).
  */
 export const opportunities = pgTable(
   "opportunities",
@@ -109,6 +110,11 @@ export const opportunities = pgTable(
       for: "select",
       to: authenticatedRole,
       using: sql`${t.organizationId} IN ${userOrgIds}`,
+    }),
+    pgPolicy("opportunities_insert_member", {
+      for: "insert",
+      to: authenticatedRole,
+      withCheck: sql`${t.organizationId} IN ${userOrgIds}`,
     }),
   ],
 ).enableRLS();

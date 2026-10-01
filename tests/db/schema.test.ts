@@ -183,8 +183,8 @@ describe("memberships", () => {
   });
 });
 
-describe("contacts (H1.1)", () => {
-  it("columnas: nombre obligatorio, teléfono y ciudad opcionales", async () => {
+describe("contacts (H1.1, H1.2)", () => {
+  it("columnas: nombre obligatorio; teléfono, teléfono normalizado y ciudad opcionales", async () => {
     expect(await columns(db.admin, "contacts")).toEqual([
       {
         name: "id",
@@ -197,21 +197,35 @@ describe("contacts (H1.1)", () => {
       { name: "phone", type: "text", notNull: false, default: null },
       { name: "city", type: "text", notNull: false, default: null },
       ...TIMESTAMPS,
+      // 0003 la agrega al final de la tabla (ALTER TABLE … ADD COLUMN).
+      {
+        name: "phone_normalized",
+        type: "text",
+        notNull: false,
+        default: null,
+      },
     ]);
   });
 
-  it("PK, FK a organizations (RESTRICT) y unique (organization_id, id)", async () => {
+  it("PK, FK a organizations (RESTRICT), unique (organization_id, id) y CHECK E.164", async () => {
     expect(await constraints(db.admin, "contacts")).toEqual({
       contacts_pkey: "PRIMARY KEY (id)",
       contacts_organization_id_id_key: "UNIQUE (organization_id, id)",
       contacts_organization_id_organizations_id_fk:
         "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      contacts_phone_normalized_check:
+        "CHECK (((phone_normalized IS NULL) OR ((phone IS NOT NULL) AND (phone_normalized ~ '^\\+[1-9][0-9]{1,14}$'::text))))",
     });
+  });
+
+  it("índices: el teléfono normalizado es único por organización (parcial), no global", async () => {
     expect(await indexes(db.admin, "contacts")).toEqual({
       contacts_pkey:
         "CREATE UNIQUE INDEX contacts_pkey ON public.contacts USING btree (id)",
       contacts_organization_id_id_key:
         "CREATE UNIQUE INDEX contacts_organization_id_id_key ON public.contacts USING btree (organization_id, id)",
+      contacts_organization_id_phone_normalized_key:
+        "CREATE UNIQUE INDEX contacts_organization_id_phone_normalized_key ON public.contacts USING btree (organization_id, phone_normalized) WHERE (phone_normalized IS NOT NULL)",
     });
   });
 });
@@ -310,7 +324,8 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
   });
 
   it("anon no tiene privilegios sobre las tablas de public", async () => {
-    // Los de authenticated (solo SELECT) se prueban en tenant-catalog.test.ts.
+    // Los de authenticated (SELECT, e INSERT de H1.2) se prueban en
+    // tenant-catalog.test.ts.
     expect(await tablePrivileges(db.admin, ["anon"])).toEqual([]);
   });
 
@@ -540,6 +555,68 @@ describe("constraints de contacts y opportunities con datos", () => {
         "23503",
         (sp) => sp`DELETE FROM public.organizations WHERE id = ${ORG_2}`,
       );
+    });
+  });
+});
+
+describe("identidad telefónica de contacts con datos (H1.2)", () => {
+  const insertContact = (
+    sp: TransactionSql,
+    organizationId: string,
+    phone: string | null,
+    phoneNormalized: string | null,
+  ) => sp`
+    INSERT INTO public.contacts (organization_id, name, phone, phone_normalized)
+    VALUES (${organizationId}, 'Contacto', ${phone}, ${phoneNormalized})
+  `;
+
+  it("el mismo teléfono normalizado no se repite en una organización", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      await insertContact(tx, ORG_1, "0981 555 214", "+595981555214");
+      await expectSqlError(tx, "23505", (sp) =>
+        insertContact(sp, ORG_1, "+595 981 555 214", "+595981555214"),
+      );
+    });
+  });
+
+  it("el mismo teléfono sí puede ser contacto de otra organización", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      await insertContact(tx, ORG_1, "0981 555 214", "+595981555214");
+      await insertContact(tx, ORG_2, "0981 555 214", "+595981555214");
+    });
+  });
+
+  it("sin teléfono normalizado no hay unicidad: contactos históricos o sin teléfono", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      await insertContact(tx, ORG_1, "0981 555 214", null);
+      await insertContact(tx, ORG_1, "0981 555 214", null);
+      await insertContact(tx, ORG_1, null, null);
+      await insertContact(tx, ORG_1, null, null);
+    });
+  });
+
+  it("el CHECK exige forma E.164 y el teléfono original", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      for (const normalized of [
+        "0981555214",
+        "595981555214",
+        "+0981555214",
+        "+595 981 555 214",
+        "+5959815552141234",
+        "+",
+      ]) {
+        await expectSqlError(tx, "23514", (sp) =>
+          insertContact(sp, ORG_1, "0981 555 214", normalized),
+        );
+      }
+      await expectSqlError(tx, "23514", (sp) =>
+        insertContact(sp, ORG_1, null, "+595981555214"),
+      );
+      await insertContact(tx, ORG_1, "+1 202 555 0143", "+12025550143");
     });
   });
 });

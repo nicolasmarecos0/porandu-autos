@@ -123,6 +123,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0000_saas_core_schema",
       "0001_tenant_isolation",
       "0002_opportunities_persistence",
+      "0003_contact_identity_opportunity_create",
     ]);
   });
 
@@ -287,7 +288,7 @@ describe("comandos del workflow (scripts/staging/commands.mts)", () => {
     const output = lines.join("\n");
     expect(output).toContain("✗ postgres.database");
     expect(output).toContain(
-      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence",
+      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create",
     );
     expect(output).not.toContain(ctx.secrets[0]!);
     expect(output).not.toMatch(/postgres(ql)?:\/\//);
@@ -340,6 +341,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.rls",
         "schema.membership_role",
         "schema.tenant-scoped",
+        "schema.contact-phone-identity",
         "rls.policies",
         "private.schema",
         "private.user_org_ids",
@@ -397,6 +399,7 @@ describe("migración oficial y verificación post-migración", () => {
   it("la verificación detecta grants de escritura y roles asumibles de más", async () => {
     await migrated.admin.unsafe(`
       GRANT INSERT ON public.organizations TO authenticated;
+      GRANT UPDATE ON public.contacts TO authenticated;
       GRANT anon TO app_runtime;
     `);
     try {
@@ -412,8 +415,40 @@ describe("migración oficial y verificación post-migración", () => {
     } finally {
       await migrated.admin.unsafe(`
         REVOKE INSERT ON public.organizations FROM authenticated;
+        REVOKE UPDATE ON public.contacts FROM authenticated;
         REVOKE anon FROM app_runtime;
       `);
+    }
+  });
+
+  it("la verificación detecta una identidad telefónica sin unicidad o una alta sin WITH CHECK", async () => {
+    await migrated.admin.unsafe(`
+      DROP INDEX public.contacts_organization_id_phone_normalized_key;
+      ALTER POLICY opportunities_insert_member ON public.opportunities WITH CHECK (true);
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "schema.contact-phone-identity",
+        "rls.policies",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(`
+        CREATE UNIQUE INDEX contacts_organization_id_phone_normalized_key
+          ON public.contacts USING btree (organization_id, phone_normalized)
+          WHERE phone_normalized IS NOT NULL;
+        ALTER POLICY opportunities_insert_member ON public.opportunities
+          WITH CHECK (organization_id IN (SELECT private.user_org_ids()));
+      `);
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
     }
   });
 
@@ -427,41 +462,56 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real: staging está en Foundation (0000 y 0001, DEC-022)
- * y el workflow aplica 0002 declarando solo ese tag.
+ * El próximo rollout real: staging está en H1.1 (0000 a 0002, DEC-023) y el
+ * workflow aplica 0003 declarando solo ese tag (preflight → migrate →
+ * verify).
  */
-describe("staging en Foundation: rollout de 0002", () => {
-  let foundation: TestDatabase;
+describe("staging en H1.1: rollout de 0003", () => {
+  let staging: TestDatabase;
 
   beforeAll(async () => {
-    foundation = await server.createDatabase();
-    await migrateUpTo(foundation.migrationUrl, "0001_tenant_isolation");
+    staging = await server.createDatabase();
+    await migrateUpTo(staging.migrationUrl, "0002_opportunities_persistence");
   });
 
-  it("el preflight pasa con expected_migrations = 0002 y solo eso queda pendiente", async () => {
-    const result = await preflightOf(foundation, "migrate", [
-      "0002_opportunities_persistence",
+  it("antes de migrar, verify y el resto de las operaciones exigen aplicar 0003", async () => {
+    expect(failures(await preflightOf(staging, "verify"))).toEqual([
+      ...HARNESS_ONLY,
+      "operation.up-to-date",
+    ]);
+  });
+
+  it("el preflight pasa con expected_migrations = 0003 y solo eso queda pendiente", async () => {
+    const result = await preflightOf(staging, "migrate", [
+      "0003_contact_identity_opportunity_create",
     ]);
     expect(failures(result)).toEqual(HARNESS_ONLY);
     expect(result.history).toEqual({
       kind: "consistent",
-      applied: REPO.slice(0, 2),
-      pending: REPO.slice(2),
+      applied: REPO.slice(0, 3),
+      pending: REPO.slice(3),
     });
     // Declarar de más (o de menos) aborta antes de migrar.
-    expect(
-      failures(await preflightOf(foundation, "migrate", ALL_TAGS)),
-    ).toContain("operation.pending");
+    expect(failures(await preflightOf(staging, "migrate", ALL_TAGS))).toContain(
+      "operation.pending",
+    );
   });
 
-  it("aplica solo 0002 y la verificación de catálogo pasa completa", async () => {
-    const password = new URL(foundation.migrationUrl).password;
-    await runOfficialMigrations(foundation.migrationUrl, [password]);
+  it("aplica solo 0003 y la verificación de catálogo pasa completa", async () => {
+    const password = new URL(staging.migrationUrl).password;
+    const output = await runOfficialMigrations(staging.migrationUrl, [
+      password,
+    ]);
+    expect(output).not.toContain(password);
+    const [history] = await staging.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+    `;
+    expect(history?.count).toBe(4);
 
-    expect(failures(await preflightOf(foundation, "verify"))).toEqual(
+    expect(failures(await preflightOf(staging, "verify"))).toEqual(
       HARNESS_ONLY,
     );
-    const sql = connect(foundation.migrationUrl);
+    const sql = connect(staging.migrationUrl);
     try {
       const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
       expect(findings.filter((f) => !f.ok)).toEqual([]);
