@@ -37,6 +37,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-021 | H0.7 Tenant Resolution | Aceptada | 2026-09-30 |
 | DEC-022 | Official Staging Database Operations | Aceptada | 2026-09-30 |
 | DEC-023 | H1.1 Opportunities sobre datos reales | Aceptada | 2026-10-01 |
+| DEC-024 | Contact identity and Opportunity creation | Aceptada | 2026-10-01 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -323,6 +324,22 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 - **Consecuencias:**
   - Los detalles de presentación temporales y reversibles de H1.1 quedan documentados en el README y no forman parte de esta decisión.
   - La Build Baseline no se reescribe: DEC-023 prevalece sobre ella en estos puntos (DEC-002).
+
+## DEC-024 — Contact identity and Opportunity creation
+- **Estado:** Aceptada · 2026-10-01
+- **Decisión:** H1.2 habilita el alta manual de oportunidades con identidad de contacto por teléfono (migración oficial `0003_contact_identity_opportunity_create`):
+  1. **Identidad del contacto.** Cuando `contacts.phone_normalized` está presente, identifica al contacto dentro de una organización. Es único mediante el índice parcial `(organization_id, phone_normalized) WHERE phone_normalized IS NOT NULL` y nunca global. Los contactos con `phone_normalized = NULL` no participan de esta deduplicación. `phone` conserva el valor capturado. No hay backfill SQL automático.
+  2. **Normalización.** Se realiza exclusivamente server-side mediante `libphonenumber-js` con metadata completa. Paraguay es la región por defecto para números sin prefijo internacional. Números con código internacional explícito conservan su país. La DB valida solamente la forma E.164.
+  3. **Deduplicación y concurrencia.** La unicidad de DB es la autoridad. El flujo utiliza `ON CONFLICT DO NOTHING` sobre la identidad tenant-scoped y reutiliza un contacto existente sin modificar nombre ni ciudad.
+  4. **Puerta oficial de alta.** `createOpportunity()` es la única puerta aprobada para H1.2: `requireTenant()` → validación server-side → una única transacción `withTenant()` que resuelve/crea Contact y crea Opportunity. `organization_id` proviene exclusivamente del `TenantContext`.
+  5. **Etapa inicial.** El alta manual de Opportunity nace siempre en `new`. Lo fija el código y lo exige la policy DB de INSERT mediante `stage = 'new'`. El CHECK general de etapas permanece abierto a las etapas aprobadas; las transiciones futuras se gobernarán mediante policies de UPDATE específicas.
+  6. **Origen.** El origen permitido es `whatsapp | meta_ads | web | showroom | referral`. `manual` no es un origen comercial.
+  7. **Recencia inicial.** `last_activity_at = now()` es una regla temporal exclusivamente para el alta manual H1.2. No define todavía la semántica de imports, conversations o eventos futuros.
+  8. **Escrituras.** H1.2 habilita las primeras policies y grants de INSERT sobre `contacts` y `opportunities`, siempre con `WITH CHECK`. UPDATE y DELETE continúan prohibidos. La migración `0003` agrega una postcondición que impide policies de escritura sin `WITH CHECK`.
+  9. **Roles.** En P1, cualquier membership activa (`admin` o `seller`) puede crear una oportunidad. No se introduce autorización adicional por rol en H1.2.
+  10. **Dependencias.** `libphonenumber-js` permanece server-only. `@radix-ui/react-dialog` se usa únicamente como primitiva accesible para el drawer.
+  11. **Relación con decisiones anteriores.** DEC-024 amplía DEC-023 únicamente habilitando alta de `contacts` y `opportunities`; no habilita edición. Respeta DEC-019 al introducir escritura solo para un flujo aprobado. En estos puntos prevalece sobre la Build Baseline conforme a DEC-002.
+  12. **Rollout.** `0003_contact_identity_opportunity_create` se aplicará a staging únicamente después del merge mediante `preflight → migrate → verify`.
 
 ---
 
