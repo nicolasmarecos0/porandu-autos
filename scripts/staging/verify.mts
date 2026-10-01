@@ -42,8 +42,9 @@ type Policy = {
 
 /**
  * Policies de lectura de H0 (DEC-019) y de H1.1 (contacts, opportunities), y
- * de alta de H1.2 (contacts, opportunities, con WITH CHECK), tal como las
- * deparsea PostgreSQL 17.
+ * de alta de H1.2 (contacts, opportunities, con WITH CHECK; la de
+ * opportunities exige además la etapa `new`), tal como las deparsea
+ * PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -84,7 +85,7 @@ export const EXPECTED_POLICIES: Policy[] = [
     command: "INSERT",
     using: null,
     withCheck:
-      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (stage = 'new'::text))",
   },
   {
     table: "opportunities",

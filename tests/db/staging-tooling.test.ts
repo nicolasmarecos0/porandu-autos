@@ -440,7 +440,7 @@ describe("migración oficial y verificación post-migración", () => {
           ON public.contacts USING btree (organization_id, phone_normalized)
           WHERE phone_normalized IS NOT NULL;
         ALTER POLICY opportunities_insert_member ON public.opportunities
-          WITH CHECK (organization_id IN (SELECT private.user_org_ids()));
+          WITH CHECK (organization_id IN (SELECT private.user_org_ids()) AND stage = 'new');
       `);
     }
     const sql = connect(migrated.migrationUrl);

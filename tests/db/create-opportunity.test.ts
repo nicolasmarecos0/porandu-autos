@@ -912,6 +912,119 @@ describe("aislamiento de la escritura (RLS WITH CHECK)", () => {
   });
 });
 
+describe("la policy de alta exige la etapa inicial (WITH CHECK stage = 'new')", () => {
+  /** INSERT directo por el boundary, en una organización con membership activa. */
+  function insertWithStage(
+    ctx: TenantContext,
+    stage: "new" | "qualified" | "test_drive" | "negotiation",
+  ) {
+    return withTenant(ctx, async (tx) => {
+      const phone = freshPhone();
+      const [contact] = await tx
+        .insert(contacts)
+        .values({
+          organizationId: ctx.organizationId,
+          name: "Contacto directo",
+          phone: phone.local,
+          phoneNormalized: phone.e164,
+        })
+        .returning({ id: contacts.id });
+      const [opportunity] = await tx
+        .insert(opportunities)
+        .values({
+          organizationId: ctx.organizationId,
+          contactId: contact!.id,
+          stage,
+          source: "web",
+        })
+        .returning({ id: opportunities.id, stage: opportunities.stage });
+      return opportunity;
+    });
+  }
+
+  it("un INSERT directo con stage = 'new' en la organización propia funciona", async () => {
+    expect(await insertWithStage(tenantContext(USER_A, ORG_1), "new")).toEqual({
+      id: expect.any(String),
+      stage: "new",
+    });
+  });
+
+  it.each(["qualified", "test_drive", "negotiation"] as const)(
+    "un INSERT directo con stage = '%s' falla por la policy, aunque el usuario pertenezca a la organización",
+    async (stage) => {
+      const before = await db.admin<{ count: number }[]>`
+        SELECT count(*)::int AS count FROM public.opportunities
+      `;
+      for (const ctx of [
+        tenantContext(USER_A, ORG_1),
+        tenantContext(USER_C, ORG_3),
+      ]) {
+        await expectSqlError(insertWithStage(ctx, stage), "42501");
+      }
+      // La transacción entera se revierte: ni oportunidad ni contacto.
+      const after = await db.admin<{ count: number }[]>`
+        SELECT count(*)::int AS count FROM public.opportunities
+      `;
+      expect(after).toEqual(before);
+    },
+  );
+
+  it("el CHECK general de stage no cambió: la base (sin RLS) sigue aceptando todas las etapas", async () => {
+    const [row] = await db.admin<{ definition: string }[]>`
+      SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+      WHERE conname = 'opportunities_stage_check'
+    `;
+    expect(row?.definition).toBe(
+      "CHECK ((stage = ANY (ARRAY['new'::text, 'qualified'::text, 'test_drive'::text, 'negotiation'::text])))",
+    );
+  });
+
+  it("createOpportunity() sigue creando en `new`, y la organización ajena sigue rechazada aun con `new`", async () => {
+    const phone = freshPhone();
+    request(USER_A);
+    const { opportunityId } = await created(validForm(phone.local));
+    expect(await opportunitiesWithPhone(phone.e164)).toEqual([
+      expect.objectContaining({ id: opportunityId, stage: "new" }),
+    ]);
+    await expectSqlError(
+      insertWithStage(tenantContext(USER_A, ORG_2), "new"),
+      "42501",
+    );
+  });
+
+  it("mutación: sin stage = 'new' en el WITH CHECK, un alta en `qualified` pasaría; el catálogo también lo marca", async () => {
+    const policy = async () => {
+      const [row] = await db.admin<{ withCheck: string }[]>`
+        SELECT with_check AS "withCheck" FROM pg_policies
+        WHERE policyname = 'opportunities_insert_member'
+      `;
+      return row?.withCheck;
+    };
+    const original = await policy();
+    await db.admin.unsafe(`
+      ALTER POLICY opportunities_insert_member ON public.opportunities
+      WITH CHECK (organization_id IN (SELECT private.user_org_ids()))
+    `);
+    try {
+      // Los tests de arriba lo detectan: el INSERT en `qualified` ya no falla.
+      expect(
+        await insertWithStage(tenantContext(USER_A, ORG_1), "qualified"),
+      ).toMatchObject({ stage: "qualified" });
+      expect(await policy()).not.toContain("stage");
+    } finally {
+      await db.admin.unsafe(`
+        ALTER POLICY opportunities_insert_member ON public.opportunities
+        WITH CHECK (organization_id IN (SELECT private.user_org_ids()) AND stage = 'new')
+      `);
+    }
+    expect(await policy()).toBe(original);
+    await expectSqlError(
+      insertWithStage(tenantContext(USER_A, ORG_1), "qualified"),
+      "42501",
+    );
+  });
+});
+
 describe("sin withTenant() o sin privilegios, la escritura falla cerrado", () => {
   it("app_runtime fuera del boundary no inserta contactos ni oportunidades (42501)", async () => {
     const pool = runtimePool();

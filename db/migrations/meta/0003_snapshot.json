@@ -536,7 +536,7 @@
           "to": [
             "authenticated"
           ],
-          "withCheck": "\"opportunities\".\"organization_id\" IN (SELECT private.user_org_ids())"
+          "withCheck": "\"opportunities\".\"organization_id\" IN (SELECT private.user_org_ids()) AND \"opportunities\".\"stage\" = 'new'"
         }
       },
       "checkConstraints": {

@@ -68,8 +68,10 @@ function oneOf(column: PgColumn, values: readonly string[]): SQL {
  * responsable: no tienen fuente todavía (H1.1).
  *
  * Lectura y alta (H1.2): las oportunidades de las organizaciones donde el
- * usuario tiene membership activa. La etapa inicial la fija el código
- * (`new`), nunca el cliente. Sin UPDATE ni DELETE (default deny).
+ * usuario tiene membership activa. Toda alta nace en la etapa `new`: la fija
+ * el código (nunca el cliente) y la exige el WITH CHECK de la policy de
+ * INSERT. El CHECK de `stage` sigue admitiendo todas las etapas. Sin UPDATE
+ * ni DELETE (default deny).
  */
 export const opportunities = pgTable(
   "opportunities",
@@ -111,10 +113,12 @@ export const opportunities = pgTable(
       to: authenticatedRole,
       using: sql`${t.organizationId} IN ${userOrgIds}`,
     }),
+    // Alta: organización con membership activa y siempre en la etapa
+    // inicial. Las transiciones de etapa serán policies de UPDATE.
     pgPolicy("opportunities_insert_member", {
       for: "insert",
       to: authenticatedRole,
-      withCheck: sql`${t.organizationId} IN ${userOrgIds}`,
+      withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.stage} = 'new'`,
     }),
   ],
 ).enableRLS();

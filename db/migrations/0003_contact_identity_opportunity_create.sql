@@ -2,12 +2,14 @@ ALTER TABLE "contacts" ADD COLUMN "phone_normalized" text;--> statement-breakpoi
 CREATE UNIQUE INDEX "contacts_organization_id_phone_normalized_key" ON "contacts" USING btree ("organization_id","phone_normalized") WHERE "contacts"."phone_normalized" IS NOT NULL;--> statement-breakpoint
 ALTER TABLE "contacts" ADD CONSTRAINT "contacts_phone_normalized_check" CHECK ("contacts"."phone_normalized" IS NULL OR ("contacts"."phone" IS NOT NULL AND "contacts"."phone_normalized" ~ '^\+[1-9][0-9]{1,14}$'));--> statement-breakpoint
 CREATE POLICY "contacts_insert_member" ON "contacts" AS PERMISSIVE FOR INSERT TO "authenticated" WITH CHECK ("contacts"."organization_id" IN (SELECT private.user_org_ids()));--> statement-breakpoint
-CREATE POLICY "opportunities_insert_member" ON "opportunities" AS PERMISSIVE FOR INSERT TO "authenticated" WITH CHECK ("opportunities"."organization_id" IN (SELECT private.user_org_ids()));
+CREATE POLICY "opportunities_insert_member" ON "opportunities" AS PERMISSIVE FOR INSERT TO "authenticated" WITH CHECK ("opportunities"."organization_id" IN (SELECT private.user_org_ids()) AND "opportunities"."stage" = 'new');
 --> statement-breakpoint
 -- Custom SQL (no lo genera drizzle-kit) · ADR-001 §3.6: grants explícitos.
 -- Alta de contactos y oportunidades (H1.2): authenticated recibe INSERT,
 -- cubierto por las policies de arriba, cuyo WITH CHECK exige una
--- organización con membership activa del usuario de la request. Sigue sin
+-- organización con membership activa del usuario de la request y, para
+-- opportunities, la etapa inicial `new` (el CHECK de stage no cambia: las
+-- transiciones serán policies de UPDATE). Sigue sin
 -- UPDATE ni DELETE (default deny). app_runtime no recibe nada: solo escribe
 -- asumiendo authenticated dentro de withTenant().
 -- No se backfillea phone_normalized de los contactos existentes: la

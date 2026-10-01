@@ -192,8 +192,7 @@ describe("db/schema", () => {
         for: "insert",
         to: ["authenticated"],
         using: undefined,
-        withCheck:
-          '"opportunities"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: `"opportunities"."organization_id" IN (SELECT private.user_org_ids()) AND "opportunities"."stage" = 'new'`,
       },
       {
         table: "opportunities",

@@ -203,7 +203,7 @@ describe("policies (ADR-001 §4)", () => {
         command: "INSERT",
         using: null,
         withCheck:
-          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (stage = 'new'::text))",
       },
       {
         table: "opportunities",
