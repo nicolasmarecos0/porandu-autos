@@ -56,8 +56,8 @@ describe("guarda de imports de db/client", { timeout: 30_000 }, () => {
       `import { getDb } from "@/db/client";${USE}`,
     ],
     [
-      "app/page.tsx",
-      `import { withTenant } from "@/db/tenant";\nexport const use = withTenant;\n`,
+      "db/queries/stock.ts",
+      `import { withTenant } from "../tenant";\nexport const use = withTenant;\n`,
     ],
     [
       "app/page.tsx",

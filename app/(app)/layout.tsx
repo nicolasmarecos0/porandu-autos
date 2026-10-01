@@ -14,8 +14,8 @@ import { requireTenant } from "@/lib/tenant/session";
  * tenant-scoped (Hito 1) llama a `requireTenant()` junto a sus queries y le
  * pasa ese TenantContext a `withTenant()`, que no acepta ningún otro. Dentro
  * de una misma request, `cache()` hace que esa segunda llamada no repita la
- * verificación ni las queries. En H0 las páginas muestran mock data y no
- * hacen queries tenant-scoped.
+ * verificación ni las queries. Desde H1.1, /opportunities lo hace con su
+ * loader (db/queries/opportunities.ts).
  */
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   await requireTenant();
