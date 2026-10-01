@@ -4,11 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { NextBestActionCard } from "@/components/intelligence/next-best-action";
 import { ScoreStrip } from "@/components/intelligence/score-strip";
 import { WhyNowCard } from "@/components/intelligence/why-now";
+import { CloseIcon } from "@/components/ui/icons";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { VehicleRail } from "@/components/vehicle-rail/vehicle-rail";
 import { formatElapsedLong } from "@/domains/opportunities/recency";
 import type { Opportunity } from "@/domains/opportunities/types";
 import type { ScoreComposition } from "@/domains/scoring/types";
+import {
+  NewOpportunityDrawer,
+  type OpportunityCreated,
+} from "./new-opportunity-drawer";
 import { OpportunityQueue } from "./opportunity-queue";
 import { ProspectCard } from "./prospect-card";
 import { RecencyEmoji } from "./recency-emoji";
@@ -36,6 +41,10 @@ const ID_PREFIX = "opportunity";
  * Cada columna tiene scroll propio. Los datos llegan del loader de la página
  * (PostgreSQL, tenant-scoped). Lo que la fuente no trae ("sin dato") no se
  * muestra: sin NBA, señales ni matches inventados.
+ *
+ * "Nueva oportunidad" (H1.2) abre el alta manual en un drawer. Al crear, la
+ * Server Action revalida la página, la cola trae la oportunidad nueva y la
+ * vista la selecciona.
  */
 export function OpportunitiesView({
   title,
@@ -46,6 +55,7 @@ export function OpportunitiesView({
   const queue = useOpportunityQueue(opportunities, ID_PREFIX);
   const { selected } = queue;
   const [showSources, setShowSources] = useState(true);
+  const [created, setCreated] = useState<OpportunityCreated | null>(null);
   const centerRef = useRef<HTMLElement>(null);
   const rightRef = useRef<HTMLElement>(null);
 
@@ -65,6 +75,14 @@ export function OpportunitiesView({
           aria-label="Prospecto y cola"
           className="flex min-h-0 w-75 shrink-0 flex-col gap-3"
         >
+          <NewOpportunityDrawer
+            onCreated={(result) => {
+              queue.setTab("all");
+              queue.select(result.opportunityId);
+              setCreated(result);
+            }}
+          />
+          <CreatedNotice created={created} onDismiss={() => setCreated(null)} />
           {selected ? <ProspectCard opportunity={selected} /> : null}
           <OpportunityQueue
             opportunities={opportunities}
@@ -143,6 +161,42 @@ export function OpportunitiesView({
   );
 }
 
+/**
+ * Confirmación del alta. Dice qué contacto quedó asociado: si el teléfono ya
+ * era de un contacto, se usó ese y su nombre no cambió. El texto también se
+ * anuncia por la región `status`, que existe siempre.
+ */
+function CreatedNotice({
+  created,
+  onDismiss,
+}: {
+  created: OpportunityCreated | null;
+  onDismiss: () => void;
+}) {
+  const message = created
+    ? created.contactReused
+      ? `Oportunidad creada. El teléfono ya era de ${created.contactName}: se usó ese contacto, sin cambios.`
+      : `Oportunidad creada para ${created.contactName}.`
+    : "";
+  return (
+    <div role="status" className={created ? undefined : "sr-only"}>
+      {created ? (
+        <p className="flex items-start gap-2 rounded-md border border-success-border bg-success-soft py-2 pr-1.5 pl-3 text-label text-success">
+          <span className="min-w-0 flex-1 pt-0.5">{message}</span>
+          <button
+            type="button"
+            aria-label="Cerrar aviso"
+            onClick={onDismiss}
+            className="flex size-6 shrink-0 items-center justify-center rounded-sm hover:bg-success-border/40 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring"
+          >
+            <CloseIcon className="size-3.5" />
+          </button>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** Organización sin oportunidades: estado vacío, sin datos de ejemplo. */
 function EmptyQueue() {
   return (
@@ -151,8 +205,8 @@ function EmptyQueue() {
         Todavía no hay oportunidades
       </p>
       <p className="mt-1 text-label text-text-muted">
-        Cuando esta organización registre oportunidades, vas a ver acá a quién
-        atender primero.
+        Cargá la primera con «Nueva oportunidad». Vas a ver acá a quién atender
+        primero.
       </p>
     </div>
   );
