@@ -3,7 +3,7 @@
 **Automotive Revenue OS / Sales Intelligence Platform** para playas, showrooms y concesionarias.
 Porandú conecta inventario, conversaciones, intención de compra y operación comercial para ayudar a vender más vehículos.
 
-> Estado: **Build Baseline B1**, que cubre Hito 0 (Foundation) y el Vertical Slice visual sobre mock data. **Hito 1 en curso:** H1.1 lleva la cola de Opportunities a PostgreSQL real (ver "Opportunities con datos reales (H1.1)").
+> Estado: **Build Baseline B1**, que cubre Hito 0 (Foundation) y el Vertical Slice visual sobre mock data. **Hito 1 en curso:** H1.1 lleva la cola de Opportunities a PostgreSQL real (ver "Opportunities con datos reales (H1.1)") y H1.2 agrega el alta manual de oportunidades (ver "Alta de oportunidades (H1.2)").
 > Alcance vigente: [`docs/03_BUILD_BASELINE_B1.md`](docs/03_BUILD_BASELINE_B1.md)
 
 ---
@@ -110,8 +110,8 @@ Antes de abrir un PR deben pasar: `pnpm typecheck && pnpm lint && pnpm format:ch
 
 - El schema de Drizzle vive en `db/schema/` y las migraciones en `db/migrations/` (única fuente). `db:generate` y `db:migrate` leen `MIGRATION_DATABASE_URL` del entorno o de `.env.local`; la variable del entorno prevalece.
 - Las migraciones apuntan a Supabase: dependen de `auth.users`, `auth.uid()` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
-- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
-- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación) y el loader de Opportunities (`requireTenant()` → `withTenant()` → RLS) contra la base real, y que `0002` se aplica sobre una base en Foundation (como staging hoy) sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
+- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `0003_contact_identity_opportunity_create` repite esas y agrega las de las primeras escrituras: toda policy de escritura tiene `WITH CHECK` y `authenticated` no tiene UPDATE, DELETE ni TRUNCATE sobre ninguna tabla. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
+- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), el loader de Opportunities (`requireTenant()` → `withTenant()` → RLS) y el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) contra la base real, y que `0003` se aplica sobre una base en H1.1 (como staging hoy) sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
 
 ```bash
 docker run -d --rm --name porandu-pg17 -p 127.0.0.1:55432:5432 \
@@ -162,7 +162,7 @@ Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@pora
 **Runbook de una migración**
 
 1. `preflight`: revisar el estado y las migraciones pendientes.
-2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`).
+2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
 3. Primer rollout o rotación: `provision-runtime`.
 4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution o el aislamiento.
 
@@ -234,7 +234,8 @@ Implementa ADR-001 (`db/tenant.ts` y la migración `0001_tenant_isolation`):
 - El runtime se conecta como `app_runtime`, que no tiene privilegios directos: toda query fuera del boundary falla cerrado (`42501`).
 - `withUser(ctx, fn)` y `withTenant(ctx, fn)` abren una transacción que fija los claims y el rol `authenticated` con `set_config(..., true)`. Al terminar, la conexión vuelve a ser `app_runtime` sin claims. Nunca se usa `SET` de sesión ni `set_config(..., false)`.
 - RLS limita cada fila a las organizaciones con membership activa del usuario (`private.user_org_ids()`). Las queries tenant-scoped filtran además por `ctx.organizationId`.
-- Solo hay lectura: `organizations`, `memberships`, `contacts` y `opportunities` de las organizaciones del usuario, y su propio `profiles`. No hay grants ni policies de escritura.
+- Lectura: `organizations`, `memberships`, `contacts` y `opportunities` de las organizaciones del usuario, y su propio `profiles`.
+- Escritura (H1.2): solo INSERT en `contacts` y `opportunities`, con policies cuyo `WITH CHECK` exige una organización con membership activa. No hay UPDATE ni DELETE en ninguna tabla.
 - ESLint impide importar `db/client` fuera de `db/tenant.ts` (y de dos archivos de test).
 - `withTenant()` no resuelve ni valida la organización activa: recibe un contexto confiable (claims verificados y organización ya validada). Los claims verificados llegan con Supabase Auth (H0.6); la organización activa la resuelve y valida Tenant Resolution (H0.7) con `requireTenant()` (DEC-019). `withTenant()` solo acepta un `TenantContext` emitido por Tenant Resolution.
 
@@ -255,6 +256,25 @@ explícito por organización → RLS → ViewModel de Opportunities
 - **Una sola fuente:** `mocks/opportunities.ts` ya no tiene loader. Sus fixtures quedan como referencia del contrato visual de B1 para los tests, y ESLint impide importarlos fuera de `tests/`.
 - **Guardas de ESLint:** páginas y componentes no importan Drizzle, `db/schema` ni `db/tenant` (leen con los loaders de `db/queries/`); `domains/` no depende de `db/`, `mocks/`, Drizzle, React ni Next (DEC-016).
 - Con 0 oportunidades la página muestra un estado vacío; no hay seeds en runtime.
+
+## Alta de oportunidades (H1.2)
+
+"Nueva oportunidad" (columna izquierda de `/opportunities`) abre un drawer lateral con el formulario mínimo: nombre, teléfono y ciudad del contacto; origen, modelo y versión buscados. Es la primera escritura de producto:
+
+```text
+Server Action createOpportunity() → requireTenant() → validación en el
+servidor → withTenant() (una transacción): contacto resuelto o nuevo +
+oportunidad → RLS (WITH CHECK) → revalidar /opportunities
+```
+
+- **Una sola puerta:** `createOpportunity()` (`lib/opportunities/actions.ts`). ESLint impide importar la escritura (`db/queries/create-opportunity.ts`) desde cualquier otro módulo, y la UI no conoce Drizzle, el schema ni el boundary.
+- **Qué acepta el servidor:** `name`, `phone`, `city`, `source`, `interestModel` e `interestVersion`. Cualquier otro campo del payload se ignora. La organización sale del `TenantContext`; la etapa es siempre `new`; timestamps y recencia los pone la base. Nombre, teléfono y origen son obligatorios; los textos tienen largo máximo y se normalizan (NFC, sin caracteres de control).
+- **Origen:** `whatsapp`, `meta_ads`, `web`, `showroom` o `referral` (el CHECK de la base). La carga manual no es un origen comercial.
+- **Teléfono:** se guarda tal como se cargó (`phone`) y en E.164 (`phone_normalized`), normalizado con `libphonenumber-js` (metadata completa) en `lib/contacts/phone.ts`, que es server-only. Sin prefijo internacional se interpreta como de Paraguay; con `+<código>` conserva su país. Un número inválido se rechaza antes de escribir. La librería no llega al bundle del navegador.
+- **Identidad del contacto:** índice único parcial `(organization_id, phone_normalized)`: el mismo teléfono es un solo contacto por organización, y puede repetirse en otra. El alta inserta el contacto con `ON CONFLICT DO NOTHING` sobre ese índice y, si ya existía, lo reutiliza sin modificar su nombre ni su ciudad. Dos altas concurrentes con el mismo teléfono terminan en un contacto: la unicidad de la base es la autoridad. Un mismo contacto puede tener varias oportunidades.
+- **Atomicidad:** contacto y oportunidad en una sola transacción `withTenant()`. Si la oportunidad falla, el contacto nuevo no queda. El error vuelve al formulario sin detalles de la base y con lo cargado, para reintentar.
+- **Sin backfill:** los contactos existentes sin `phone_normalized` no se tocan ni participan de la deduplicación.
+- **UX:** sin wizard. Mientras guarda, el botón muestra "Creando…" y el drawer no se cierra. Los errores se marcan por campo (es-PY) y el foco vuelve al primero a corregir. Al crear, el drawer se cierra, la cola se revalida, la oportunidad nueva queda seleccionada y un aviso dice si se usó un contacto existente.
 
 ## Convenciones
 
