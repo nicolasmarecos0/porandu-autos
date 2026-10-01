@@ -14,6 +14,14 @@ export type Advisor = {
 
 export type Channel = "WhatsApp" | "Meta Ads" | "Web" | "Showroom" | "Referido";
 
+/**
+ * Origen comercial de una oportunidad, tal como se persiste (`source`). Es el
+ * canal por el que llegó el interés, no el método de carga: un alta manual
+ * también declara su origen.
+ */
+export type OpportunitySource =
+  "whatsapp" | "meta_ads" | "web" | "showroom" | "referral";
+
 /** Etapas del pipeline baseline (Master Context §6). */
 export type Stage = "new" | "qualified" | "testDrive" | "negotiation";
 

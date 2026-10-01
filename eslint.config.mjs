@@ -113,11 +113,34 @@ const opportunitiesMockImport = {
   message: OPPORTUNITIES_MOCK_MESSAGE,
 };
 
+// H1.2: el alta de una oportunidad tiene una sola puerta, la Server Action
+// createOpportunity() (lib/opportunities/actions.ts), que obtiene el
+// contexto con requireTenant() y valida el formulario antes de escribir.
+const CREATE_OPPORTUNITY_MESSAGE =
+  "Opportunities are created only through the createOpportunity() Server Action (lib/opportunities/actions.ts): requireTenant(), server-side validation, then withTenant().";
+const createOpportunityImport = {
+  regex: "(^|/)db/queries/create-opportunity$|^\\.{1,2}/create-opportunity$",
+  // Los tipos del alta (NewOpportunity) no escriben nada.
+  allowTypeImports: true,
+  message: CREATE_OPPORTUNITY_MESSAGE,
+};
+
+// H1.2: libphonenumber-js (y su metadata) solo vive en el servidor, detrás
+// de lib/contacts/phone.ts (`import "server-only"`).
+const PHONE_LIBRARY_MESSAGE =
+  "Phone parsing is server-only: use normalizePhone() from lib/contacts/phone.ts.";
+const phoneLibraryImport = {
+  regex: "^libphonenumber-js(/|$)",
+  message: PHONE_LIBRARY_MESSAGE,
+};
+
 const basePatterns = [
   dbClientImport,
   withUserImport,
   resolveTenantImport,
   opportunitiesMockImport,
+  createOpportunityImport,
+  phoneLibraryImport,
 ];
 
 const eslintConfig = defineConfig([
@@ -201,6 +224,8 @@ const eslintConfig = defineConfig([
             dbClientRelativeImport,
             resolveTenantImport,
             opportunitiesMockImport,
+            createOpportunityImport,
+            phoneLibraryImport,
           ],
         },
       ],
@@ -213,7 +238,49 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          patterns: [dbClientImport, withUserImport, opportunitiesMockImport],
+          patterns: [
+            dbClientImport,
+            withUserImport,
+            opportunitiesMockImport,
+            createOpportunityImport,
+            phoneLibraryImport,
+          ],
+        },
+      ],
+    },
+  },
+  // Única puerta del alta de oportunidades (H1.2).
+  {
+    files: ["lib/opportunities/actions.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            dbClientImport,
+            withUserImport,
+            resolveTenantImport,
+            opportunitiesMockImport,
+            phoneLibraryImport,
+          ],
+        },
+      ],
+    },
+  },
+  // Único módulo que importa libphonenumber-js (solo servidor).
+  {
+    files: ["lib/contacts/phone.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            dbClientImport,
+            withUserImport,
+            resolveTenantImport,
+            opportunitiesMockImport,
+            createOpportunityImport,
+          ],
         },
       ],
     },
@@ -226,7 +293,14 @@ const eslintConfig = defineConfig([
       "no-restricted-syntax": ["error", ...noMigrationUrl],
       "no-restricted-imports": [
         "error",
-        { patterns: [resolveTenantImport, opportunitiesMockImport] },
+        {
+          patterns: [
+            resolveTenantImport,
+            opportunitiesMockImport,
+            createOpportunityImport,
+            phoneLibraryImport,
+          ],
+        },
       ],
     },
   },
