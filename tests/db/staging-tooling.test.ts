@@ -37,6 +37,7 @@ import {
 import { verifyCatalog } from "../../scripts/staging/verify.mts";
 import { describeRuntimeAcceptance } from "../staging/support/runtime-spec";
 import {
+  migrateUpTo,
   startTestServer,
   type TestDatabase,
   type TestServer,
@@ -109,7 +110,7 @@ async function storedPassword(db: TestDatabase): Promise<string | null> {
 }
 
 describe("preflight del primer rollout (base sin migraciones)", () => {
-  it("base limpia: pasa y quedan pendientes exactamente 0000 y 0001", async () => {
+  it("base limpia: pasa y quedan pendientes todas las migraciones oficiales", async () => {
     const db = await server.createDatabase();
     const result = await preflightOf(db, "migrate", ALL_TAGS);
     expect(failures(result)).toEqual(HARNESS_ONLY);
@@ -121,6 +122,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
     expect(ALL_TAGS).toEqual([
       "0000_saas_core_schema",
       "0001_tenant_isolation",
+      "0002_opportunities_persistence",
     ]);
   });
 
@@ -285,7 +287,7 @@ describe("comandos del workflow (scripts/staging/commands.mts)", () => {
     const output = lines.join("\n");
     expect(output).toContain("✗ postgres.database");
     expect(output).toContain(
-      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation",
+      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence",
     );
     expect(output).not.toContain(ctx.secrets[0]!);
     expect(output).not.toMatch(/postgres(ql)?:\/\//);
@@ -310,7 +312,7 @@ describe("migración oficial y verificación post-migración", () => {
     migrated = await server.createDatabase();
   });
 
-  it("aplica 0000 y 0001 con pnpm db:migrate y deja el historial exacto", async () => {
+  it("aplica las migraciones oficiales con pnpm db:migrate y deja el historial exacto", async () => {
     const password = new URL(migrated.migrationUrl).password;
     const output = await runOfficialMigrations(migrated.migrationUrl, [
       password,
@@ -421,6 +423,51 @@ describe("migración oficial y verificación post-migración", () => {
       ...HARNESS_ONLY,
       "residue.app_runtime",
     ]);
+  });
+});
+
+/*
+ * El próximo rollout real: staging está en Foundation (0000 y 0001, DEC-022)
+ * y el workflow aplica 0002 declarando solo ese tag.
+ */
+describe("staging en Foundation: rollout de 0002", () => {
+  let foundation: TestDatabase;
+
+  beforeAll(async () => {
+    foundation = await server.createDatabase();
+    await migrateUpTo(foundation.migrationUrl, "0001_tenant_isolation");
+  });
+
+  it("el preflight pasa con expected_migrations = 0002 y solo eso queda pendiente", async () => {
+    const result = await preflightOf(foundation, "migrate", [
+      "0002_opportunities_persistence",
+    ]);
+    expect(failures(result)).toEqual(HARNESS_ONLY);
+    expect(result.history).toEqual({
+      kind: "consistent",
+      applied: REPO.slice(0, 2),
+      pending: REPO.slice(2),
+    });
+    // Declarar de más (o de menos) aborta antes de migrar.
+    expect(
+      failures(await preflightOf(foundation, "migrate", ALL_TAGS)),
+    ).toContain("operation.pending");
+  });
+
+  it("aplica solo 0002 y la verificación de catálogo pasa completa", async () => {
+    const password = new URL(foundation.migrationUrl).password;
+    await runOfficialMigrations(foundation.migrationUrl, [password]);
+
+    expect(failures(await preflightOf(foundation, "verify"))).toEqual(
+      HARNESS_ONLY,
+    );
+    const sql = connect(foundation.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
   });
 });
 

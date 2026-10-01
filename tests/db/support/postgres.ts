@@ -1,8 +1,19 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres, { type Sql, type TransactionSql } from "postgres";
 
 /*
@@ -192,6 +203,51 @@ export async function runMigrations(migrationUrl: string): Promise<string> {
     throw new Error(
       `pnpm db:migrate failed:\n${stdout ?? ""}\n${stderr ?? ""}`,
     );
+  }
+}
+
+const MIGRATIONS_DIR = new URL("../../../db/migrations/", import.meta.url);
+
+/**
+ * Deja la base con las migraciones oficiales aplicadas solo hasta `lastTag`
+ * (incluida), como una base que todavía no recibió las siguientes (p. ej.
+ * staging en Foundation: 0000 y 0001). Usa el migrator de drizzle-orm, el
+ * mismo de drizzle-kit, sobre una copia del journal recortada: el historial
+ * queda con los mismos hashes y `created_at` que dejaría `pnpm db:migrate`,
+ * así que la siguiente `runMigrations()` aplica solo lo que falta.
+ */
+export async function migrateUpTo(
+  migrationUrl: string,
+  lastTag: string,
+): Promise<void> {
+  const journal = JSON.parse(
+    await readFile(new URL("meta/_journal.json", MIGRATIONS_DIR), "utf8"),
+  ) as { entries: { tag: string }[] };
+  const last = journal.entries.findIndex((entry) => entry.tag === lastTag);
+  if (last === -1) throw new Error(`unknown migration ${lastTag}`);
+  const entries = journal.entries.slice(0, last + 1);
+
+  const folder = await mkdtemp(join(tmpdir(), "porandu-migrations-"));
+  try {
+    await mkdir(join(folder, "meta"));
+    await writeFile(
+      join(folder, "meta/_journal.json"),
+      JSON.stringify({ ...journal, entries }),
+    );
+    for (const { tag } of entries) {
+      await copyFile(
+        new URL(`${tag}.sql`, MIGRATIONS_DIR),
+        join(folder, `${tag}.sql`),
+      );
+    }
+    const client = postgres(migrationUrl, { max: 1, onnotice: () => {} });
+    try {
+      await migrate(drizzle(client), { migrationsFolder: folder });
+    } finally {
+      await client.end();
+    }
+  } finally {
+    await rm(folder, { recursive: true, force: true });
   }
 }
 

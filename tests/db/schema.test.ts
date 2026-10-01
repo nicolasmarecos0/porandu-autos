@@ -61,7 +61,13 @@ afterAll(async () => {
   await server?.close();
 });
 
-/** Usuarios A y B con perfil, organizaciones 1 y 2, A es admin de 1. */
+const CONTACT_1 = "10000000-0000-4000-8000-000000000001";
+const CONTACT_2 = "10000000-0000-4000-8000-000000000002";
+
+/**
+ * Usuarios A y B con perfil, organizaciones 1 y 2, A es admin de 1. Un
+ * contacto por organización y una oportunidad en la 1.
+ */
 async function seed(tx: TransactionSql): Promise<void> {
   await tx`INSERT INTO auth.users (id) VALUES (${USER_A}), (${USER_B})`;
   await tx`
@@ -75,6 +81,14 @@ async function seed(tx: TransactionSql): Promise<void> {
   await tx`
     INSERT INTO public.memberships (organization_id, user_id, role)
     VALUES (${ORG_1}, ${USER_A}, 'admin')
+  `;
+  await tx`
+    INSERT INTO public.contacts (id, organization_id, name)
+    VALUES (${CONTACT_1}, ${ORG_1}, 'Contacto 1'), (${CONTACT_2}, ${ORG_2}, 'Contacto 2')
+  `;
+  await tx`
+    INSERT INTO public.opportunities (organization_id, contact_id, stage, source)
+    VALUES (${ORG_1}, ${CONTACT_1}, 'new', 'whatsapp')
   `;
 }
 
@@ -169,6 +183,95 @@ describe("memberships", () => {
   });
 });
 
+describe("contacts (H1.1)", () => {
+  it("columnas: nombre obligatorio, teléfono y ciudad opcionales", async () => {
+    expect(await columns(db.admin, "contacts")).toEqual([
+      {
+        name: "id",
+        type: "uuid",
+        notNull: true,
+        default: "gen_random_uuid()",
+      },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "name", type: "text", notNull: true, default: null },
+      { name: "phone", type: "text", notNull: false, default: null },
+      { name: "city", type: "text", notNull: false, default: null },
+      ...TIMESTAMPS,
+    ]);
+  });
+
+  it("PK, FK a organizations (RESTRICT) y unique (organization_id, id)", async () => {
+    expect(await constraints(db.admin, "contacts")).toEqual({
+      contacts_pkey: "PRIMARY KEY (id)",
+      contacts_organization_id_id_key: "UNIQUE (organization_id, id)",
+      contacts_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    });
+    expect(await indexes(db.admin, "contacts")).toEqual({
+      contacts_pkey:
+        "CREATE UNIQUE INDEX contacts_pkey ON public.contacts USING btree (id)",
+      contacts_organization_id_id_key:
+        "CREATE UNIQUE INDEX contacts_organization_id_id_key ON public.contacts USING btree (organization_id, id)",
+    });
+  });
+});
+
+describe("opportunities (H1.1)", () => {
+  it("columnas: contacto, etapa y origen obligatorios; interés opcional; recencia propia", async () => {
+    expect(await columns(db.admin, "opportunities")).toEqual([
+      {
+        name: "id",
+        type: "uuid",
+        notNull: true,
+        default: "gen_random_uuid()",
+      },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "contact_id", type: "uuid", notNull: true, default: null },
+      { name: "stage", type: "text", notNull: true, default: null },
+      { name: "source", type: "text", notNull: true, default: null },
+      { name: "interest_model", type: "text", notNull: false, default: null },
+      {
+        name: "interest_version",
+        type: "text",
+        notNull: false,
+        default: null,
+      },
+      {
+        name: "last_activity_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+      ...TIMESTAMPS,
+    ]);
+  });
+
+  it("FK compuesta al contacto de la misma organización, CHECK de etapa y origen", async () => {
+    expect(await constraints(db.admin, "opportunities")).toEqual({
+      opportunities_pkey: "PRIMARY KEY (id)",
+      opportunities_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      opportunities_organization_id_contact_id_contacts_fk:
+        "FOREIGN KEY (organization_id, contact_id) REFERENCES contacts(organization_id, id) ON DELETE RESTRICT",
+      opportunities_stage_check:
+        "CHECK ((stage = ANY (ARRAY['new'::text, 'qualified'::text, 'test_drive'::text, 'negotiation'::text])))",
+      opportunities_source_check:
+        "CHECK ((source = ANY (ARRAY['whatsapp'::text, 'meta_ads'::text, 'web'::text, 'showroom'::text, 'referral'::text])))",
+    });
+  });
+
+  it("índices: la cola por organización y recencia, y la FK al contacto", async () => {
+    expect(await indexes(db.admin, "opportunities")).toEqual({
+      opportunities_pkey:
+        "CREATE UNIQUE INDEX opportunities_pkey ON public.opportunities USING btree (id)",
+      opportunities_organization_id_last_activity_at_idx:
+        "CREATE INDEX opportunities_organization_id_last_activity_at_idx ON public.opportunities USING btree (organization_id, last_activity_at DESC)",
+      opportunities_organization_id_contact_id_idx:
+        "CREATE INDEX opportunities_organization_id_contact_id_idx ON public.opportunities USING btree (organization_id, contact_id)",
+    });
+  });
+});
+
 describe("invariantes de tenancy (ADR-001 §3.6)", () => {
   it("toda tabla de public tiene RLS habilitado", async () => {
     const tables = await tenancy(db.admin);
@@ -189,7 +292,11 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
     const tenantScoped = (await tenancy(db.admin)).filter(
       (t) => !NOT_TENANT_OWNED.includes(t.table),
     );
-    expect(tenantScoped.map((t) => t.table)).toEqual(["memberships"]);
+    expect(tenantScoped.map((t) => t.table)).toEqual([
+      "contacts",
+      "memberships",
+      "opportunities",
+    ]);
     for (const table of tenantScoped) {
       expect(table).toEqual({
         table: table.table,
@@ -354,8 +461,97 @@ describe("constraints con datos", () => {
   });
 });
 
+describe("constraints de contacts y opportunities con datos", () => {
+  it("una oportunidad no puede apuntar a un contacto de otra organización", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) =>
+          sp`INSERT INTO public.opportunities (organization_id, contact_id, stage, source) VALUES (${ORG_1}, ${CONTACT_2}, 'new', 'web')`,
+      );
+      const unknown = "10000000-0000-4000-8000-0000000000ff";
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) =>
+          sp`INSERT INTO public.opportunities (organization_id, contact_id, stage, source) VALUES (${ORG_1}, ${unknown}, 'new', 'web')`,
+      );
+    });
+  });
+
+  it("etapa y origen solo aceptan los valores del CHECK", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      for (const [stage, source] of [
+        ["sold", "web"],
+        ["testDrive", "web"],
+        ["new", "instagram"],
+        ["new", "WhatsApp"],
+      ]) {
+        await expectSqlError(
+          tx,
+          "23514",
+          (sp) =>
+            sp`INSERT INTO public.opportunities (organization_id, contact_id, stage, source) VALUES (${ORG_1}, ${CONTACT_1}, ${stage!}, ${source!})`,
+        );
+      }
+      const [row] = await tx<{ stage: string; recent: boolean }[]>`
+        INSERT INTO public.opportunities (organization_id, contact_id, stage, source)
+        VALUES (${ORG_1}, ${CONTACT_1}, 'test_drive', 'referral')
+        RETURNING stage, last_activity_at > now() - interval '1 minute' AS recent
+      `;
+      expect(row).toEqual({ stage: "test_drive", recent: true });
+    });
+  });
+
+  it("contacto, etapa, origen y organización son obligatorios", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      for (const insert of [
+        (sp: TransactionSql) =>
+          sp`INSERT INTO public.opportunities (organization_id, stage, source) VALUES (${ORG_1}, 'new', 'web')`,
+        (sp: TransactionSql) =>
+          sp`INSERT INTO public.opportunities (organization_id, contact_id, source) VALUES (${ORG_1}, ${CONTACT_1}, 'web')`,
+        (sp: TransactionSql) =>
+          sp`INSERT INTO public.opportunities (organization_id, contact_id, stage) VALUES (${ORG_1}, ${CONTACT_1}, 'new')`,
+        (sp: TransactionSql) =>
+          sp`INSERT INTO public.contacts (name) VALUES ('Sin organización')`,
+        (sp: TransactionSql) =>
+          sp`INSERT INTO public.contacts (organization_id) VALUES (${ORG_1})`,
+      ]) {
+        await expectSqlError(tx, "23502", insert);
+      }
+    });
+  });
+
+  it("no se borra un contacto con oportunidades ni una organización con contactos", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) => sp`DELETE FROM public.contacts WHERE id = ${CONTACT_1}`,
+      );
+      await tx`DELETE FROM public.memberships`;
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) => sp`DELETE FROM public.organizations WHERE id = ${ORG_2}`,
+      );
+    });
+  });
+});
+
 describe("acceso directo por rol, sin withTenant", () => {
-  const tables = ["organizations", "profiles", "memberships"];
+  const tables = [
+    "organizations",
+    "profiles",
+    "memberships",
+    "contacts",
+    "opportunities",
+  ];
 
   it("anon no puede leer ni escribir (42501, sin grants)", async () => {
     await inRolledBackTransaction(db.admin, async (tx) => {

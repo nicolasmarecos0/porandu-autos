@@ -48,9 +48,11 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define solo organizations, profiles y memberships", () => {
+  it("define las tablas de H0 y las de H1.1 (contacts, opportunities)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
+      "contacts",
       "memberships",
+      "opportunities",
       "organizations",
       "profiles",
     ]);
@@ -151,6 +153,16 @@ describe("db/schema", () => {
 
     expect(declared).toEqual([
       {
+        table: "contacts",
+        name: "contacts_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"contacts"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
         table: "memberships",
         name: "memberships_select_member",
         as: "permissive",
@@ -158,6 +170,16 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using:
           '"memberships"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "opportunities",
+        name: "opportunities_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"opportunities"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
       },
       {
@@ -181,11 +203,119 @@ describe("db/schema", () => {
     ]);
   });
 
+  it("contacts: nombre obligatorio, teléfono y ciudad opcionales, unique para la FK compuesta", () => {
+    expect(
+      table("contacts").columns.map((c) => [c.name, c.notNull, c.hasDefault]),
+    ).toEqual([
+      ["id", true, true],
+      ["organization_id", true, false],
+      ["name", true, false],
+      ["phone", false, false],
+      ["city", false, false],
+      ["created_at", true, true],
+      ["updated_at", true, true],
+    ]);
+    expect(foreignKeys("contacts")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+    ]);
+    expect(
+      table("contacts").uniqueConstraints.map((u) => ({
+        name: u.name,
+        columns: u.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "contacts_organization_id_id_key",
+        columns: ["organization_id", "id"],
+      },
+    ]);
+  });
+
+  it("opportunities: contacto de la misma organización, stage y source con CHECK, sin persistir inteligencia", () => {
+    expect(
+      table("opportunities").columns.map((c) => [
+        c.name,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", true, true],
+      ["organization_id", true, false],
+      ["contact_id", true, false],
+      ["stage", true, false],
+      ["source", true, false],
+      ["interest_model", false, false],
+      ["interest_version", false, false],
+      ["last_activity_at", true, true],
+      ["created_at", true, true],
+      ["updated_at", true, true],
+    ]);
+    expect(foreignKeys("opportunities")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,contact_id -> public.contacts(organization_id,id) ON DELETE restrict",
+    ]);
+    const dialect = new PgDialect();
+    expect(
+      table("opportunities").checks.map((c) => ({
+        name: c.name,
+        sql: dialect.sqlToQuery(c.value).sql,
+      })),
+    ).toEqual([
+      {
+        name: "opportunities_stage_check",
+        sql: `"opportunities"."stage" IN ('new', 'qualified', 'test_drive', 'negotiation')`,
+      },
+      {
+        name: "opportunities_source_check",
+        sql: `"opportunities"."source" IN ('whatsapp', 'meta_ads', 'web', 'showroom', 'referral')`,
+      },
+    ]);
+    expect(schema.opportunityStages).toEqual([
+      "new",
+      "qualified",
+      "test_drive",
+      "negotiation",
+    ]);
+    expect(
+      table("opportunities").indexes.map((i) => ({
+        name: i.config.name,
+        columns: i.config.columns.map((c) => ("name" in c ? c.name : c)),
+      })),
+    ).toEqual([
+      {
+        name: "opportunities_organization_id_last_activity_at_idx",
+        columns: ["organization_id", "last_activity_at"],
+      },
+      {
+        name: "opportunities_organization_id_contact_id_idx",
+        columns: ["organization_id", "contact_id"],
+      },
+    ]);
+    // H1.1: scores, urgencia, NBA, señales, matches, trade-in y responsable
+    // no tienen fuente todavía y no se persisten.
+    const names = table("opportunities").columns.map((c) => c.name);
+    for (const absent of [
+      "score",
+      "porandu_score",
+      "bucket",
+      "urgency",
+      "assigned_user_id",
+      "nba",
+      "drivers",
+    ]) {
+      expect(names).not.toContain(absent);
+    }
+  });
+
   it("toda tabla tenant-scoped tiene organization_id NOT NULL, FK e índice que empieza por él", () => {
     const tenantScoped = tables.filter(
       (t) => !NOT_TENANT_OWNED.includes(t.name),
     );
-    expect(tenantScoped.map((t) => t.name)).toEqual(["memberships"]);
+    expect(tenantScoped.map((t) => t.name).sort()).toEqual([
+      "contacts",
+      "memberships",
+      "opportunities",
+    ]);
 
     for (const t of tenantScoped) {
       expect(column(t.name, "organization_id").notNull).toBe(true);

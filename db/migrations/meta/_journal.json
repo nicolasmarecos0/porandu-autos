@@ -15,6 +15,13 @@
       "when": 1790771608089,
       "tag": "0001_tenant_isolation",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790861612348,
+      "tag": "0002_opportunities_persistence",
+      "breakpoints": true
     }
   ]
 }
