@@ -165,6 +165,8 @@ function QueueRow({
   onSelect,
 }: QueueRowProps) {
   const { prospect, interest, scores, lastActivity } = opportunity;
+  const porandu = scores.porandu;
+  const vehicle = [interest.model, interest.version].filter(Boolean).join(" ");
   return (
     <div
       id={id}
@@ -193,14 +195,19 @@ function QueueRow({
             <span
               className={cn(
                 "text-caption font-semibold tabular-nums",
-                scores.porandu >= 85
-                  ? "text-brand-strong"
-                  : scores.porandu >= 70
-                    ? "text-text-primary"
-                    : "text-text-muted",
+                porandu === null
+                  ? "text-text-muted"
+                  : porandu >= 85
+                    ? "text-brand-strong"
+                    : porandu >= 70
+                      ? "text-text-primary"
+                      : "text-text-muted",
               )}
             >
-              {scores.porandu}
+              {porandu ?? "—"}
+              {porandu === null ? (
+                <span className="sr-only">Porandú Score sin dato</span>
+              ) : null}
             </span>
           </PoranduRing>
         </span>
@@ -228,7 +235,7 @@ function QueueRow({
           ) : null}
         </span>
         <span className="block truncate text-caption text-text-muted">
-          {interest.model} {interest.version}
+          {vehicle || "Vehículo sin definir"}
         </span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-0.5 text-caption text-text-muted tabular-nums">

@@ -55,14 +55,18 @@ export function ProspectCard({ opportunity }: { opportunity: Opportunity }) {
 
         <div className="mt-3.5 flex items-end justify-between gap-3">
           <ul className="flex min-w-0 flex-col gap-1.5 text-label">
-            <li className="flex items-center gap-2">
-              <MapPinIcon className="size-4 shrink-0 text-brand-inverse" />
-              <span className="truncate">{prospect.city}</span>
-            </li>
-            <li className="flex items-center gap-2 tabular-nums">
-              <PhoneIcon className="size-4 shrink-0 text-brand-inverse" />
-              {prospect.phone}
-            </li>
+            {prospect.city ? (
+              <li className="flex items-center gap-2">
+                <MapPinIcon className="size-4 shrink-0 text-brand-inverse" />
+                <span className="truncate">{prospect.city}</span>
+              </li>
+            ) : null}
+            {prospect.phone ? (
+              <li className="flex items-center gap-2 tabular-nums">
+                <PhoneIcon className="size-4 shrink-0 text-brand-inverse" />
+                {prospect.phone}
+              </li>
+            ) : null}
             <li className="flex items-center gap-2">
               <ConversationsIcon className="size-4 shrink-0 text-brand-inverse" />
               <span className="truncate">
@@ -78,15 +82,15 @@ export function ProspectCard({ opportunity }: { opportunity: Opportunity }) {
                 <SwapIcon className="size-4" />
               </Flag>
             ) : null}
-            {interest.payment.startsWith("Contado") ? (
+            {interest.payment?.startsWith("Contado") ? (
               <Flag label="Pago contado">
                 <WalletIcon className="size-4" />
               </Flag>
-            ) : (
+            ) : interest.payment ? (
               <Flag label={`Pago: ${interest.payment}`}>
                 <PercentIcon className="size-4" />
               </Flag>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -95,11 +99,13 @@ export function ProspectCard({ opportunity }: { opportunity: Opportunity }) {
         <span className="inline-flex items-center rounded-full border border-surface-1/70 px-2.5 py-0.5 text-label font-semibold">
           {stageLabel(opportunity.stage)}
         </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-caption">
-          <Avatar initials={owner.initials} size="xs" tone="onBrand" />
-          <span className="sr-only">Responsable:</span>
-          <span className="truncate font-semibold">{owner.name}</span>
-        </span>
+        {owner ? (
+          <span className="flex min-w-0 items-center gap-1.5 text-caption">
+            <Avatar initials={owner.initials} size="xs" tone="onBrand" />
+            <span className="sr-only">Responsable:</span>
+            <span className="truncate font-semibold">{owner.name}</span>
+          </span>
+        ) : null}
       </div>
     </section>
   );

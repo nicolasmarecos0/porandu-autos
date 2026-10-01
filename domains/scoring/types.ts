@@ -10,13 +10,23 @@ export type ScoreValue = number | null;
 export type SubScoreKey = "intent" | "fit" | "deal";
 
 export type ScoreSet = {
-  porandu: number;
+  /** `null` = sin dato: todavía no hay señales con qué evaluarlo. */
+  porandu: ScoreValue;
   /** Proporción de señales conocidas sobre las que se evaluó (0–1). */
   coverage: number;
   intent: ScoreValue;
   fit: ScoreValue;
   deal: ScoreValue;
 };
+
+/** Sin ninguna señal evaluada: todo "sin dato" y cobertura 0 (DEC-005). */
+export const UNSCORED: ScoreSet = Object.freeze({
+  porandu: null,
+  coverage: 0,
+  intent: null,
+  fit: null,
+  deal: null,
+});
 
 /** Nombres de los sub-scores (DEC-004). */
 export const SUB_SCORE_LABELS: Record<SubScoreKey, string> = {

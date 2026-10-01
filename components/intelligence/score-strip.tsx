@@ -80,7 +80,7 @@ export function ScoreStrip({
             tone="onBrand"
           >
             <span className="text-[1.375rem] leading-none font-semibold tracking-tight tabular-nums">
-              {scores.porandu}
+              {scores.porandu ?? "—"}
             </span>
           </PoranduRing>
           <span className="flex flex-col gap-0.5">

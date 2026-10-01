@@ -116,6 +116,11 @@ export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
           </ul>
         </div>
       ))}
+      {sections.length === 0 ? (
+        <p className="text-label text-text-muted">
+          Sin señales registradas todavía.
+        </p>
+      ) : null}
       <p className="mt-5 flex items-center gap-1.5 border-t border-border-subtle pt-3 text-caption text-text-muted">
         {footer}
       </p>
