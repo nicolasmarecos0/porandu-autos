@@ -2,16 +2,20 @@ import type { Advisor, Opportunity } from "@/domains/opportunities/types";
 import type { ScoreComposition } from "@/domains/scoring/types";
 
 /*
- * Capa de datos mock de Opportunities para el vertical slice de B1 (mercado
- * automotor paraguayo): fixtures y el loader que usa la página. En Hito 1
- * este loader se reemplaza por uno que lea vía `withTenant` (ADR-001).
+ * Fixtures de Opportunities del vertical slice de B1 (mercado automotor
+ * paraguayo). Desde H1.1 la cola se lee de PostgreSQL con el loader
+ * tenant-scoped (db/queries/opportunities.ts) y ninguna ruta usa estos
+ * datos: ESLint impide importarlos fuera de tests/. Quedan como referencia
+ * del contrato visual completo (scores, NBA, señales, matches, trade-in) que
+ * se irá persistiendo en los próximos hitos, y los tests los usan para
+ * verificar que el mapping de la base lo conserva.
  *
  * Los scores son valores fijos, no se calculan. Un dato faltante (`null`) no
  * penaliza y baja la cobertura (DEC-005).
  */
 
 /** Hora de referencia de los fixtures: lunes 28/09/2026, 10:30. */
-const MOCK_REFERENCE_MINUTE_OF_DAY = 10 * 60 + 30;
+export const MOCK_REFERENCE_MINUTE_OF_DAY = 10 * 60 + 30;
 
 /**
  * Composición de presentación con la que el mock explica el Porandú Score
@@ -19,7 +23,7 @@ const MOCK_REFERENCE_MINUTE_OF_DAY = 10 * 60 + 30;
  * conceptual y a recalibrar con datos de piloto. Los scores de los fixtures
  * se eligieron coherentes con estos pesos.
  */
-const MOCK_SCORE_COMPOSITION: ScoreComposition = [
+export const MOCK_SCORE_COMPOSITION: ScoreComposition = [
   { key: "intent", weight: 0.4 },
   { key: "fit", weight: 0.3 },
   { key: "deal", weight: 0.3 },
@@ -32,7 +36,7 @@ const ADVISORS = {
   sa: { id: "adv-sa", name: "Sofía Acosta", initials: "SA" },
 } satisfies Record<string, Advisor>;
 
-const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
+export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
   {
     id: "op-2041",
     prospect: {
@@ -1333,12 +1337,3 @@ const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
     },
   },
 ];
-
-/** Loader de la cola de Opportunities (B1: fixtures en memoria). */
-export function getOpportunityQueue() {
-  return {
-    opportunities: OPPORTUNITY_FIXTURES,
-    referenceMinuteOfDay: MOCK_REFERENCE_MINUTE_OF_DAY,
-    scoreComposition: MOCK_SCORE_COMPOSITION,
-  };
-}

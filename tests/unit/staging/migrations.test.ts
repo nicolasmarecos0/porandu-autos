@@ -33,6 +33,7 @@ describe("readRepoMigrations", () => {
     expect(REPO.map((m) => [m.idx, m.tag])).toEqual([
       [0, "0000_saas_core_schema"],
       [1, "0001_tenant_isolation"],
+      [2, "0002_opportunities_persistence"],
     ]);
   });
 
@@ -59,9 +60,15 @@ describe("compareHistory", () => {
     expect(compareHistory(REPO, applied(1))).toEqual({
       kind: "consistent",
       applied: [REPO[0]],
-      pending: [REPO[1]],
+      pending: [REPO[1], REPO[2]],
     });
-    expect(compareHistory(REPO, [...applied(2)].reverse())).toMatchObject({
+    // Staging hoy (Foundation): solo 0002 pendiente.
+    expect(compareHistory(REPO, applied(2))).toEqual({
+      kind: "consistent",
+      applied: [REPO[0], REPO[1]],
+      pending: [REPO[2]],
+    });
+    expect(compareHistory(REPO, [...applied(3)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -81,8 +88,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(2), { id: 3, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 2",
+      [...applied(3), { id: 4, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 3",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -121,17 +128,34 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 y con 0001: tablas, enum y policies de su snapshot", () => {
+  it("con 0000, 0001 y 0002: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
       policies: [],
     });
-    expect(expectedFootprint(REPO)).toEqual({
+    expect(expectedFootprint(REPO.slice(0, 2))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
       policies: [
         "memberships.memberships_select_member",
+        "organizations.organizations_select_member",
+        "profiles.profiles_select_own",
+      ],
+    });
+    expect(expectedFootprint(REPO)).toEqual({
+      tables: [
+        "contacts",
+        "memberships",
+        "opportunities",
+        "organizations",
+        "profiles",
+      ],
+      enums: ["membership_role"],
+      policies: [
+        "contacts.contacts_select_member",
+        "memberships.memberships_select_member",
+        "opportunities.opportunities_select_member",
         "organizations.organizations_select_member",
         "profiles.profiles_select_own",
       ],

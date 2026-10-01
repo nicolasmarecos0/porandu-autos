@@ -36,6 +36,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-020 | H0.6 Supabase Auth | Aceptada | 2026-09-30 |
 | DEC-021 | H0.7 Tenant Resolution | Aceptada | 2026-09-30 |
 | DEC-022 | Official Staging Database Operations | Aceptada | 2026-09-30 |
+| DEC-023 | H1.1 Opportunities sobre datos reales | Aceptada | 2026-10-01 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -304,6 +305,24 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 - **Consecuencias:**
   - `CLAUDE.md` §3 registra la excepción de `STAGING_SECRET_KEY`. El README documenta el workflow, sus operaciones y el runbook.
   - H0.9/E3 cubre Vercel, la misma región, el runtime oficial desplegado, la latencia, el JWKS en serverless y el TLS `verify-full` pendiente.
+
+## DEC-023 — H1.1 Opportunities sobre datos reales
+- **Estado:** Aceptada · 2026-10-01
+- **Decisión:** H1.1 lleva la cola de Opportunities a PostgreSQL real (migración oficial `0002_opportunities_persistence`):
+  - **Entidades:** `Contact` y `Opportunity` (tablas `contacts` y `opportunities`) son las primeras entidades de producto persistidas de Hito 1. Ambas son tenant-scoped según ADR-001 §3.6.
+  - **Cadena de datos:** la lista `/opportunities` lee PostgreSQL real mediante `requireTenant() → withTenant()` y un filtro explícito por `organization_id`.
+  - **Defensa en profundidad:** RLS y el filtro explícito son capas complementarias; ninguna sustituye a la otra.
+  - **Sin outputs inventados:** los outputs de motores que todavía no existen (scores, NBA, Why Now, matches, trade-in, entre otros) no se inventan ni se persisten. Se representan como ausencia / "sin dato" (DEC-005).
+  - **Intención mínima:** `interest_model` e `interest_version` son el mínimo temporal de intención en H1.1. Las preferencias estructuradas quedan para Qualification.
+  - **Responsable:** la asignación de vendedor/responsable queda diferida.
+  - **Estados y origen:** `stage` y `source` usan por ahora `text` + `CHECK`, no enum, para poder evolucionar mediante migraciones.
+  - **Capas:** los loaders de datos viven en `db/queries/`. Páginas y componentes no conocen Drizzle y `domains/` permanece puro (DEC-016).
+  - **Mocks:** la cola real ya no usa mocks en runtime. Los fixtures quedan únicamente como referencia del contrato visual y de los tests.
+  - **Solo lectura:** H1.1 es read-only. No hay policies ni grants de escritura todavía (default deny).
+- **Aclara:** la Build Baseline B1 §4 (persistencia de contacts y leads diferida a hitos siguientes de P1), DEC-016 (loaders en la capa de datos en Hito 1) y DEC-021 (loaders tenant-scoped de Hito 1).
+- **Consecuencias:**
+  - Los detalles de presentación temporales y reversibles de H1.1 quedan documentados en el README y no forman parte de esta decisión.
+  - La Build Baseline no se reescribe: DEC-023 prevalece sobre ella en estos puntos (DEC-002).
 
 ---
 

@@ -5,9 +5,13 @@
  *
  * Toda tabla de `public` nace con RLS habilitado (ADR-001 §3.5). Las
  * policies se declaran junto a cada tabla (drizzle-kit las genera); el rol
- * app_runtime, `private.user_org_ids()` y los grants de `authenticated` son
- * SQL custom de 0001_tenant_isolation.
+ * app_runtime y `private.user_org_ids()` son SQL custom de
+ * 0001_tenant_isolation, y los grants de `authenticated`, SQL custom de la
+ * migración que crea cada tabla (0001 para las de H0, 0002 para contacts y
+ * opportunities).
  */
 export * from "./organizations";
 export * from "./profiles";
 export * from "./memberships";
+export * from "./contacts";
+export * from "./opportunities";

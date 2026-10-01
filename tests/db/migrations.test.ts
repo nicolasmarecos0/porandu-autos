@@ -7,11 +7,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { catalogSnapshot, tableNames } from "./support/catalog";
 import {
+  migrateUpTo,
   runMigrations,
   startTestServer,
   type TestDatabase,
   type TestServer,
 } from "./support/postgres";
+import { MEMBERSHIPS, seedTenants } from "./support/tenants";
 
 /*
  * Migraciones de db/migrations aplicadas desde cero con `pnpm db:migrate`
@@ -21,12 +23,20 @@ import {
 const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
 
 /*
- * Reversión de 0001_tenant_isolation y 0000_saas_core_schema. drizzle-kit
- * no tiene down migrations: esto no es parte del producto. Prueba que la
- * huella de las migraciones es exactamente la declarada (volver al catálogo
- * previo, incluido el rol app_runtime) y que se pueden recrear limpias.
- * Restaura los default privileges de Supabase del shim.
+ * Reversión de 0002_opportunities_persistence, 0001_tenant_isolation y
+ * 0000_saas_core_schema. drizzle-kit no tiene down migrations: esto no es
+ * parte del producto. Prueba que la huella de las migraciones es
+ * exactamente la declarada (volver al catálogo previo, incluido el rol
+ * app_runtime) y que se pueden recrear limpias. Restaura los default
+ * privileges de Supabase del shim.
  */
+const REVERT_0002 = `
+  DROP POLICY opportunities_select_member ON public.opportunities;
+  DROP POLICY contacts_select_member ON public.contacts;
+  DROP TABLE public.opportunities;
+  DROP TABLE public.contacts;
+`;
+
 const REVERT_0001 = `
   DROP POLICY memberships_select_member ON public.memberships;
   DROP POLICY profiles_select_own ON public.profiles;
@@ -96,22 +106,24 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     expect(owners?.owners).toEqual(["postgres"]);
   });
 
-  it("crea solo organizations, profiles y memberships en public", async () => {
+  it("crea solo las tablas de H0 y de H1.1 en public", async () => {
     expect(await tableNames(db.admin, "public")).toEqual([
+      "contacts",
       "memberships",
+      "opportunities",
       "organizations",
       "profiles",
     ]);
   });
 
-  it("registra 0000_saas_core_schema y 0001_tenant_isolation en el historial de drizzle", async () => {
-    expect(await appliedMigrations()).toBe(2);
+  it("registra 0000, 0001 y 0002 en el historial de drizzle", async () => {
+    expect(await appliedMigrations()).toBe(3);
   });
 
   it("volver a migrar no cambia nada", async () => {
     await runMigrations(db.migrationUrl);
 
-    expect(await appliedMigrations()).toBe(2);
+    expect(await appliedMigrations()).toBe(3);
     expect(await catalogSnapshot(db.admin)).toEqual(afterMigration);
   });
 
@@ -122,6 +134,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     expect(files).toEqual([
       "0000_saas_core_schema.sql",
       "0001_tenant_isolation.sql",
+      "0002_opportunities_persistence.sql",
     ]);
     for (const file of files) {
       const content = await readFile(new URL(file, MIGRATIONS_DIR), "utf8");
@@ -135,6 +148,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     try {
       // La reversión corre con la credencial de migración, dueña de todo.
       await revert.begin(async (tx) => {
+        await tx.unsafe(REVERT_0002);
         await tx.unsafe(REVERT_0001);
         await tx.unsafe(REVERT_0000);
       });
@@ -226,4 +240,113 @@ describe("0001 falla cerrada ante un estado inseguro", () => {
     await fresh.admin`DROP SCHEMA drizzle CASCADE`;
     expect(await catalogSnapshot(fresh.admin)).toEqual(before);
   });
+});
+
+/*
+ * Staging hoy está en Foundation (0000 y 0001, DEC-022). 0002 se aplica
+ * sobre esa base: solo agrega lo suyo y no toca los datos existentes.
+ */
+describe("0002 sobre una base en Foundation (staging hoy)", () => {
+  async function foundationCount(sql: TestDatabase["admin"]) {
+    const [row] = await sql<
+      { organizations: number; memberships: number; history: number }[]
+    >`
+      SELECT
+        (SELECT count(*)::int FROM public.organizations) AS organizations,
+        (SELECT count(*)::int FROM public.memberships) AS memberships,
+        (SELECT count(*)::int FROM drizzle.__drizzle_migrations) AS history
+    `;
+    return row;
+  }
+
+  it("pnpm db:migrate aplica solo 0002, conserva los datos y deja el mismo catálogo", async () => {
+    const foundation = await server.createDatabase();
+    await migrateUpTo(foundation.migrationUrl, "0001_tenant_isolation");
+    await seedTenants(foundation.admin);
+    expect(await tableNames(foundation.admin, "public")).toEqual([
+      "memberships",
+      "organizations",
+      "profiles",
+    ]);
+    expect(await foundationCount(foundation.admin)).toEqual({
+      organizations: 3,
+      memberships: MEMBERSHIPS.length,
+      history: 2,
+    });
+
+    await runMigrations(foundation.migrationUrl);
+
+    expect(await foundationCount(foundation.admin)).toEqual({
+      organizations: 3,
+      memberships: MEMBERSHIPS.length,
+      history: 3,
+    });
+    expect(await catalogSnapshot(foundation.admin)).toEqual(afterMigration);
+  });
+
+  /*
+   * Postcondiciones de 0002 (ADR-001 §3.6) sobre toda tabla de public: si
+   * la base no cumple las invariantes, 0002 falla y no aplica nada.
+   */
+  const unsafeStates: [string, string, string][] = [
+    [
+      "una tabla de public sin RLS",
+      "CREATE TABLE public.probe (id int)",
+      "DROP TABLE public.probe",
+    ],
+    [
+      "una tabla tenant-scoped sin índice que empiece por organization_id",
+      `CREATE TABLE public.probe (organization_id uuid NOT NULL REFERENCES public.organizations(id));
+       ALTER TABLE public.probe ENABLE ROW LEVEL SECURITY`,
+      "DROP TABLE public.probe",
+    ],
+    [
+      "anon con SELECT sobre una tabla",
+      "GRANT SELECT ON public.organizations TO anon",
+      "REVOKE SELECT ON public.organizations FROM anon",
+    ],
+    [
+      "app_runtime con privilegios directos (lectura fuera del boundary)",
+      "GRANT SELECT ON public.memberships TO app_runtime",
+      "REVOKE SELECT ON public.memberships FROM app_runtime",
+    ],
+    [
+      "authenticated con un privilegio sin policy",
+      "GRANT INSERT ON public.memberships TO authenticated",
+      "REVOKE INSERT ON public.memberships FROM authenticated",
+    ],
+  ];
+
+  it.each(unsafeStates)(
+    "0002 falla cerrada ante %s",
+    async (_, unsafe, restore) => {
+      const foundation = await server.createDatabase();
+      await migrateUpTo(foundation.migrationUrl, "0001_tenant_isolation");
+      await foundation.admin.unsafe(unsafe);
+      try {
+        await expect(runMigrations(foundation.migrationUrl)).rejects.toThrow(
+          "pnpm db:migrate failed",
+        );
+        await expect(
+          migrateReportingErrors(foundation.migrationUrl),
+        ).rejects.toMatchObject({
+          cause: { message: expect.stringMatching(/^ADR-001: /) },
+        });
+        const tables = await tableNames(foundation.admin, "public");
+        expect(tables).not.toContain("contacts");
+        expect(tables).not.toContain("opportunities");
+        const [history] = await foundation.admin<{ count: number }[]>`
+          SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+        `;
+        expect(history?.count).toBe(2);
+      } finally {
+        await foundation.admin.unsafe(restore);
+      }
+      // Corregido el estado, 0002 se aplica.
+      await runMigrations(foundation.migrationUrl);
+      expect(await tableNames(foundation.admin, "public")).toContain(
+        "opportunities",
+      );
+    },
+  );
 });

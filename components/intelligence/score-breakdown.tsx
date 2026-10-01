@@ -20,7 +20,14 @@ export function ScoreBreakdown({
     <div className="flex w-56 flex-col gap-1.5 py-0.5">
       <div className="flex items-baseline justify-between font-semibold">
         <span>Porandú Score</span>
-        <span className="tabular-nums">{scores.porandu}</span>
+        <span
+          className={cn(
+            "tabular-nums",
+            scores.porandu === null && "font-normal italic",
+          )}
+        >
+          {scores.porandu ?? "sin dato"}
+        </span>
       </div>
       {composition.map((part) => {
         const value = scores[part.key];

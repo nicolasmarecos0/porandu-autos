@@ -84,6 +84,42 @@ const resolveTenantImport = {
   message: RESOLVE_TENANT_MESSAGE,
 };
 
+// H1.1 (DEC-016, DEC-021): páginas y componentes no conocen Drizzle ni el
+// boundary. Leen datos con los loaders de db/queries/, que llaman a
+// requireTenant() y withTenant() junto a sus queries.
+const DATA_LAYER_MESSAGE =
+  "Pages and components read data through the loaders in db/queries/ (requireTenant() + withTenant()). They do not use Drizzle, db/schema or db/tenant directly.";
+const dataLayerImport = {
+  regex: "^drizzle-orm(/|$)|(^|/)db/(schema|tenant)(/|$)",
+  allowTypeImports: true,
+  message: DATA_LAYER_MESSAGE,
+};
+
+// DEC-016: domains/ solo tiene tipos, labels y lógica determinista. No
+// depende de db/, mocks/, Drizzle, React ni Next.
+const DOMAIN_MESSAGE =
+  "domains/ holds types and pure logic only (DEC-016): no db/, mocks/, Drizzle, React or Next.";
+const domainImport = {
+  regex: "^(react|react-dom|next|drizzle-orm)(/|$)|(^|/)(db|mocks)(/|$)",
+  message: DOMAIN_MESSAGE,
+};
+
+// H1.1: la cola de Opportunities se lee de PostgreSQL. El fixture de B1
+// queda como referencia para tests, nunca como segunda fuente de la lista.
+const OPPORTUNITIES_MOCK_MESSAGE =
+  "The Opportunities queue is read from PostgreSQL (db/queries/opportunities.ts). mocks/opportunities is a test reference only.";
+const opportunitiesMockImport = {
+  regex: "(^|/)mocks/opportunities$",
+  message: OPPORTUNITIES_MOCK_MESSAGE,
+};
+
+const basePatterns = [
+  dbClientImport,
+  withUserImport,
+  resolveTenantImport,
+  opportunitiesMockImport,
+];
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -95,9 +131,24 @@ const eslintConfig = defineConfig([
         ...noMigrationUrl,
         noDbClientDynamicImport,
       ],
+      "no-restricted-imports": ["error", { patterns: basePatterns }],
+    },
+  },
+  {
+    files: ["app/**", "components/**"],
+    rules: {
       "no-restricted-imports": [
         "error",
-        { patterns: [dbClientImport, withUserImport, resolveTenantImport] },
+        { patterns: [...basePatterns, dataLayerImport] },
+      ],
+    },
+  },
+  {
+    files: ["domains/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [...basePatterns, domainImport] },
       ],
     },
   },
@@ -113,12 +164,7 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          patterns: [
-            dbClientImport,
-            dbClientRelativeImport,
-            withUserImport,
-            resolveTenantImport,
-          ],
+          patterns: [...basePatterns, dbClientRelativeImport],
         },
       ],
     },
@@ -154,6 +200,7 @@ const eslintConfig = defineConfig([
             dbClientImport,
             dbClientRelativeImport,
             resolveTenantImport,
+            opportunitiesMockImport,
           ],
         },
       ],
@@ -165,7 +212,9 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-imports": [
         "error",
-        { patterns: [dbClientImport, withUserImport] },
+        {
+          patterns: [dbClientImport, withUserImport, opportunitiesMockImport],
+        },
       ],
     },
   },
@@ -175,7 +224,10 @@ const eslintConfig = defineConfig([
     files: ["db/tenant.ts"],
     rules: {
       "no-restricted-syntax": ["error", ...noMigrationUrl],
-      "no-restricted-imports": ["error", { patterns: [resolveTenantImport] }],
+      "no-restricted-imports": [
+        "error",
+        { patterns: [resolveTenantImport, opportunitiesMockImport] },
+      ],
     },
   },
   {

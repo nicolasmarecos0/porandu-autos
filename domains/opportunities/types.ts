@@ -33,40 +33,48 @@ export type NextBestAction = {
   needsApproval?: boolean;
 };
 
+/*
+ * ViewModel de Opportunities (DEC-015, DEC-017). Un campo opcional que no
+ * llega es "sin dato": la UI no lo muestra y nunca se completa con un valor
+ * inventado. En Hito 1 la fuente real (PostgreSQL) solo trae lo persistido y
+ * lo derivado; la inteligencia (scores, NBA, señales, matches, trade-in,
+ * conversación en vivo) llega cuando exista su motor.
+ */
 export type Opportunity = {
   id: string;
   prospect: {
     name: string;
     initials: string;
-    /** Enmascarado en la UI de B1. */
-    phone: string;
-    city: string;
+    /** Enmascarado en la UI. */
+    phone?: string;
+    city?: string;
     channel: Channel;
     /** Conversación de WhatsApp activa (`● En vivo`). */
     live: boolean;
     company?: { contact: string };
   };
+  /** Vehículo que busca. */
   interest: {
-    model: string;
-    version: string;
-    condition: string;
-    body: BodyType;
-    budget: string;
-    payment: string;
+    model?: string;
+    version?: string;
+    condition?: string;
+    body?: BodyType;
+    budget?: string;
+    payment?: string;
     quantity?: number;
   };
   scores: ScoreSet;
   lastActivity: {
     /** Minutos desde la última actividad. */
     minutes: number;
-    summary: string;
+    summary?: string;
   };
-  owner: Advisor;
+  owner?: Advisor;
   stage: Stage;
   bucket: Bucket;
-  nba: NextBestAction;
+  nba?: NextBestAction;
   drivers: readonly Driver[];
-  topMatch: VehicleMatch;
+  topMatch?: VehicleMatch;
   alternative?: AlternativeMatch;
   tradeIn?: TradeIn;
 };

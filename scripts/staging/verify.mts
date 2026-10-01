@@ -5,13 +5,20 @@ import { finding, type Finding } from "./report.mts";
 
 /*
  * Verificación post-migración de staging (solo lectura): lo que dejaron
- * 0000_saas_core_schema y 0001_tenant_isolation, leído del catálogo real
- * (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4). Espeja tests/db/tenant-catalog
- * y tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
- * junto con esos tests.
+ * 0000_saas_core_schema, 0001_tenant_isolation y
+ * 0002_opportunities_persistence, leído del catálogo real (DEC-018, DEC-019,
+ * ADR-001 §2, §3.6 y §4). Espeja tests/db/tenant-catalog y tests/db/schema:
+ * si una migración nueva cambia lo esperado, se actualiza junto con esos
+ * tests.
  */
 
-const APP_TABLES = ["memberships", "organizations", "profiles"];
+const APP_TABLES = [
+  "contacts",
+  "memberships",
+  "opportunities",
+  "organizations",
+  "profiles",
+];
 const PRIVILEGES = [
   "SELECT",
   "INSERT",
@@ -33,11 +40,34 @@ type Policy = {
   withCheck: string | null;
 };
 
-/** Policies de lectura de H0 (DEC-019), tal como las deparsea PostgreSQL 17. */
+/**
+ * Policies de lectura de H0 (DEC-019) y de H1.1 (contacts, opportunities),
+ * tal como las deparsea PostgreSQL 17.
+ */
 export const EXPECTED_POLICIES: Policy[] = [
+  {
+    table: "contacts",
+    name: "contacts_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
   {
     table: "memberships",
     name: "memberships_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "opportunities",
+    name: "opportunities_select_member",
     permissive: "PERMISSIVE",
     roles: ["authenticated"],
     command: "SELECT",
@@ -188,7 +218,7 @@ export async function verifyCatalog(
     ),
   );
 
-  // Policies (DEC-019): solo lectura, con la forma de referencia.
+  // Policies (DEC-019, H1.1): solo lectura, con la forma de referencia.
   const policies = await tx<Policy[]>`
     SELECT tablename AS table, policyname AS name, permissive,
       roles::text[] AS roles, cmd AS command, qual AS using,
@@ -379,7 +409,7 @@ export async function verifyCatalog(
         authenticatedPrivileges,
         APP_TABLES.map((table) => `SELECT ${table}`),
       ),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (no writes in H0)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (read-only: no writes in H0/H1.1)`,
     ),
   );
 
@@ -497,13 +527,21 @@ export async function serviceRolePrivileges(
  */
 
 /** Tablas de la app; pg_graphql las expone como `<tabla>Collection`. */
-const DATA_API_TABLES = ["organizations", "profiles", "memberships"];
+const DATA_API_TABLES = [
+  "organizations",
+  "profiles",
+  "memberships",
+  "contacts",
+  "opportunities",
+];
 /** Nombres que pg_graphql daría a los tipos de la app. */
 const GRAPHQL_APP_TYPES = [
   "Organizations",
   "Profiles",
   "Memberships",
   "MembershipRole",
+  "Contacts",
+  "Opportunities",
 ];
 
 export type DataApiProbeKind =

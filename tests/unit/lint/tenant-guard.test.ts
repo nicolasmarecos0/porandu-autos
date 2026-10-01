@@ -66,8 +66,8 @@ describe("guarda de withUser()", { timeout: 30_000 }, () => {
       `import { withUser } from "@/db/tenant";${useWithUser}`,
     ],
     [
-      "app/(app)/cockpit/page.tsx",
-      `import { withTenant } from "@/db/tenant";\nexport const use = withTenant;\n`,
+      "db/queries/opportunities.ts",
+      `import { withTenant } from "../tenant";\nexport const use = withTenant;\n`,
     ],
   ])("se permite en %s: %s", async (filePath, code) => {
     expect(await restrictedBy(filePath, code)).toEqual([]);

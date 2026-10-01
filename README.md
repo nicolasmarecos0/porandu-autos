@@ -3,7 +3,7 @@
 **Automotive Revenue OS / Sales Intelligence Platform** para playas, showrooms y concesionarias.
 Porandú conecta inventario, conversaciones, intención de compra y operación comercial para ayudar a vender más vehículos.
 
-> Estado: **Build Baseline B1**, que cubre Hito 0 (Foundation) y el Vertical Slice visual sobre mock data.
+> Estado: **Build Baseline B1**, que cubre Hito 0 (Foundation) y el Vertical Slice visual sobre mock data. **Hito 1 en curso:** H1.1 lleva la cola de Opportunities a PostgreSQL real (ver "Opportunities con datos reales (H1.1)").
 > Alcance vigente: [`docs/03_BUILD_BASELINE_B1.md`](docs/03_BUILD_BASELINE_B1.md)
 
 ---
@@ -110,8 +110,8 @@ Antes de abrir un PR deben pasar: `pnpm typecheck && pnpm lint && pnpm format:ch
 
 - El schema de Drizzle vive en `db/schema/` y las migraciones en `db/migrations/` (única fuente). `db:generate` y `db:migrate` leen `MIGRATION_DATABASE_URL` del entorno o de `.env.local`; la variable del entorno prevalece.
 - Las migraciones apuntan a Supabase: dependen de `auth.users`, `auth.uid()` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
-- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
-- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación) contra la base real. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
+- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
+- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación) y el loader de Opportunities (`requireTenant()` → `withTenant()` → RLS) contra la base real, y que `0002` se aplica sobre una base en Foundation (como staging hoy) sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
 
 ```bash
 docker run -d --rm --name porandu-pg17 -p 127.0.0.1:55432:5432 \
@@ -162,7 +162,7 @@ Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@pora
 **Runbook de una migración**
 
 1. `preflight`: revisar el estado y las migraciones pendientes.
-2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`).
+2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`).
 3. Primer rollout o rotación: `provision-runtime`.
 4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution o el aislamiento.
 
@@ -178,8 +178,8 @@ Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@pora
 app/          Rutas (App Router). (auth)/ y (app)/ con el shell
 components/   UI: ui/ (primitivas + tokens) y componentes por área
 domains/      Tipos y lógica pura por dominio (sin React ni DB)
-db/           Schema Drizzle, migraciones y acceso tenant-scoped
-mocks/        Fixtures tipados para el vertical slice
+db/           Schema Drizzle, migraciones y acceso tenant-scoped (queries/: loaders)
+mocks/        Fixtures tipados para el vertical slice (Opportunities: solo referencia de tests)
 lib/          env, auth, logger y utilidades de infraestructura
 supabase/     Configuración de Supabase local
 scripts/      Tooling operativo (staging/: workflow Staging DB). La app no lo importa
@@ -234,9 +234,27 @@ Implementa ADR-001 (`db/tenant.ts` y la migración `0001_tenant_isolation`):
 - El runtime se conecta como `app_runtime`, que no tiene privilegios directos: toda query fuera del boundary falla cerrado (`42501`).
 - `withUser(ctx, fn)` y `withTenant(ctx, fn)` abren una transacción que fija los claims y el rol `authenticated` con `set_config(..., true)`. Al terminar, la conexión vuelve a ser `app_runtime` sin claims. Nunca se usa `SET` de sesión ni `set_config(..., false)`.
 - RLS limita cada fila a las organizaciones con membership activa del usuario (`private.user_org_ids()`). Las queries tenant-scoped filtran además por `ctx.organizationId`.
-- En H0 solo hay lectura: `organizations` y `memberships` de las organizaciones del usuario, y su propio `profiles`. No hay grants ni policies de escritura.
+- Solo hay lectura: `organizations`, `memberships`, `contacts` y `opportunities` de las organizaciones del usuario, y su propio `profiles`. No hay grants ni policies de escritura.
 - ESLint impide importar `db/client` fuera de `db/tenant.ts` (y de dos archivos de test).
 - `withTenant()` no resuelve ni valida la organización activa: recibe un contexto confiable (claims verificados y organización ya validada). Los claims verificados llegan con Supabase Auth (H0.6); la organización activa la resuelve y valida Tenant Resolution (H0.7) con `requireTenant()` (DEC-019). `withTenant()` solo acepta un `TenantContext` emitido por Tenant Resolution.
+
+## Opportunities con datos reales (H1.1)
+
+`/opportunities` es la primera superficie de producto respaldada por PostgreSQL:
+
+```text
+request → requireTenant() → TenantContext → withTenant() → query con filtro
+explícito por organización → RLS → ViewModel de Opportunities
+```
+
+- **Loader:** `getOpportunityQueue()` (`db/queries/opportunities.ts`) pide su propio contexto con `requireTenant()`, lee dentro de `withTenant()`, filtra por `ctx.organizationId` (defensa en profundidad: con varias memberships activas, RLS deja ver todas sus organizaciones) y devuelve el ViewModel que ya usa la UI. La página no conoce Drizzle.
+- **Persistido (`0002_opportunities_persistence`):** `contacts` (nombre, teléfono, ciudad) y `opportunities` (contacto de la misma organización por FK compuesta, etapa, origen, modelo y versión buscados, última actividad). Etapa y origen se validan con un CHECK, no con un enum: esos conjuntos todavía no están cerrados por producto.
+- **Derivado:** iniciales, teléfono enmascarado, minutos desde la última actividad y urgencia de la cola.
+- **Sin dato (no se persiste ni se inventa):** Porandú Score y sub-scores, NBA, ¿Por qué ahora?, Top Match, alternativa, trade-in, responsable, `● En vivo` y el resumen de la última actividad. La UI no los muestra hasta que exista su fuente.
+- **Reglas temporales de presentación:** la urgencia (Actuar ahora / Durante el día / En seguimiento) sale de las bandas de recencia de B1 §3.2 (`bucketFromRecency()`); la recencia se presenta en `America/Asuncion` (las organizaciones todavía no tienen zona horaria); el anillo usa la composición conceptual del Master Context §10 (40/30/30), que no es la fórmula del producto (DEC-004).
+- **Una sola fuente:** `mocks/opportunities.ts` ya no tiene loader. Sus fixtures quedan como referencia del contrato visual de B1 para los tests, y ESLint impide importarlos fuera de `tests/`.
+- **Guardas de ESLint:** páginas y componentes no importan Drizzle, `db/schema` ni `db/tenant` (leen con los loaders de `db/queries/`); `domains/` no depende de `db/`, `mocks/`, Drizzle, React ni Next (DEC-016).
+- Con 0 oportunidades la página muestra un estado vacío; no hay seeds en runtime.
 
 ## Convenciones
 

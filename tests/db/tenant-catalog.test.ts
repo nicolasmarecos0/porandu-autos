@@ -12,12 +12,19 @@ import {
 } from "./support/postgres";
 
 /*
- * Roles, grants, función y policies que deja 0001_tenant_isolation, leídos
- * del catálogo de PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2, C3 y
- * C9). El acceso a datos se prueba en tenant-isolation.test.ts.
+ * Roles, grants, función y policies que dejan 0001_tenant_isolation y
+ * 0002_opportunities_persistence, leídos del catálogo de PostgreSQL 17
+ * (ADR-001 §2, §3.6 y §4; criterios C2, C3 y C9). El acceso a datos se
+ * prueba en tenant-isolation.test.ts y opportunities.test.ts.
  */
 
-const TABLES = ["memberships", "organizations", "profiles"];
+const TABLES = [
+  "contacts",
+  "memberships",
+  "opportunities",
+  "organizations",
+  "profiles",
+];
 
 let server: TestServer;
 let db: TestDatabase;
@@ -158,8 +165,28 @@ describe("policies (ADR-001 §4)", () => {
   it("solo lectura para authenticated, con la forma de referencia", async () => {
     expect(await policies(db.admin)).toEqual([
       {
+        table: "contacts",
+        name: "contacts_select_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
+      },
+      {
         table: "memberships",
         name: "memberships_select_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
+      },
+      {
+        table: "opportunities",
+        name: "opportunities_select_member",
         permissive: "PERMISSIVE",
         roles: ["authenticated"],
         command: "SELECT",
@@ -199,7 +226,7 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated solo tiene SELECT sobre organizations, profiles y memberships", async () => {
+  it("authenticated solo tiene SELECT sobre las tablas de la app (sin escrituras)", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual(
       TABLES.map((table) => `authenticated SELECT ${table}`),
     );

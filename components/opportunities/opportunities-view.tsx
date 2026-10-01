@@ -18,7 +18,7 @@ type OpportunitiesViewProps = {
   title: string;
   opportunities: readonly Opportunity[];
   referenceMinuteOfDay: number;
-  /** Composición para explicar el Porandú Score (en B1, dato de mock). */
+  /** Composición para explicar el Porandú Score: dato de la fuente. */
   scoreComposition: ScoreComposition;
 };
 
@@ -33,7 +33,9 @@ const ID_PREFIX = "opportunity";
  *   │             │ (fuertes / a validar)   │ trade-in     │
  *   └─────────────┴─────────────────────────┴──────────────┘
  *
- * Cada columna tiene scroll propio. Datos de fixtures (B1).
+ * Cada columna tiene scroll propio. Los datos llegan del loader de la página
+ * (PostgreSQL, tenant-scoped). Lo que la fuente no trae ("sin dato") no se
+ * muestra: sin NBA, señales ni matches inventados.
  */
 export function OpportunitiesView({
   title,
@@ -84,23 +86,27 @@ export function OpportunitiesView({
                 scores={selected.scores}
                 composition={scoreComposition}
               />
-              <NextBestActionCard
-                nba={selected.nba}
-                done={queue.done.has(selected.id)}
-                onToggleDone={() => queue.toggleDone(selected.id)}
-              />
+              {selected.nba ? (
+                <NextBestActionCard
+                  nba={selected.nba}
+                  done={queue.done.has(selected.id)}
+                  onToggleDone={() => queue.toggleDone(selected.id)}
+                />
+              ) : null}
               <div className="mt-1 flex items-baseline justify-between px-0.5">
                 <h2 className="text-heading text-text-primary">
                   ¿Por qué ahora?
                 </h2>
-                <button
-                  type="button"
-                  aria-pressed={showSources}
-                  onClick={() => setShowSources((value) => !value)}
-                  className="rounded-sm text-label text-brand hover:text-brand-strong hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                >
-                  {showSources ? "Ocultar fuentes" : "Mostrar fuentes"}
-                </button>
+                {selected.drivers.length > 0 ? (
+                  <button
+                    type="button"
+                    aria-pressed={showSources}
+                    onClick={() => setShowSources((value) => !value)}
+                    className="rounded-sm text-label text-brand hover:text-brand-strong hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                  >
+                    {showSources ? "Ocultar fuentes" : "Mostrar fuentes"}
+                  </button>
+                ) : null}
               </div>
               <WhyNowCard
                 drivers={selected.drivers}
@@ -112,12 +118,16 @@ export function OpportunitiesView({
                     {formatElapsedLong(
                       selected.lastActivity.minutes,
                       referenceMinuteOfDay,
-                    )}{" "}
-                    · {selected.lastActivity.summary}
+                    )}
+                    {selected.lastActivity.summary
+                      ? ` · ${selected.lastActivity.summary}`
+                      : null}
                   </>
                 }
               />
             </>
+          ) : opportunities.length === 0 ? (
+            <EmptyQueue />
           ) : null}
         </section>
 
@@ -130,5 +140,20 @@ export function OpportunitiesView({
         </aside>
       </div>
     </TooltipProvider>
+  );
+}
+
+/** Organización sin oportunidades: estado vacío, sin datos de ejemplo. */
+function EmptyQueue() {
+  return (
+    <div className="rounded-lg bg-surface-1 px-5 py-8 text-center shadow-card">
+      <p className="text-heading text-text-primary">
+        Todavía no hay oportunidades
+      </p>
+      <p className="mt-1 text-label text-text-muted">
+        Cuando esta organización registre oportunidades, vas a ver acá a quién
+        atender primero.
+      </p>
+    </div>
   );
 }
