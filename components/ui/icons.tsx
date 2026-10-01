@@ -212,3 +212,19 @@ export function UndoIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function PlusIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 5v14M5 12h14" />
+    </Icon>
+  );
+}
+
+export function CloseIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+    </Icon>
+  );
+}

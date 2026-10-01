@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, asc, desc, eq } from "drizzle-orm";
 
+import { SOURCE_LABELS } from "@/domains/opportunities/labels";
 import { initialsOf, maskPhone } from "@/domains/opportunities/prospect";
 import { bucketFromRecency } from "@/domains/opportunities/queue";
 import { minuteOfDay, minutesSince } from "@/domains/opportunities/recency";
@@ -64,13 +65,9 @@ export const stageFromDb: Record<OpportunityRecord["stage"], Stage> = {
   negotiation: "negotiation",
 };
 
-export const channelFromDb: Record<OpportunityRecord["source"], Channel> = {
-  whatsapp: "WhatsApp",
-  meta_ads: "Meta Ads",
-  web: "Web",
-  showroom: "Showroom",
-  referral: "Referido",
-};
+// Mismo copy que el formulario de alta: una sola fuente (domains/).
+export const channelFromDb: Record<OpportunityRecord["source"], Channel> =
+  SOURCE_LABELS;
 
 /** Lo que la cola lee de la base: solo lo persistido que muestra la UI. */
 export type OpportunityQueueRow = Readonly<{

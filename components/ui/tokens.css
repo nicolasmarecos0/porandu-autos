@@ -75,6 +75,9 @@
   --color-skeleton-strong: #d3dce3;
   --color-skeleton-inverse: rgb(255 255 255 / 0.14);
 
+  /* Velo detrás de un drawer o diálogo: atenúa el workspace sin ocultarlo. */
+  --color-overlay: rgb(22 33 43 / 0.28);
+
   /* Foco accesible: sobre superficies claras y sobre inverse. */
   --color-focus-ring: #376b89;
   --color-focus-ring-inverse: #a9c7d9;
@@ -165,6 +168,22 @@
     from {
       opacity: 0;
       transform: scale(0.97);
+    }
+  }
+
+  /* Drawer lateral: entra desde la derecha; el velo aparece con él. */
+  --animate-drawer-in: drawer-in 220ms var(--ease-out-strong);
+  --animate-overlay-in: overlay-in 220ms var(--ease-standard);
+
+  @keyframes drawer-in {
+    from {
+      transform: translateX(100%);
+    }
+  }
+
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
     }
   }
 }

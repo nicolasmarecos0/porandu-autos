@@ -330,20 +330,23 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
     );
   });
 
-  it("nadie escribe por withTenant(): sin grants ni policies de escritura", async () => {
+  it("por withTenant() nadie modifica ni borra, ni da de alta en otra organización", async () => {
+    // El alta en la organización propia (H1.2) se prueba en
+    // create-opportunity.test.ts; acá la cola de ORG_1 no cambia.
     const ctx = tenantContext(USER_A, ORG_1);
     const own = OPPORTUNITIES[0]!;
+    const foreign = OPPORTUNITIES.find((o) => o.organizationId === ORG_2)!;
     await expectSqlError(
       withTenant(ctx, (tx) =>
-        tx.insert(contacts).values({ organizationId: ORG_1, name: "Nuevo" }),
+        tx.insert(contacts).values({ organizationId: ORG_2, name: "Nuevo" }),
       ),
       "42501",
     );
     await expectSqlError(
       withTenant(ctx, (tx) =>
         tx.insert(opportunities).values({
-          organizationId: ORG_1,
-          contactId: own.contact.id,
+          organizationId: ORG_2,
+          contactId: foreign.contact.id,
           stage: "new",
           source: "web",
         }),

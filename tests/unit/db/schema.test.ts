@@ -135,7 +135,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara solo una policy de lectura para authenticated (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated y solo contacts y opportunities, la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -146,12 +146,25 @@ describe("db/schema", () => {
           for: p.for,
           to: [p.to].flat().map((r) => (is(r, PgRole) ? r.name : r)),
           using: p.using && dialect.sqlToQuery(p.using).sql,
-          withCheck: p.withCheck,
+          withCheck: p.withCheck && dialect.sqlToQuery(p.withCheck).sql,
         })),
       )
-      .sort((a, b) => a.table.localeCompare(b.table));
+      .sort(
+        (a, b) =>
+          a.table.localeCompare(b.table) || a.name.localeCompare(b.name),
+      );
 
     expect(declared).toEqual([
+      {
+        table: "contacts",
+        name: "contacts_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck:
+          '"contacts"."organization_id" IN (SELECT private.user_org_ids())',
+      },
       {
         table: "contacts",
         name: "contacts_select_member",
@@ -171,6 +184,15 @@ describe("db/schema", () => {
         using:
           '"memberships"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
+      },
+      {
+        table: "opportunities",
+        name: "opportunities_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck: `"opportunities"."organization_id" IN (SELECT private.user_org_ids()) AND "opportunities"."stage" = 'new'`,
       },
       {
         table: "opportunities",
@@ -203,7 +225,7 @@ describe("db/schema", () => {
     ]);
   });
 
-  it("contacts: nombre obligatorio, teléfono y ciudad opcionales, unique para la FK compuesta", () => {
+  it("contacts: nombre obligatorio, teléfono (original y E.164) y ciudad opcionales, unique para la FK compuesta", () => {
     expect(
       table("contacts").columns.map((c) => [c.name, c.notNull, c.hasDefault]),
     ).toEqual([
@@ -211,6 +233,7 @@ describe("db/schema", () => {
       ["organization_id", true, false],
       ["name", true, false],
       ["phone", false, false],
+      ["phone_normalized", false, false],
       ["city", false, false],
       ["created_at", true, true],
       ["updated_at", true, true],
@@ -227,6 +250,35 @@ describe("db/schema", () => {
       {
         name: "contacts_organization_id_id_key",
         columns: ["organization_id", "id"],
+      },
+    ]);
+    // H1.2: identidad por teléfono, única por organización (no global) y
+    // solo para los contactos con teléfono normalizado.
+    const dialect = new PgDialect();
+    expect(
+      table("contacts").indexes.map((i) => ({
+        name: i.config.name,
+        unique: i.config.unique,
+        columns: i.config.columns.map((c) => ("name" in c ? c.name : c)),
+        where: i.config.where && dialect.sqlToQuery(i.config.where).sql,
+      })),
+    ).toEqual([
+      {
+        name: "contacts_organization_id_phone_normalized_key",
+        unique: true,
+        columns: ["organization_id", "phone_normalized"],
+        where: '"contacts"."phone_normalized" IS NOT NULL',
+      },
+    ]);
+    expect(
+      table("contacts").checks.map((c) => ({
+        name: c.name,
+        sql: dialect.sqlToQuery(c.value).sql,
+      })),
+    ).toEqual([
+      {
+        name: "contacts_phone_normalized_check",
+        sql: `"contacts"."phone_normalized" IS NULL OR ("contacts"."phone" IS NOT NULL AND "contacts"."phone_normalized" ~ '^\\+[1-9][0-9]{1,14}$')`,
       },
     ]);
   });

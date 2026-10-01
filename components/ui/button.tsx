@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ComponentProps } from "react";
 import { cn } from "./cn";
 
 const variantClasses = {
@@ -8,7 +8,8 @@ const variantClasses = {
     "border border-border-default bg-surface-1 text-text-primary hover:border-border-strong hover:bg-surface-2 focus-visible:outline-focus-ring",
 } as const;
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+// ComponentProps incluye `ref` (React 19): lo usan los triggers `asChild` de Radix.
+type ButtonProps = ComponentProps<"button"> & {
   variant?: keyof typeof variantClasses;
 };
 
