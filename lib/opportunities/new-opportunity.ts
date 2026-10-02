@@ -9,6 +9,7 @@ import {
   type NewOpportunityValues,
 } from "@/domains/opportunities/new-opportunity";
 import { normalizePhone } from "@/lib/contacts/phone";
+import { singleLine } from "@/lib/forms/text";
 
 /*
  * Validación definitiva del alta manual de una oportunidad (H1.2). Corre en
@@ -55,14 +56,6 @@ export type ParsedNewOpportunity =
 
 /** Cota de lo que vuelve al formulario tras un error (el eco del input). */
 const MAX_ECHO_LENGTH = 256;
-
-function singleLine(raw: FormDataEntryValue | null): string {
-  if (typeof raw !== "string") return "";
-  return raw
-    .normalize("NFC")
-    .replace(/[\s\p{Cc}]+/gu, " ")
-    .trim();
-}
 
 export function parseNewOpportunityForm(
   formData: FormData,
