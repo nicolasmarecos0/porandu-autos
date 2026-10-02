@@ -38,6 +38,8 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-022 | Official Staging Database Operations | Aceptada | 2026-09-30 |
 | DEC-023 | H1.1 Opportunities sobre datos reales | Aceptada | 2026-10-01 |
 | DEC-024 | Contact identity and Opportunity creation | Aceptada | 2026-10-01 |
+| DEC-025 | Vehicle persistence foundation | Aceptada | 2026-10-02 |
+| DEC-026 | Stock Surface Architecture | Aceptada | 2026-10-02 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -340,6 +342,37 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   10. **Dependencias.** `libphonenumber-js` permanece server-only. `@radix-ui/react-dialog` se usa únicamente como primitiva accesible para el drawer.
   11. **Relación con decisiones anteriores.** DEC-024 amplía DEC-023 únicamente habilitando alta de `contacts` y `opportunities`; no habilita edición. Respeta DEC-019 al introducir escritura solo para un flujo aprobado. En estos puntos prevalece sobre la Build Baseline conforme a DEC-002.
   12. **Rollout.** `0003_contact_identity_opportunity_create` se aplicará a staging únicamente después del merge mediante `preflight → migrate → verify`.
+
+## DEC-025 — Vehicle persistence foundation
+- **Estado:** Aceptada · 2026-10-02
+- **Decisión:** H1.3A persiste el inventario mínimo con la migración oficial `0004_vehicles_stock_persistence`:
+  1. **Entidad.** `vehicles` es la unidad de inventario y es tenant-scoped según ADR-001 §3.6: `organization_id` NOT NULL, FK a `organizations` con RESTRICT, índice que empieza por `organization_id` y RLS habilitado.
+  2. **Cadena de datos.** Se lee con `requireTenant() → withTenant()` más un filtro explícito por `organization_id`. RLS y el filtro son capas complementarias. El loader oficial vive en `db/queries/vehicles.ts`.
+  3. **Campos.** `brand`, `model`, `year` y `status` son obligatorios. `version`, `km` y `price`/`currency` son opcionales; un dato ausente se muestra como ausencia explícita (DEC-005).
+  4. **Estados.** `in_preparation | available | reserved | sold`, con `text` + CHECK reemplazable, no enum. H1.3A no habilita transiciones.
+  5. **Dinero.** Todo dinero persistido en Porandú usa representación decimal exacta con moneda explícita, nunca float. `numeric(14,2)` queda aprobado solo para `vehicles.price`, sin imponer esa precisión a otros dominios monetarios. Precio y moneda siempre van juntos. No hay conversión entre monedas.
+  6. **Monedas.** `PYG | USD` es la lista vigente de P1, ampliable por migración; no es el universo definitivo. PYG no admite decimales.
+  7. **Orden.** `created_at DESC` es solo el orden técnico inicial y representa el ingreso a Porandú, no la antigüedad física en stock.
+  8. **Vendidos.** No se filtran en silencio.
+  9. **Sin datos inventados.** No se inventan fotos, matches, demanda ni interesados. Stock solo usa fotos reales cuando exista `vehicle_media`.
+  10. **Diferidos.** La entrega (`min_down_payment`) se revisa en H1.3B. El conteo de matches queda para el Match Engine.
+  11. **Solo lectura.** H1.3A no tiene INSERT, UPDATE ni DELETE. La postcondición de `0004` solo permite altas en `contacts` y `opportunities`.
+  12. **Mocks.** La Stock List no tiene fixtures en runtime y ESLint lo impide.
+- **Aclara:** Build Baseline B1 §4 (persistencia de vehículos diferida) y Technical Blueprint §10 (esqueleto de `vehicles`). Prevalece sobre ellos según DEC-002.
+- **Consecuencias:** las escrituras futuras de `vehicles` se habilitan con su propio flujo y `WITH CHECK`. `0004` se aplica a staging después del merge con `preflight → migrate → verify`.
+
+## DEC-026 — Stock Surface Architecture
+- **Estado:** Aceptada · 2026-10-02
+- **Decisión:**
+  1. Stock es una superficie inventory-first, no una tabla CRM.
+  2. El inventario se presenta agrupado por estado.
+  3. El header resume la distribución real del stock con conteos derivados.
+  4. La superficie usa un patrón master-detail: lista a la izquierda y contexto persistente a la derecha.
+  5. Los vendidos siguen consultables, pero visualmente subordinados al stock operativo.
+  6. Stock nunca presenta una representación genérica como si fuera una foto real; la media real llegará con `vehicle_media`.
+  7. El panel derecho puede evolucionar hacia fotos reales, compradores potenciales, matches y acciones sin convertir la lista principal en un dashboard.
+- **Aclara:** Build Baseline B1 §4 y §6 (Stock como empty state) y Technical Blueprint §6 (pantalla Inventario).
+- **Consecuencias:** Stock Surface v0.1 es la baseline visual de `/stock`. Los detalles de presentación (copy, colores, alturas) quedan documentados en el README y pueden ajustarse sin una nueva decisión.
 
 ---
 
