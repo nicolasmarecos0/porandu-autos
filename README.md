@@ -3,7 +3,7 @@
 **Automotive Revenue OS / Sales Intelligence Platform** para playas, showrooms y concesionarias.
 Porandú conecta inventario, conversaciones, intención de compra y operación comercial para ayudar a vender más vehículos.
 
-> Estado: **Build Baseline B1**, que cubre Hito 0 (Foundation) y el Vertical Slice visual sobre mock data. **Hito 1 en curso:** H1.1 lleva la cola de Opportunities a PostgreSQL real (ver "Opportunities con datos reales (H1.1)") y H1.2 agrega el alta manual de oportunidades (ver "Alta de oportunidades (H1.2)").
+> Estado: **Build Baseline B1**, que cubre Hito 0 (Foundation) y el Vertical Slice visual sobre mock data. **Hito 1 en curso:** H1.1 lleva la cola de Opportunities a PostgreSQL real (ver "Opportunities con datos reales (H1.1)"), H1.2 agrega el alta manual de oportunidades (ver "Alta de oportunidades (H1.2)") y H1.3A lleva la Stock List a PostgreSQL real, de solo lectura (ver "Stock con datos reales (H1.3A)").
 > Alcance vigente: [`docs/03_BUILD_BASELINE_B1.md`](docs/03_BUILD_BASELINE_B1.md)
 
 ---
@@ -110,8 +110,8 @@ Antes de abrir un PR deben pasar: `pnpm typecheck && pnpm lint && pnpm format:ch
 
 - El schema de Drizzle vive en `db/schema/` y las migraciones en `db/migrations/` (única fuente). `db:generate` y `db:migrate` leen `MIGRATION_DATABASE_URL` del entorno o de `.env.local`; la variable del entorno prevalece.
 - Las migraciones apuntan a Supabase: dependen de `auth.users`, `auth.uid()` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
-- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `0003_contact_identity_opportunity_create` repite esas y agrega las de las primeras escrituras: toda policy de escritura tiene `WITH CHECK` y `authenticated` no tiene UPDATE, DELETE ni TRUNCATE sobre ninguna tabla. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
-- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), el loader de Opportunities (`requireTenant()` → `withTenant()` → RLS) y el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) contra la base real, y que `0003` se aplica sobre una base en H1.1 (como staging hoy) sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
+- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `0003_contact_identity_opportunity_create` repite esas y agrega las de las primeras escrituras: toda policy de escritura tiene `WITH CHECK` y `authenticated` no tiene UPDATE, DELETE ni TRUNCATE sobre ninguna tabla. `0004_vehicles_stock_persistence` repite las de `0003` y agrega que `authenticated` solo da de alta en `contacts` y `opportunities` (`vehicles` es de solo lectura). `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
+- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), los loaders de Opportunities y de Stock (`requireTenant()` → `withTenant()` → RLS) y el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) contra la base real, y que `0004` se aplica sobre una base en H1.2 (como staging hoy) sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
 
 ```bash
 docker run -d --rm --name porandu-pg17 -p 127.0.0.1:55432:5432 \
@@ -162,7 +162,7 @@ Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@pora
 **Runbook de una migración**
 
 1. `preflight`: revisar el estado y las migraciones pendientes.
-2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
+2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`; H1.3A: `0004_vehicles_stock_persistence`). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
 3. Primer rollout o rotación: `provision-runtime`.
 4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution o el aislamiento.
 
@@ -234,8 +234,8 @@ Implementa ADR-001 (`db/tenant.ts` y la migración `0001_tenant_isolation`):
 - El runtime se conecta como `app_runtime`, que no tiene privilegios directos: toda query fuera del boundary falla cerrado (`42501`).
 - `withUser(ctx, fn)` y `withTenant(ctx, fn)` abren una transacción que fija los claims y el rol `authenticated` con `set_config(..., true)`. Al terminar, la conexión vuelve a ser `app_runtime` sin claims. Nunca se usa `SET` de sesión ni `set_config(..., false)`.
 - RLS limita cada fila a las organizaciones con membership activa del usuario (`private.user_org_ids()`). Las queries tenant-scoped filtran además por `ctx.organizationId`.
-- Lectura: `organizations`, `memberships`, `contacts` y `opportunities` de las organizaciones del usuario, y su propio `profiles`.
-- Escritura (H1.2): solo INSERT en `contacts` y `opportunities`, con policies cuyo `WITH CHECK` exige una organización con membership activa; la de `opportunities` exige además `stage = 'new'`. No hay UPDATE ni DELETE en ninguna tabla.
+- Lectura: `organizations`, `memberships`, `contacts`, `opportunities` y `vehicles` de las organizaciones del usuario, y su propio `profiles`.
+- Escritura (H1.2): solo INSERT en `contacts` y `opportunities`, con policies cuyo `WITH CHECK` exige una organización con membership activa; la de `opportunities` exige además `stage = 'new'`. No hay UPDATE ni DELETE en ninguna tabla, ni INSERT en `vehicles`.
 - ESLint impide importar `db/client` fuera de `db/tenant.ts` (y de dos archivos de test).
 - `withTenant()` no resuelve ni valida la organización activa: recibe un contexto confiable (claims verificados y organización ya validada). Los claims verificados llegan con Supabase Auth (H0.6); la organización activa la resuelve y valida Tenant Resolution (H0.7) con `requireTenant()` (DEC-019). `withTenant()` solo acepta un `TenantContext` emitido por Tenant Resolution.
 
@@ -275,6 +275,24 @@ oportunidad → RLS (WITH CHECK) → revalidar /opportunities
 - **Atomicidad:** contacto y oportunidad en una sola transacción `withTenant()`. Si la oportunidad falla, el contacto nuevo no queda. El error vuelve al formulario sin detalles de la base y con lo cargado, para reintentar.
 - **Sin backfill:** los contactos existentes sin `phone_normalized` no se tocan ni participan de la deduplicación.
 - **UX:** sin wizard. Mientras guarda, el botón muestra "Creando…" y el drawer no se cierra. Los errores se marcan por campo (es-PY) y el foco vuelve al primero a corregir. Al crear, el drawer se cierra, la cola se revalida, la oportunidad nueva queda seleccionada y un aviso dice si se usó un contacto existente.
+
+## Stock con datos reales (H1.3A)
+
+`/stock` deja de ser un placeholder de B1: la Stock List lee PostgreSQL real, de solo lectura.
+
+```text
+request → requireTenant() → TenantContext → withTenant() → query con filtro
+explícito por organización → RLS → ViewModel de Stock
+```
+
+- **Loader:** `getStockList()` (`db/queries/vehicles.ts`) pide su propio contexto con `requireTenant()`, lee dentro de `withTenant()`, filtra por `ctx.organizationId` (defensa en profundidad) y ordena por ingreso, el más reciente primero (`created_at DESC`, `id` como desempate). La página no conoce Drizzle.
+- **Persistido (`0004_vehicles_stock_persistence`):** `vehicles` con marca, modelo, versión, año, km, precio y moneda, y estado. Precio `numeric(14, 2)`: exacto, se lee como texto y nunca pasa por float; precio y moneda (`PYG` o `USD`) van juntos, el precio es positivo y en guaraníes no tiene decimales. Estado y moneda usan CHECK, no enum: el estado es el mínimo de P1 del TB §10 (`in_preparation`, `available`, `reserved`, `sold`).
+- **Derivado:** formato de precio ("USD 49.900", "Gs. 150.000.000") y de km ("0 km", "142.000 km"), sin conversión entre monedas.
+- **Sin dato (no se persiste ni se inventa):** versión, km o precio ausentes se muestran "Sin dato". No hay fotos (ni reales ni representación), matches, interesados, demanda, sucursal ni trade-in.
+- **Solo lectura:** sin alta, edición ni transiciones de estado. `authenticated` solo tiene SELECT sobre `vehicles`.
+- **Una sola fuente:** no hay fixtures de stock. ESLint impide que la página, sus componentes y su loader importen `mocks/`.
+- Con 0 vehículos la página muestra un estado vacío; no hay seeds en runtime.
+- `0004` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`.
 
 ## Convenciones
 
