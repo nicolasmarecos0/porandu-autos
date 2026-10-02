@@ -19,8 +19,11 @@ import { parseNewVehicleForm, type CreateVehicleState } from "./new-vehicle";
  *
  * 1. El TenantContext sale de requireTenant(), como en todo loader o acción
  *    tenant-scoped (DEC-021): sin sesión → /login, sin membership activa →
- *    /no-access. Nada del payload elige organización, usuario ni rol. Toda
- *    membership activa (admin o seller) puede dar de alta, como en H1.2.
+ *    /no-access. Nada del payload elige organización, usuario ni rol.
+ *    Autorización: membership activa AND role IN ('admin', 'seller'). Hoy
+ *    membership_role es exactamente admin | seller, así que todo contexto
+ *    que emite requireTenant() la cumple; si se agrega un rol, un test falla
+ *    y esta regla se revisa explícitamente.
  * 2. El formulario se valida acá, en el servidor. Un payload inválido no
  *    llega a la base.
  * 3. La escritura toma `organization_id` del contexto y fija el estado

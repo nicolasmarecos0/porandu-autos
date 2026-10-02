@@ -559,6 +559,69 @@ describe("Server Action: requireTenant() → validación → withTenant() → IN
   });
 });
 
+/*
+ * Regla durable de alta (H1.3B): membership activa AND role IN ('admin',
+ * 'seller'). Hoy membership_role contiene exactamente esos dos valores, así
+ * que requireTenant() y la policy de INSERT (organización con membership
+ * activa) la cumplen sin un chequeo de rol adicional. Estos tests preservan
+ * la intención: si se agrega un rol, fallan y obligan a decidir si puede
+ * crear unidades.
+ */
+const CREATE_ROLES = ["admin", "seller"];
+
+describe("autorización: membership activa AND role IN ('admin', 'seller')", () => {
+  it("membership_role contiene exactamente los roles autorizados a crear: ningún otro rol puede pasar la policy", async () => {
+    const [row] = await db.admin<{ labels: string[] }[]>`
+      SELECT array_agg(enumlabel::text ORDER BY enumsortorder) AS labels
+      FROM pg_enum WHERE enumtypid = 'public.membership_role'::regtype
+    `;
+    // Un rol nuevo exige revisar createVehicle() y vehicles_insert_member.
+    expect(row?.labels).toEqual(CREATE_ROLES);
+  });
+
+  it("admin y seller activos de la misma organización crean; el rol sale de la membership", async () => {
+    const roles = await db.admin<{ userId: string; role: string }[]>`
+      SELECT user_id AS "userId", role::text AS role FROM public.memberships
+      WHERE organization_id = ${ORG_1} AND active ORDER BY role
+    `;
+    expect(roles).toEqual([
+      { userId: USER_A, role: "admin" },
+      { userId: USER_C, role: "seller" },
+    ]);
+    for (const { userId } of roles) {
+      const version = freshVersion();
+      request(userId, ORG_1);
+      const { vehicleId } = await created(validForm(version));
+      expect(await vehiclesWithVersion(version)).toEqual([
+        expect.objectContaining({
+          id: vehicleId,
+          organizationId: ORG_1,
+          status: "in_preparation",
+        }),
+      ]);
+    }
+  });
+
+  it("una membership inactiva no crea, cualquiera sea su rol", async () => {
+    const inactive = await db.admin<{ userId: string; orgId: string }[]>`
+      SELECT user_id AS "userId", organization_id AS "orgId"
+      FROM public.memberships WHERE NOT active ORDER BY user_id
+    `;
+    expect(inactive.length).toBeGreaterThan(0);
+    for (const { userId, orgId } of inactive) {
+      const version = freshVersion();
+      await expectSqlError(
+        createVehicleInPreparation(
+          tenantContext(userId, orgId),
+          newVehicle(version),
+        ),
+        "42501",
+      );
+      expect(await vehiclesWithVersion(version)).toEqual([]);
+    }
+  });
+});
+
 describe("aislamiento de la escritura (RLS WITH CHECK)", () => {
   it.each([
     ["A con ORG_2 (sin membership)", USER_A, ORG_2],

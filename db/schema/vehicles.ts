@@ -103,7 +103,9 @@ export const vehicles = pgTable(
       using: sql`${t.organizationId} IN ${userOrgIds}`,
     }),
     // Alta: organización con membership activa y siempre en preparación.
-    // Los cambios de estado serán policies de UPDATE.
+    // La regla de alta es membership activa AND role IN ('admin', 'seller'):
+    // equivalente hoy porque membership_role es exactamente admin | seller
+    // (un test lo vigila). Los cambios de estado serán policies de UPDATE.
     pgPolicy("vehicles_insert_member", {
       for: "insert",
       to: authenticatedRole,

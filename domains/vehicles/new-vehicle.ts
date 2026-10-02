@@ -24,7 +24,11 @@ export const NEW_VEHICLE_FIELDS = [
 
 export type NewVehicleField = (typeof NEW_VEHICLE_FIELDS)[number];
 
-/** Campos de texto libre, con su largo máximo después de normalizar espacios. */
+/**
+ * Campos de texto libre, con su largo máximo después de normalizar espacios.
+ * Límites defensivos de implementación, no reglas de producto: la base no
+ * limita el largo de estos textos.
+ */
 export const NEW_VEHICLE_MAX_LENGTH: Readonly<
   Record<Extract<NewVehicleField, "brand" | "model" | "version">, number>
 > = {
