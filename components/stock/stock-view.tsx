@@ -1,17 +1,20 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { cn } from "@/components/ui/cn";
+import { CloseIcon } from "@/components/ui/icons";
 import {
   formatKm,
   formatPrice,
   groupByStatus,
   vehicleDetail,
   vehicleName,
+  vehicleStatusLabel,
   type StockGroup,
   type StockVehicle,
 } from "@/domains/vehicles/stock";
 
+import { NewVehicleDrawer, type VehicleCreated } from "./new-vehicle-drawer";
 import { LITERAL, PriceParts, STATUS_DOT, STATUS_EDGE } from "./stock-status";
 import { StockSummary } from "./stock-summary";
 import { EmptyUnitContext, UnitContext } from "./unit-context";
@@ -28,8 +31,12 @@ import { EmptyUnitContext, UnitContext } from "./unit-context";
  *
  * Master-detail: la lista es la fuente principal; el rail no abre otro
  * módulo. Selección por click o ↑/↓ en el orden visual, sin animación (se
- * usa decenas de veces por sesión). Solo lectura: sin fotos inventadas,
- * matches, interesados ni acciones.
+ * usa decenas de veces por sesión). Sin fotos inventadas, matches ni
+ * interesados.
+ *
+ * "Nueva unidad" (H1.3B) abre el alta rápida en un drawer. Al crear, la
+ * Server Action revalida la página, la lista trae la unidad nueva (en
+ * preparación) y la vista la selecciona y la muestra.
  */
 
 export function StockView({
@@ -43,8 +50,19 @@ export function StockView({
   // El orden visual (agrupado) es el que recorre el teclado.
   const ordered = groups.flatMap((group) => group.vehicles);
   const [selectedId, setSelectedId] = useState(ordered[0]?.id);
+  const [created, setCreated] = useState<VehicleCreated | null>(null);
   const selected =
     ordered.find((vehicle) => vehicle.id === selectedId) ?? ordered[0];
+
+  // La unidad recién creada se muestra en la lista apenas llega del loader.
+  const createdId = created?.vehicleId;
+  const createdListed = ordered.some((vehicle) => vehicle.id === createdId);
+  useEffect(() => {
+    if (!createdId || !createdListed) return;
+    document
+      .getElementById(optionId(createdId))
+      ?.scrollIntoView({ block: "nearest" });
+  }, [createdId, createdListed]);
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -61,30 +79,46 @@ export function StockView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <StockSummary title={title} vehicles={vehicles} />
+      <StockSummary
+        title={title}
+        vehicles={vehicles}
+        action={
+          <NewVehicleDrawer
+            onCreated={(result) => {
+              setSelectedId(result.vehicleId);
+              setCreated(result);
+            }}
+          />
+        }
+      />
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_17rem] gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_23rem]">
-        {groups.length === 0 ? (
-          <EmptyStock />
-        ) : (
-          <div
-            role="listbox"
-            aria-label="Unidades en stock, por estado"
-            tabIndex={0}
-            onKeyDown={onKeyDown}
-            aria-activedescendant={selected ? optionId(selected.id) : undefined}
-            className="flex min-h-0 flex-col gap-5 overflow-y-auto rounded-lg px-1 pt-1 pb-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          >
-            {groups.map((group) => (
-              <GroupSection
-                key={group.status}
-                group={group}
-                selectedId={selected?.id}
-                onSelect={setSelectedId}
-              />
-            ))}
-          </div>
-        )}
+        <div className="flex min-h-0 flex-col gap-3">
+          <CreatedNotice created={created} onDismiss={() => setCreated(null)} />
+          {groups.length === 0 ? (
+            <EmptyStock />
+          ) : (
+            <div
+              role="listbox"
+              aria-label="Unidades en stock, por estado"
+              tabIndex={0}
+              onKeyDown={onKeyDown}
+              aria-activedescendant={
+                selected ? optionId(selected.id) : undefined
+              }
+              className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto rounded-lg px-1 pt-1 pb-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            >
+              {groups.map((group) => (
+                <GroupSection
+                  key={group.status}
+                  group={group}
+                  selectedId={selected?.id}
+                  onSelect={setSelectedId}
+                />
+              ))}
+            </div>
+          )}
+        </div>
 
         <aside
           aria-label="Unidad seleccionada"
@@ -230,16 +264,52 @@ function UnitRow({
   );
 }
 
-/** Organización sin vehículos: estado vacío, sin datos de ejemplo ni alta. */
+/**
+ * Confirmación del alta: qué unidad entró y en qué estado. El texto también
+ * se anuncia por la región `status`, que existe siempre.
+ */
+function CreatedNotice({
+  created,
+  onDismiss,
+}: {
+  created: VehicleCreated | null;
+  onDismiss: () => void;
+}) {
+  const message = created
+    ? `Unidad creada: ${vehicleName(created)} ${created.year}, ${vehicleStatusLabel("inPreparation").toLowerCase()}.`
+    : "";
+  return (
+    <div role="status" className={created ? undefined : "sr-only"}>
+      {created ? (
+        <p className="flex items-start gap-2 rounded-md border border-success-border bg-success-soft py-2 pr-1.5 pl-3 text-label text-success">
+          <span className={cn("min-w-0 flex-1 pt-0.5", LITERAL)}>
+            {message}
+          </span>
+          <button
+            type="button"
+            aria-label="Cerrar aviso"
+            onClick={onDismiss}
+            className="flex size-6 shrink-0 items-center justify-center rounded-sm hover:bg-success-border/40 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring"
+          >
+            <CloseIcon className="size-3.5" />
+          </button>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Organización sin vehículos: estado vacío, sin datos de ejemplo. */
 function EmptyStock() {
   return (
-    <div className="flex flex-col items-center self-start rounded-lg border border-border-subtle bg-surface-1 px-6 py-12 text-center shadow-card">
+    <div className="flex flex-col items-center rounded-lg border border-border-subtle bg-surface-1 px-6 py-12 text-center shadow-card">
       <p className="text-heading text-text-primary">
         Todavía no hay unidades en stock
       </p>
       <p className="mt-1 max-w-md text-label font-normal text-text-muted">
-        Cada vehículo de la organización va a aparecer acá, agrupado por estado:
-        disponibles, en preparación, reservadas y vendidas.
+        Cargá la primera con «Nueva unidad». Cada vehículo de la organización va
+        a aparecer acá, agrupado por estado: disponibles, en preparación,
+        reservadas y vendidas.
       </p>
     </div>
   );
