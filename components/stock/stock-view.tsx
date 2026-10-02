@@ -1,147 +1,245 @@
-import type { ComponentProps } from "react";
-import { PageHeader } from "@/components/shell/page-header";
-import { WorkspaceLayout } from "@/components/shell/workspace-layout";
-import { Badge } from "@/components/ui/badge";
-import { Panel } from "@/components/ui/panel";
+"use client";
+
+import { useState, type KeyboardEvent } from "react";
+import { cn } from "@/components/ui/cn";
 import {
   formatKm,
   formatPrice,
+  groupByStatus,
+  vehicleDetail,
   vehicleName,
-  vehicleStatusLabel,
+  type StockGroup,
   type StockVehicle,
-  type VehicleStatus,
 } from "@/domains/vehicles/stock";
 
+import { LITERAL, PriceParts, STATUS_DOT, STATUS_EDGE } from "./stock-status";
+import { StockSummary } from "./stock-summary";
+import { EmptyUnitContext, UnitContext } from "./unit-context";
+
 /*
- * Stock List (H1.3A): las unidades de la organización activa, tal como las
- * trae el loader de la página (PostgreSQL, tenant-scoped), en una tabla
- * densa de solo lectura. Lo que la fuente no trae se dice "Sin dato"; no hay
- * fotos (las reales llegan con vehicle_media), matches ni interesados.
+ * Stock Surface v0.1 (H1.3A): inventario vivo de la organización activa, tal
+ * como lo trae el loader de la página (PostgreSQL, tenant-scoped).
+ *
+ *   ┌ resumen: total · medidor por estado · conteos ─────────────┐
+ *   │ lista agrupada por estado (filas-unidad) │ contexto de la   │
+ *   │ disponibles → preparación → reservadas   │ unidad elegida   │
+ *   │ ┄┄ vendidas (cerradas, atenuadas) ┄┄     │                  │
+ *   └──────────────────────────────────────────┴──────────────────┘
+ *
+ * Master-detail: la lista es la fuente principal; el rail no abre otro
+ * módulo. Selección por click o ↑/↓ en el orden visual, sin animación (se
+ * usa decenas de veces por sesión). Solo lectura: sin fotos inventadas,
+ * matches, interesados ni acciones.
  */
 
-type BadgeTone = NonNullable<ComponentProps<typeof Badge>["tone"]>;
-
-const STATUS_TONE: Record<VehicleStatus, BadgeTone> = {
-  inPreparation: "warning",
-  available: "success",
-  reserved: "brand",
-  sold: "neutral",
-};
-
-/** Dato que la fuente todavía no trae. */
-const NO_DATA = <span className="font-normal text-text-muted">Sin dato</span>;
-
-function unitsLabel(count: number): string {
-  return count === 1 ? "1 unidad" : `${count} unidades`;
-}
-
-type StockViewProps = {
+export function StockView({
+  title,
+  vehicles,
+}: {
   title: string;
   vehicles: readonly StockVehicle[];
-};
+}) {
+  const groups = groupByStatus(vehicles);
+  // El orden visual (agrupado) es el que recorre el teclado.
+  const ordered = groups.flatMap((group) => group.vehicles);
+  const [selectedId, setSelectedId] = useState(ordered[0]?.id);
+  const selected =
+    ordered.find((vehicle) => vehicle.id === selectedId) ?? ordered[0];
 
-export function StockView({ title, vehicles }: StockViewProps) {
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const index = ordered.findIndex((vehicle) => vehicle.id === selected?.id);
+    const next = event.key === "ArrowDown" ? index + 1 : index - 1;
+    const target = ordered[Math.min(Math.max(next, 0), ordered.length - 1)];
+    if (!target) return;
+    setSelectedId(target.id);
+    document
+      .getElementById(optionId(target.id))
+      ?.scrollIntoView({ block: "nearest" });
+  }
+
   return (
-    <WorkspaceLayout
-      header={
-        <PageHeader
-          title={title}
-          status={
-            vehicles.length > 0 ? (
-              <Badge>{unitsLabel(vehicles.length)}</Badge>
-            ) : null
-          }
-        />
-      }
-    >
-      {vehicles.length > 0 ? (
-        <StockTable vehicles={vehicles} />
-      ) : (
-        <EmptyStock />
-      )}
-    </WorkspaceLayout>
-  );
-}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <StockSummary title={title} vehicles={vehicles} />
 
-const HEAD_CELL = "px-4 py-2.5 text-overline font-semibold uppercase";
-const CELL = "px-4 py-3 tabular-nums";
-
-function StockTable({ vehicles }: { vehicles: readonly StockVehicle[] }) {
-  return (
-    <Panel>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-160 border-collapse text-body">
-          <caption className="sr-only">Unidades en stock</caption>
-          <thead className="bg-surface-inverse text-text-inverse-muted">
-            <tr>
-              <th scope="col" className={`${HEAD_CELL} text-left`}>
-                Vehículo
-              </th>
-              <th scope="col" className={`${HEAD_CELL} text-right`}>
-                Año
-              </th>
-              <th scope="col" className={`${HEAD_CELL} text-right`}>
-                Km
-              </th>
-              <th scope="col" className={`${HEAD_CELL} text-right`}>
-                Precio
-              </th>
-              <th scope="col" className={`${HEAD_CELL} text-left`}>
-                Estado
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {vehicles.map((vehicle) => (
-              <tr
-                key={vehicle.id}
-                className="border-t border-border-subtle first:border-t-0"
-              >
-                <th scope="row" className="px-4 py-3 text-left font-normal">
-                  <span className="block font-semibold text-text-primary">
-                    {vehicleName(vehicle)}
-                  </span>
-                  {vehicle.version ? (
-                    <span className="block text-caption text-text-muted">
-                      {vehicle.version}
-                    </span>
-                  ) : null}
-                </th>
-                <td className={`${CELL} text-right text-text-primary`}>
-                  {vehicle.year}
-                </td>
-                <td className={`${CELL} text-right text-text-secondary`}>
-                  {vehicle.km === undefined ? NO_DATA : formatKm(vehicle.km)}
-                </td>
-                <td
-                  className={`${CELL} text-right font-semibold text-text-primary`}
-                >
-                  {vehicle.price ? formatPrice(vehicle.price) : NO_DATA}
-                </td>
-                <td className="px-4 py-3">
-                  <Badge tone={STATUS_TONE[vehicle.status]}>
-                    {vehicleStatusLabel(vehicle.status)}
-                  </Badge>
-                </td>
-              </tr>
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_17rem] gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_23rem]">
+        {groups.length === 0 ? (
+          <EmptyStock />
+        ) : (
+          <div
+            role="listbox"
+            aria-label="Unidades en stock, por estado"
+            tabIndex={0}
+            onKeyDown={onKeyDown}
+            aria-activedescendant={selected ? optionId(selected.id) : undefined}
+            className="flex min-h-0 flex-col gap-5 overflow-y-auto rounded-lg px-1 pt-1 pb-6 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          >
+            {groups.map((group) => (
+              <GroupSection
+                key={group.status}
+                group={group}
+                selectedId={selected?.id}
+                onSelect={setSelectedId}
+              />
             ))}
-          </tbody>
-        </table>
+          </div>
+        )}
+
+        <aside
+          aria-label="Unidad seleccionada"
+          className="flex min-h-0 flex-col gap-3 overflow-y-auto pb-6"
+        >
+          {selected ? <UnitContext vehicle={selected} /> : <EmptyUnitContext />}
+        </aside>
       </div>
-    </Panel>
+    </div>
   );
 }
 
-/** Organización sin vehículos: estado vacío, sin datos de ejemplo. */
+function optionId(vehicleId: string): string {
+  return `stock-unit-${vehicleId}`;
+}
+
+function GroupSection({
+  group,
+  selectedId,
+  onSelect,
+}: {
+  group: StockGroup;
+  selectedId: string | undefined;
+  onSelect: (id: string) => void;
+}) {
+  const closed = group.status === "sold";
+  const headingId = `stock-group-${group.status}`;
+  return (
+    <section
+      role="group"
+      aria-labelledby={headingId}
+      className={cn(
+        closed && "mt-2 border-t border-dashed border-border-strong pt-5",
+      )}
+    >
+      <div className="flex items-center gap-2 px-1">
+        <span
+          aria-hidden="true"
+          className={cn("size-2 rounded-full", STATUS_DOT[group.status])}
+        />
+        <h2
+          id={headingId}
+          className={cn(
+            "text-overline uppercase",
+            closed ? "text-text-muted" : "text-text-primary",
+          )}
+        >
+          {group.title}
+        </h2>
+        <span className="text-overline text-text-muted tabular-nums">
+          {group.vehicles.length}
+        </span>
+        <span className="truncate text-caption text-text-muted">
+          · {group.hint}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-col gap-1.5">
+        {group.vehicles.map((vehicle) => (
+          <UnitRow
+            key={vehicle.id}
+            vehicle={vehicle}
+            selected={vehicle.id === selectedId}
+            onSelect={() => onSelect(vehicle.id)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function UnitRow({
+  vehicle,
+  selected,
+  onSelect,
+}: {
+  vehicle: StockVehicle;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const sold = vehicle.status === "sold";
+  const price = vehicle.price ? formatPrice(vehicle.price) : undefined;
+  return (
+    <div
+      id={optionId(vehicle.id)}
+      role="option"
+      aria-selected={selected}
+      onClick={onSelect}
+      className={cn(
+        "relative flex h-16 cursor-default items-center gap-4 overflow-hidden rounded-md pr-4 pl-5 transition-[background-color,box-shadow] duration-150 ease-out",
+        selected
+          ? "bg-brand-soft shadow-card ring-2 ring-brand"
+          : sold
+            ? "bg-surface-2 ring-1 ring-border-subtle hover:ring-border-strong"
+            : "bg-surface-1 shadow-card ring-1 ring-border-subtle hover:ring-border-strong",
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-y-0 left-0 w-1",
+          STATUS_EDGE[vehicle.status],
+        )}
+      />
+      <div className="min-w-0 flex-1">
+        <p
+          className={cn(
+            "truncate text-heading",
+            sold ? "text-text-muted" : "text-text-primary",
+          )}
+        >
+          {vehicleName(vehicle)}
+        </p>
+        <p
+          className={cn(
+            "truncate text-label font-normal text-text-muted",
+            LITERAL,
+          )}
+        >
+          {vehicleDetail(vehicle)}
+        </p>
+      </div>
+      {/* Desktop: km en su bloque. Tablet: debajo del precio. */}
+      <div className="hidden w-28 shrink-0 lg:block">
+        <p className="text-caption text-text-muted">Kilometraje</p>
+        <p
+          className={cn(
+            "text-body tabular-nums",
+            vehicle.km === undefined || sold
+              ? "text-text-muted"
+              : "text-text-primary",
+          )}
+        >
+          {vehicle.km === undefined ? "Sin dato" : formatKm(vehicle.km)}
+        </p>
+      </div>
+      <div className="flex w-40 shrink-0 flex-col items-end">
+        <PriceParts label={price} muted={sold} size="lg" />
+        <span className="text-caption text-text-muted tabular-nums lg:hidden">
+          {vehicle.km === undefined ? "Km sin dato" : formatKm(vehicle.km)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Organización sin vehículos: estado vacío, sin datos de ejemplo ni alta. */
 function EmptyStock() {
   return (
-    <div className="rounded-lg bg-surface-1 px-5 py-8 text-center shadow-card">
+    <div className="flex flex-col items-center self-start rounded-lg border border-border-subtle bg-surface-1 px-6 py-12 text-center shadow-card">
       <p className="text-heading text-text-primary">
-        Todavía no hay vehículos en stock
+        Todavía no hay unidades en stock
       </p>
-      <p className="mt-1 text-label text-text-muted">
-        Las unidades de la organización van a aparecer acá con su estado, precio
-        y kilometraje.
+      <p className="mt-1 max-w-md text-label font-normal text-text-muted">
+        Cada vehículo de la organización va a aparecer acá, agrupado por estado:
+        disponibles, en preparación, reservadas y vendidas.
       </p>
     </div>
   );

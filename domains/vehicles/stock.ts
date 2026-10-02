@@ -90,3 +90,74 @@ export function vehicleName({
 }: Pick<StockVehicle, "brand" | "model">): string {
   return `${brand} ${model}`;
 }
+
+/** Versión y año: la segunda línea de la identidad ("SRV 2.8 4x4 AT · 2025"). */
+export function vehicleDetail({
+  version,
+  year,
+}: Pick<StockVehicle, "version" | "year">): string {
+  return version ? `${version} · ${year}` : String(year);
+}
+
+export function unitsLabel(count: number): string {
+  return count === 1 ? "1 unidad" : `${count} unidades`;
+}
+
+/*
+ * Stock Surface v0.1: el inventario se presenta agrupado por estado, de lo
+ * vendible a lo cerrado. Es una regla de presentación: el loader conserva su
+ * orden (ingreso a Porandú) y cada grupo lo respeta.
+ */
+export const STOCK_GROUPS: readonly {
+  status: VehicleStatus;
+  title: string;
+  hint: string;
+}[] = [
+  { status: "available", title: "Disponibles", hint: "Listas para vender" },
+  {
+    status: "inPreparation",
+    title: "En preparación",
+    hint: "Todavía no se entregan",
+  },
+  {
+    status: "reserved",
+    title: "Reservadas",
+    hint: "Comprometidas con un comprador",
+  },
+  { status: "sold", title: "Vendidas", hint: "Operaciones cerradas" },
+];
+
+/** Unidades por estado: conteos derivados de la lista, no persistidos. */
+export function countByStatus(
+  vehicles: readonly StockVehicle[],
+): Record<VehicleStatus, number> {
+  const counts: Record<VehicleStatus, number> = {
+    inPreparation: 0,
+    available: 0,
+    reserved: 0,
+    sold: 0,
+  };
+  for (const vehicle of vehicles) counts[vehicle.status] += 1;
+  return counts;
+}
+
+export type StockGroup = Readonly<{
+  status: VehicleStatus;
+  title: string;
+  hint: string;
+  vehicles: readonly StockVehicle[];
+}>;
+
+/**
+ * Grupos no vacíos en el orden de STOCK_GROUPS. Dentro de cada grupo, el
+ * orden de entrada (el del loader). No filtra nada: toda unidad está en un
+ * grupo, incluidas las vendidas.
+ */
+export function groupByStatus(
+  vehicles: readonly StockVehicle[],
+): readonly StockGroup[] {
+  return STOCK_GROUPS.map((group) => ({
+    ...group,
+    vehicles: vehicles.filter((vehicle) => vehicle.status === group.status),
+  })).filter((group) => group.vehicles.length > 0);
+}
