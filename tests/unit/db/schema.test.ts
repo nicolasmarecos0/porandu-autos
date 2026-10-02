@@ -136,7 +136,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated y solo contacts y opportunities, la de alta con WITH CHECK; vehicles solo lectura (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities y vehicles, la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -222,6 +222,15 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using: '"profiles"."id" = (select auth.uid())',
         withCheck: undefined,
+      },
+      {
+        table: "vehicles",
+        name: "vehicles_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck: `"vehicles"."organization_id" IN (SELECT private.user_org_ids()) AND "vehicles"."status" = 'in_preparation'`,
       },
       {
         table: "vehicles",
@@ -446,8 +455,8 @@ describe("db/schema", () => {
         columns: ["organization_id", "created_at"],
       },
     ]);
-    // H1.3A: fotos, sucursal, matches, interesados, trade-in, entrega y
-    // datos técnicos no tienen fuente ni consumidor todavía.
+    // H1.3A y H1.3B: fotos, sucursal, matches, interesados, trade-in,
+    // entrega y datos técnicos no tienen fuente ni consumidor todavía.
     const names = table("vehicles").columns.map((c) => c.name);
     for (const absent of [
       "branch_id",

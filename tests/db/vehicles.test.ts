@@ -31,7 +31,8 @@ import { seedVehicles, VEHICLES, vehicleIdsOf } from "./support/vehicles";
 
 /*
  * Stock List con datos reales (H1.3A), de punta a punta contra
- * PostgreSQL 17 con las migraciones aplicadas:
+ * PostgreSQL 17 con las migraciones aplicadas. El alta rápida (H1.3B) se
+ * prueba en create-vehicle.test.ts:
  *
  *   request → requireTenant() → withTenant() → query con filtro explícito
  *   → RLS → ViewModel
@@ -326,9 +327,11 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
     );
   });
 
-  it("por withTenant() nadie da de alta, modifica ni borra vehículos, ni en su propia organización (H1.3A)", async () => {
+  it("por withTenant() nadie modifica ni borra vehículos, ni da de alta fuera de preparación, ni en su propia organización (H1.3B)", async () => {
     const ctx = tenantContext(USER_A, ORG_1);
     const own = VEHICLES[0]!;
+    // El alta rápida (create-vehicle.test.ts) solo admite `in_preparation`
+    // en la organización propia: una unidad disponible no entra por ninguna.
     for (const organizationId of [ORG_1, ORG_2]) {
       await expectSqlError(
         withTenant(ctx, (tx) =>
@@ -425,7 +428,7 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
     expect(await tablePrivileges(db.admin, ["app_runtime"])).toEqual([]);
   });
 
-  it("con un INSERT habilitado por error, el alta deja de fallar; el catálogo lo marca", async () => {
+  it("con una policy de alta de más (sin el estado inicial), un alta disponible deja de fallar; el catálogo lo marca", async () => {
     const ctx = tenantContext(USER_A, ORG_1);
     const insert = () =>
       withTenant(ctx, (tx) =>
@@ -434,41 +437,43 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
           .values({ ...NEW_VEHICLE, organizationId: ORG_1 })
           .returning({ id: vehicles.id }),
       );
+    // Las policies permissive se combinan con OR: una segunda policy de
+    // INSERT sin `status = 'in_preparation'` anula la exigencia de la oficial.
     await db.admin.unsafe(`
-      GRANT INSERT ON public.vehicles TO authenticated;
       CREATE POLICY probe_insert ON public.vehicles FOR INSERT TO authenticated
         WITH CHECK (organization_id IN (SELECT private.user_org_ids()));
     `);
     let created: string | undefined;
     try {
-      // El test de solo lectura espera 42501: con el grant, el alta pasa.
+      // El test de arriba espera 42501: con la policy de más, el alta pasa.
       created = (await insert())[0]?.id;
       expect(created).toBeDefined();
-      // tenant-catalog.test.ts y verify.mts esperan solo SELECT sobre
-      // vehicles y una única policy, de lectura.
-      expect(
-        (await tablePrivileges(db.admin, ["authenticated"])).filter((grant) =>
-          grant.endsWith(" vehicles"),
-        ),
-      ).toEqual([
-        "authenticated INSERT vehicles",
-        "authenticated SELECT vehicles",
-      ]);
+      // tenant-catalog.test.ts y verify.mts esperan exactamente la policy de
+      // lectura y la de alta en preparación.
       expect(
         (await policies(db.admin))
           .filter((policy) => policy.table === "vehicles")
           .map((policy) => policy.name),
-      ).toEqual(["probe_insert", "vehicles_select_member"]);
+      ).toEqual([
+        "probe_insert",
+        "vehicles_insert_member",
+        "vehicles_select_member",
+      ]);
     } finally {
-      await db.admin.unsafe(`
-        DROP POLICY probe_insert ON public.vehicles;
-        REVOKE INSERT ON public.vehicles FROM authenticated;
-      `);
+      await db.admin.unsafe(`DROP POLICY probe_insert ON public.vehicles;`);
       if (created) {
         await db.admin`DELETE FROM public.vehicles WHERE id = ${created}`;
       }
     }
     await expectSqlError(insert(), "42501");
+    expect(
+      (await tablePrivileges(db.admin, ["authenticated"])).filter((grant) =>
+        grant.endsWith(" vehicles"),
+      ),
+    ).toEqual([
+      "authenticated INSERT vehicles",
+      "authenticated SELECT vehicles",
+    ]);
     request(USER_A);
     expect(await stockIds()).toEqual(vehicleIdsOf(ORG_1));
   });
