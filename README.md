@@ -278,7 +278,7 @@ oportunidad → RLS (WITH CHECK) → revalidar /opportunities
 
 ## Stock con datos reales (H1.3A)
 
-`/stock` deja de ser un placeholder de B1: la Stock List lee PostgreSQL real, de solo lectura.
+`/stock` deja de ser un placeholder de B1: la Stock List lee PostgreSQL real, de solo lectura, con la superficie aprobada Stock Surface v0.1.
 
 ```text
 request → requireTenant() → TenantContext → withTenant() → query con filtro
@@ -287,8 +287,13 @@ explícito por organización → RLS → ViewModel de Stock
 
 - **Loader:** `getStockList()` (`db/queries/vehicles.ts`) pide su propio contexto con `requireTenant()`, lee dentro de `withTenant()`, filtra por `ctx.organizationId` (defensa en profundidad) y ordena por ingreso, el más reciente primero (`created_at DESC`, `id` como desempate). La página no conoce Drizzle.
 - **Persistido (`0004_vehicles_stock_persistence`):** `vehicles` con marca, modelo, versión, año, km, precio y moneda, y estado. Precio `numeric(14, 2)`: exacto, se lee como texto y nunca pasa por float; precio y moneda (`PYG` o `USD`) van juntos, el precio es positivo y en guaraníes no tiene decimales. Estado y moneda usan CHECK, no enum: el estado es el mínimo de P1 del TB §10 (`in_preparation`, `available`, `reserved`, `sold`).
-- **Derivado:** formato de precio ("USD 49.900", "Gs. 150.000.000") y de km ("0 km", "142.000 km"), sin conversión entre monedas.
-- **Sin dato (no se persiste ni se inventa):** versión, km o precio ausentes se muestran "Sin dato". No hay fotos (ni reales ni representación), matches, interesados, demanda, sucursal ni trade-in.
+- **Derivado:** formato de precio ("USD 49.900", "Gs. 150.000.000") y de km ("0 km", "142.000 km"), sin conversión entre monedas; conteos por estado y agrupado (`domains/vehicles/stock.ts`).
+- **Superficie (Stock Surface v0.1, `components/stock/`):**
+  - Encabezado con el total de unidades y, si hay alguna, un medidor segmentado y los conteos por estado, derivados de la lista.
+  - Izquierda: las unidades agrupadas por estado (disponibles → en preparación → reservadas → vendidas), como filas-unidad con el color del estado. Dentro de cada grupo se respeta el orden del loader. Las vendidas siguen visibles, separadas y atenuadas como operaciones cerradas.
+  - Derecha: contexto persistente de la unidad seleccionada (identidad, estado, precio, km, año, lugar para fotos reales y recorrido). Compradores potenciales y próxima acción se muestran como "Sin dato" hasta que existan sus motores. Selección por click o ↑/↓.
+  - Con 0 unidades: "Stock · 0 unidades", sin medidor ni conteos, estado vacío a la izquierda y rail neutral; sin alta.
+- **Sin dato (no se persiste ni se inventa):** versión, km o precio ausentes se muestran "Sin dato". No hay fotos (ni reales ni representación: el rail muestra que la unidad todavía no tiene fotos), matches, interesados, demanda, sucursal ni trade-in.
 - **Solo lectura:** sin alta, edición ni transiciones de estado. `authenticated` solo tiene SELECT sobre `vehicles`.
 - **Una sola fuente:** no hay fixtures de stock. ESLint impide que la página, sus componentes y su loader importen `mocks/`.
 - Con 0 vehículos la página muestra un estado vacío; no hay seeds en runtime.
