@@ -7,7 +7,7 @@ import {
 } from "@/domains/vehicles/stock";
 
 import { countLabel, countsByStatus, STATUS_ORDER, unitsLabel } from "./_data";
-import { PriceParts, STATUS_EDGE, StatusChip } from "./_status";
+import { LITERAL, PriceParts, STATUS_EDGE, StatusChip } from "./_status";
 
 /*
  * VARIANTE B — Inventory Rows (eje: cada unidad como objeto físico, agrupada
@@ -101,7 +101,12 @@ function UnitRow({ vehicle }: { vehicle: StockVehicle }) {
         >
           {vehicle.brand} {vehicle.model}
         </p>
-        <p className="truncate text-label font-normal text-text-muted">
+        <p
+          className={cn(
+            "truncate text-label font-normal text-text-muted",
+            LITERAL,
+          )}
+        >
           {detail}
         </p>
       </div>

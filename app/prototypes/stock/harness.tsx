@@ -9,6 +9,7 @@ import { PrototypeShell } from "./_shell";
 import { VariantA } from "./variant-a";
 import { VariantB } from "./variant-b";
 import { VariantC } from "./variant-c";
+import { VariantD } from "./variant-d";
 
 /*
  * PROTOTIPO: harness de /prototypes/stock con el picker de la skill
@@ -20,6 +21,7 @@ const VARIANTS = [
   { name: "Tabla de inventario", render: VariantA },
   { name: "Filas de unidad", render: VariantB },
   { name: "Workspace", render: VariantC },
+  { name: "Híbrida", render: VariantD },
 ] as const;
 
 export function Harness({

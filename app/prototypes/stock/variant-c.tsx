@@ -11,7 +11,13 @@ import {
 } from "@/domains/vehicles/stock";
 
 import { countLabel, countsByStatus, STATUS_ORDER, unitsLabel } from "./_data";
-import { PriceParts, STATUS_DOT, STATUS_EDGE, StatusChip } from "./_status";
+import {
+  LITERAL,
+  PriceParts,
+  STATUS_DOT,
+  STATUS_EDGE,
+  StatusChip,
+} from "./_status";
 
 /*
  * VARIANTE C — Stock Workspace (eje: composición lista + contexto). La lista
@@ -161,7 +167,9 @@ function UnitOption({
         >
           {vehicle.brand} {vehicle.model}
         </span>
-        <span className="block truncate text-caption text-text-muted">
+        <span
+          className={cn("block truncate text-caption text-text-muted", LITERAL)}
+        >
           {detail}
         </span>
       </span>
@@ -185,7 +193,7 @@ const STEP_STATE: Record<VehicleStatus, string> = {
   sold: "Vendida · operación cerrada",
 };
 
-function UnitContext({ vehicle }: { vehicle: StockVehicle }) {
+export function UnitContext({ vehicle }: { vehicle: StockVehicle }) {
   const sold = vehicle.status === "sold";
   return (
     <>
@@ -203,7 +211,12 @@ function UnitContext({ vehicle }: { vehicle: StockVehicle }) {
             >
               {vehicle.model}
             </h2>
-            <p className="truncate text-label font-normal text-text-secondary">
+            <p
+              className={cn(
+                "truncate text-label font-normal text-text-secondary",
+                LITERAL,
+              )}
+            >
               {[vehicle.version, vehicle.year].filter(Boolean).join(" · ")}
             </p>
           </div>
@@ -335,7 +348,7 @@ function EmptyList() {
   );
 }
 
-function EmptyContext() {
+export function EmptyContext() {
   return (
     <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border-strong px-6 text-center">
       <p className="text-label font-normal text-text-muted">

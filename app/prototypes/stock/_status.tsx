@@ -97,3 +97,9 @@ export function PriceParts({
     </span>
   );
 }
+
+/**
+ * Texto de datos literal: sin las alternativas contextuales de Inter, que
+ * dibujan "4x4" como "4×4" y alteran el dato cargado.
+ */
+export const LITERAL = "[font-feature-settings:'calt'_0]";
