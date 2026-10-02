@@ -7,7 +7,6 @@ import {
   useId,
   useRef,
   useState,
-  type ReactNode,
   type RefObject,
 } from "react";
 import { Button } from "@/components/ui/button";
@@ -17,6 +16,7 @@ import {
   DrawerContent,
   DrawerTrigger,
 } from "@/components/ui/drawer";
+import { FormField, inputClassName } from "@/components/ui/form-field";
 import { PlusIcon } from "@/components/ui/icons";
 import {
   SOURCE_LABELS,
@@ -132,9 +132,6 @@ const FORM_MESSAGES = {
   failed:
     "No pudimos guardar la oportunidad. No se guardó nada: intentá de nuevo en unos minutos.",
 } as const;
-
-const inputClassName =
-  "h-9 w-full rounded-md border border-border-default bg-surface-1 px-3 text-body text-text-primary transition-[border-color] hover:border-border-strong focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring aria-invalid:border-danger disabled:cursor-not-allowed disabled:bg-surface-2";
 
 type NewOpportunityFormProps = {
   firstFieldRef: RefObject<HTMLInputElement | null>;
@@ -376,49 +373,5 @@ function NewOpportunityForm({
         </Button>
       </footer>
     </form>
-  );
-}
-
-type FormFieldProps = {
-  label: string;
-  htmlFor: string;
-  optional?: boolean;
-  hint?: string;
-  hintId?: string;
-  error?: string | undefined;
-  errorId: string;
-  children: ReactNode;
-};
-
-function FormField({
-  label,
-  htmlFor,
-  optional = false,
-  hint,
-  hintId,
-  error,
-  errorId,
-  children,
-}: FormFieldProps) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={htmlFor} className="text-label text-text-secondary">
-        {label}
-        {optional ? (
-          <span className="font-normal text-text-muted"> (opcional)</span>
-        ) : null}
-      </label>
-      {children}
-      {hint ? (
-        <p id={hintId} className="text-caption text-text-muted">
-          {hint}
-        </p>
-      ) : null}
-      {error ? (
-        <p id={errorId} className="text-caption text-danger">
-          {error}
-        </p>
-      ) : null}
-    </div>
   );
 }

@@ -40,6 +40,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-024 | Contact identity and Opportunity creation | Aceptada | 2026-10-01 |
 | DEC-025 | Vehicle persistence foundation | Aceptada | 2026-10-02 |
 | DEC-026 | Stock Surface Architecture | Aceptada | 2026-10-02 |
+| DEC-027 | Alta rápida de unidades (H1.3B) | Aceptada | 2026-10-02 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -373,6 +374,19 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   7. El panel derecho puede evolucionar hacia fotos reales, compradores potenciales, matches y acciones sin convertir la lista principal en un dashboard.
 - **Aclara:** Build Baseline B1 §4 y §6 (Stock como empty state) y Technical Blueprint §6 (pantalla Inventario).
 - **Consecuencias:** Stock Surface v0.1 es la baseline visual de `/stock`. Los detalles de presentación (copy, colores, alturas) quedan documentados en el README y pueden ajustarse sin una nueva decisión.
+
+## DEC-027 — Alta rápida de unidades (H1.3B)
+- **Estado:** Aceptada · 2026-10-02
+- **Decisión:**
+  1. **Puerta única.** `createVehicle()` es la única puerta del alta de unidades: `requireTenant()` → validación server-side → `withTenant()` → `INSERT`.
+  2. **Organización.** `organization_id` sale solo del `TenantContext`; ningún dato del cliente la elige.
+  3. **Estado inicial.** Toda alta nace en `in_preparation`: lo fija la aplicación y lo exige la policy de INSERT (`WITH CHECK ... AND status = 'in_preparation'`). El CHECK general de estados no cambia; las transiciones de estado requerirán un flujo de UPDATE autorizado en un bloque posterior.
+  4. **Autorización.** Crear exige una membership activa con rol `admin` o `seller`. Hoy equivale a "membership activa" porque `membership_role` es exactamente `admin | seller`; un rol nuevo exige revisar esta regla.
+  5. **Escrituras.** `0005_vehicle_quick_create` habilita únicamente INSERT sobre `vehicles`, con `WITH CHECK`. UPDATE y DELETE sobre vehicles siguen prohibidos en H1.3B.
+  6. **Dinero.** Se mantiene DEC-025: decimal exacto, precio y moneda juntos, `PYG | USD`, PYG sin decimales, sin conversión entre monedas.
+  7. **Entrega mínima.** `min_down_payment` queda diferida hasta que se defina su semántica.
+- **Aclara:** amplía DEC-025 (las escrituras de `vehicles` se habilitan con su propio flujo y `WITH CHECK`). Prevalece sobre la Build Baseline según DEC-002.
+- **Consecuencias:** `0005` se aplica a staging después del merge con `preflight → migrate → verify`.
 
 ---
 

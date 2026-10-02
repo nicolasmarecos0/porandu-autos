@@ -13,10 +13,11 @@ import {
 
 /*
  * Roles, grants, función y policies que dejan 0001_tenant_isolation,
- * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create y
- * 0004_vehicles_stock_persistence, leídos del catálogo de PostgreSQL 17
- * (ADR-001 §2, §3.6 y §4; criterios C2, C3 y C9). El acceso a datos se
- * prueba en tenant-isolation.test.ts y opportunities.test.ts.
+ * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
+ * 0004_vehicles_stock_persistence y 0005_vehicle_quick_create, leídos del
+ * catálogo de PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2, C3 y C9).
+ * El acceso a datos se prueba en tenant-isolation.test.ts,
+ * opportunities.test.ts, vehicles.test.ts y los tests de cada alta.
  */
 
 const TABLES = [
@@ -164,7 +165,7 @@ describe("rol de runtime app_runtime (ADR-001 §2)", () => {
 });
 
 describe("policies (ADR-001 §4)", () => {
-  it("lectura para authenticated y alta de contacts y opportunities con WITH CHECK, con la forma de referencia", async () => {
+  it("lectura para authenticated y alta de contacts, opportunities y vehicles con WITH CHECK, con la forma de referencia", async () => {
     expect(await policies(db.admin)).toEqual([
       {
         table: "contacts",
@@ -236,6 +237,16 @@ describe("policies (ADR-001 §4)", () => {
       },
       {
         table: "vehicles",
+        name: "vehicles_insert_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "INSERT",
+        using: null,
+        withCheck:
+          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'in_preparation'::text))",
+      },
+      {
+        table: "vehicles",
         name: "vehicles_select_member",
         permissive: "PERMISSIVE",
         roles: ["authenticated"],
@@ -258,10 +269,11 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated tiene SELECT sobre las tablas de la app e INSERT solo sobre contacts y opportunities (vehicles: solo lectura)", async () => {
+  it("authenticated tiene SELECT sobre las tablas de la app e INSERT solo sobre contacts, opportunities y vehicles", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
       "authenticated INSERT contacts",
       "authenticated INSERT opportunities",
+      "authenticated INSERT vehicles",
       ...TABLES.map((table) => `authenticated SELECT ${table}`),
     ]);
   });
@@ -280,13 +292,14 @@ describe("grants (ADR-001 §3.6)", () => {
     expect(writePolicies.map((policy) => policy.name)).toEqual([
       "contacts_insert_member",
       "opportunities_insert_member",
+      "vehicles_insert_member",
     ]);
     expect(writePolicies.every((policy) => policy.withCheck !== null)).toBe(
       true,
     );
   });
 
-  it("vehicles es de solo lectura (H1.3A): SELECT para authenticated y una sola policy, de lectura", async () => {
+  it("vehicles (H1.3B): SELECT e INSERT para authenticated, una policy de lectura y una de alta; sin UPDATE ni DELETE", async () => {
     expect(
       (
         await tablePrivileges(db.admin, [
@@ -295,12 +308,18 @@ describe("grants (ADR-001 §3.6)", () => {
           "app_runtime",
         ])
       ).filter((grant) => grant.endsWith(" vehicles")),
-    ).toEqual(["authenticated SELECT vehicles"]);
+    ).toEqual([
+      "authenticated INSERT vehicles",
+      "authenticated SELECT vehicles",
+    ]);
     expect(
       (await policies(db.admin))
         .filter((policy) => policy.table === "vehicles")
         .map((policy) => `${policy.name} ${policy.command}`),
-    ).toEqual(["vehicles_select_member SELECT"]);
+    ).toEqual([
+      "vehicles_insert_member INSERT",
+      "vehicles_select_member SELECT",
+    ]);
   });
 
   it("anon y app_runtime no tienen privilegios sobre las tablas de public", async () => {

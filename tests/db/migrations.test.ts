@@ -25,14 +25,19 @@ import { seedVehicles, VEHICLES } from "./support/vehicles";
 const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
 
 /*
- * Reversión de 0004_vehicles_stock_persistence,
+ * Reversión de 0005_vehicle_quick_create, 0004_vehicles_stock_persistence,
  * 0003_contact_identity_opportunity_create, 0002_opportunities_persistence,
- * 0001_tenant_isolation y 0000_saas_core_schema. drizzle-kit no tiene down migrations: esto no es
- * parte del producto. Prueba que la huella de las migraciones es
- * exactamente la declarada (volver al catálogo previo, incluido el rol
- * app_runtime) y que se pueden recrear limpias. Restaura los default
- * privileges de Supabase del shim.
+ * 0001_tenant_isolation y 0000_saas_core_schema. drizzle-kit no tiene down
+ * migrations: esto no es parte del producto. Prueba que la huella de las
+ * migraciones es exactamente la declarada (volver al catálogo previo,
+ * incluido el rol app_runtime) y que se pueden recrear limpias. Restaura los
+ * default privileges de Supabase del shim.
  */
+const REVERT_0005 = `
+  REVOKE INSERT ON public.vehicles FROM authenticated;
+  DROP POLICY vehicles_insert_member ON public.vehicles;
+`;
+
 const REVERT_0004 = `
   DROP POLICY vehicles_select_member ON public.vehicles;
   DROP TABLE public.vehicles;
@@ -134,14 +139,14 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     ]);
   });
 
-  it("registra 0000 a 0004 en el historial de drizzle", async () => {
-    expect(await appliedMigrations()).toBe(5);
+  it("registra 0000 a 0005 en el historial de drizzle", async () => {
+    expect(await appliedMigrations()).toBe(6);
   });
 
   it("volver a migrar no cambia nada", async () => {
     await runMigrations(db.migrationUrl);
 
-    expect(await appliedMigrations()).toBe(5);
+    expect(await appliedMigrations()).toBe(6);
     expect(await catalogSnapshot(db.admin)).toEqual(afterMigration);
   });
 
@@ -155,6 +160,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
       "0002_opportunities_persistence.sql",
       "0003_contact_identity_opportunity_create.sql",
       "0004_vehicles_stock_persistence.sql",
+      "0005_vehicle_quick_create.sql",
     ]);
     for (const file of files) {
       const content = await readFile(new URL(file, MIGRATIONS_DIR), "utf8");
@@ -168,6 +174,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     try {
       // La reversión corre con la credencial de migración, dueña de todo.
       await revert.begin(async (tx) => {
+        await tx.unsafe(REVERT_0005);
         await tx.unsafe(REVERT_0004);
         await tx.unsafe(REVERT_0003);
         await tx.unsafe(REVERT_0002);
@@ -265,7 +272,7 @@ describe("0001 falla cerrada ante un estado inseguro", () => {
 });
 
 /*
- * Una base en Foundation (0000 y 0001, DEC-022) recibe 0002 a 0004 juntas:
+ * Una base en Foundation (0000 y 0001, DEC-022) recibe 0002 a 0005 juntas:
  * solo agregan lo suyo y no tocan los datos existentes.
  */
 describe("0002 sobre una base en Foundation", () => {
@@ -301,7 +308,7 @@ describe("0002 sobre una base en Foundation", () => {
     expect(await foundationCount(foundation.admin)).toEqual({
       organizations: 3,
       memberships: MEMBERSHIPS.length,
-      history: 5,
+      history: 6,
     });
     expect(await catalogSnapshot(foundation.admin)).toEqual(afterMigration);
   });
@@ -374,8 +381,8 @@ describe("0002 sobre una base en Foundation", () => {
 });
 
 /*
- * Una base en H1.1 (0000 a 0002, DEC-023) recibe 0003 (y 0004): solo agregan
- * lo suyo, no tocan los datos existentes y no backfillean teléfonos.
+ * Una base en H1.1 (0000 a 0002, DEC-023) recibe 0003 (y 0004 y 0005): solo
+ * agregan lo suyo, no tocan los datos existentes y no backfillean teléfonos.
  */
 describe("0003 sobre una base en H1.1", () => {
   async function h11Snapshot(sql: TestDatabase["admin"]) {
@@ -394,7 +401,7 @@ describe("0003 sobre una base en H1.1", () => {
     `;
   }
 
-  it("pnpm db:migrate aplica 0003 y 0004, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0003 a 0005, conserva los datos y deja el mismo catálogo", async () => {
     const h11 = await server.createDatabase();
     await migrateUpTo(h11.migrationUrl, "0002_opportunities_persistence");
     await seedTenants(h11.admin);
@@ -409,7 +416,7 @@ describe("0003 sobre una base en H1.1", () => {
     const [history] = await h11.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
     `;
-    expect(history?.count).toBe(5);
+    expect(history?.count).toBe(6);
     expect(await h11Snapshot(h11.admin)).toEqual(before);
     // Sin backfill: los contactos existentes quedan sin teléfono normalizado.
     const [normalized] = await h11.admin<{ count: number }[]>`
@@ -499,11 +506,11 @@ describe("0003 sobre una base en H1.1", () => {
 });
 
 /*
- * Staging hoy está en H1.2 (0000 a 0003, DEC-024). 0004 se aplica sobre una
- * base equivalente, con datos: solo agrega vehicles, no toca nada de lo que
- * existe y deja el mismo catálogo que una base nueva.
+ * Una base en H1.2 (0000 a 0003, DEC-024) recibe 0004 (y 0005): solo agrega
+ * vehicles y su alta, no toca nada de lo que existe y deja el mismo catálogo
+ * que una base nueva.
  */
-describe("0004 sobre una base en H1.2 (staging hoy)", () => {
+describe("0004 sobre una base en H1.2", () => {
   /** Todo lo que puede tener staging hoy, fila por fila. */
   async function h12Snapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
@@ -525,7 +532,7 @@ describe("0004 sobre una base en H1.2 (staging hoy)", () => {
     return row?.count ?? 0;
   }
 
-  it("pnpm db:migrate aplica solo 0004, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0004 y 0005, conserva los datos y deja el mismo catálogo", async () => {
     const h12 = await server.createDatabase();
     await migrateUpTo(
       h12.migrationUrl,
@@ -544,7 +551,7 @@ describe("0004 sobre una base en H1.2 (staging hoy)", () => {
 
     await runMigrations(h12.migrationUrl);
 
-    expect(await history(h12.admin)).toBe(5);
+    expect(await history(h12.admin)).toBe(6);
     expect(await h12Snapshot(h12.admin)).toEqual(before);
     // Sin seeds: vehicles nace vacía.
     const [vehicles] = await h12.admin<{ count: number }[]>`
@@ -563,8 +570,9 @@ describe("0004 sobre una base en H1.2 (staging hoy)", () => {
 
   /*
    * Postcondiciones de 0004: las de 0003 sobre toda tabla de public, más que
-   * authenticated solo da de alta en contacts y opportunities (vehicles es
-   * de solo lectura). Si la base no las cumple, 0004 falla y no aplica nada.
+   * authenticated solo da de alta en contacts y opportunities (en H1.3A,
+   * vehicles es de solo lectura). Si la base no las cumple, 0004 falla y no
+   * aplica nada (tampoco 0005, que va en la misma transacción).
    */
   const unsafeStates: [string, string, string, RegExp][] = [
     [
@@ -631,6 +639,156 @@ describe("0004 sobre una base en H1.2 (staging hoy)", () => {
       // Corregido el estado, 0004 se aplica.
       await runMigrations(h12.migrationUrl);
       expect(await catalogSnapshot(h12.admin)).toEqual(afterMigration);
+    },
+  );
+});
+
+/*
+ * Staging hoy está en H1.3A (0000 a 0004, DEC-025). 0005 se aplica sobre una
+ * base equivalente, con datos (también vehículos): solo agrega la policy y
+ * el grant de alta de vehicles, no toca ninguna fila y deja el mismo
+ * catálogo que una base nueva.
+ */
+describe("0005 sobre una base en H1.3A (staging hoy)", () => {
+  /** Todo lo que puede tener staging hoy, fila por fila. */
+  async function h13aSnapshot(sql: TestDatabase["admin"]) {
+    const [snapshot] = await sql<{ data: unknown }[]>`
+      SELECT jsonb_build_object(
+        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
+        'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
+        'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
+        'opportunities', (SELECT jsonb_agg(op ORDER BY op.id) FROM public.opportunities op),
+        'vehicles', (SELECT jsonb_agg(v ORDER BY v.id) FROM public.vehicles v)
+      ) AS data
+    `;
+    return snapshot?.data;
+  }
+
+  async function history(sql: TestDatabase["admin"]): Promise<number> {
+    const [row] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+    `;
+    return row?.count ?? 0;
+  }
+
+  async function vehiclePolicies(sql: TestDatabase["admin"]) {
+    const rows = await sql<{ name: string }[]>`
+      SELECT policyname AS name FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'vehicles'
+      ORDER BY 1
+    `;
+    return rows.map((row) => row.name);
+  }
+
+  it("pnpm db:migrate aplica solo 0005, conserva los datos y deja el mismo catálogo", async () => {
+    const h13a = await server.createDatabase();
+    await migrateUpTo(h13a.migrationUrl, "0004_vehicles_stock_persistence");
+    await seedTenants(h13a.admin);
+    await seedOpportunities(h13a.admin);
+    await seedVehicles(h13a.admin);
+    const before = await h13aSnapshot(h13a.admin);
+    expect(await history(h13a.admin)).toBe(5);
+    expect(await vehiclePolicies(h13a.admin)).toEqual([
+      "vehicles_select_member",
+    ]);
+
+    await runMigrations(h13a.migrationUrl);
+
+    expect(await history(h13a.admin)).toBe(6);
+    // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
+    expect(await h13aSnapshot(h13a.admin)).toEqual(before);
+    expect(await vehiclePolicies(h13a.admin)).toEqual([
+      "vehicles_insert_member",
+      "vehicles_select_member",
+    ]);
+    expect(await catalogSnapshot(h13a.admin)).toEqual(afterMigration);
+  });
+
+  /*
+   * Postcondiciones de 0005: las de 0004 sobre toda tabla de public, con
+   * vehicles entre las altas aprobadas. Si la base no las cumple, 0005 falla
+   * y no aplica nada.
+   */
+  const unsafeStates: [string, string, string, RegExp][] = [
+    [
+      "una tabla de public sin RLS",
+      "CREATE TABLE public.probe (id int)",
+      "DROP TABLE public.probe",
+      /RLS enabled/,
+    ],
+    [
+      "app_runtime con INSERT directo sobre vehicles",
+      "GRANT INSERT ON public.vehicles TO app_runtime",
+      "REVOKE INSERT ON public.vehicles FROM app_runtime",
+      /anon and app_runtime must not have privileges/,
+    ],
+    [
+      "una policy de alta de vehicles sin WITH CHECK",
+      "CREATE POLICY probe_insert ON public.vehicles FOR INSERT TO authenticated",
+      "DROP POLICY probe_insert ON public.vehicles",
+      /must have a WITH CHECK/,
+    ],
+    [
+      "authenticated con UPDATE sobre vehicles (y su policy)",
+      `GRANT UPDATE ON public.vehicles TO authenticated;
+       CREATE POLICY probe_update ON public.vehicles FOR UPDATE TO authenticated
+         USING (organization_id IN (SELECT private.user_org_ids()))
+         WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
+      `DROP POLICY probe_update ON public.vehicles;
+       REVOKE UPDATE ON public.vehicles FROM authenticated`,
+      /must not update, delete or truncate/,
+    ],
+    [
+      "authenticated con DELETE sobre vehicles (y su policy)",
+      `GRANT DELETE ON public.vehicles TO authenticated;
+       CREATE POLICY probe_delete ON public.vehicles FOR DELETE TO authenticated
+         USING (organization_id IN (SELECT private.user_org_ids()))`,
+      `DROP POLICY probe_delete ON public.vehicles;
+       REVOKE DELETE ON public.vehicles FROM authenticated`,
+      /must not update, delete or truncate/,
+    ],
+    [
+      "authenticated con INSERT fuera de contacts, opportunities y vehicles (aun con policy y WITH CHECK)",
+      `GRANT INSERT ON public.memberships TO authenticated;
+       CREATE POLICY probe_insert ON public.memberships FOR INSERT TO authenticated
+         WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
+      `DROP POLICY probe_insert ON public.memberships;
+       REVOKE INSERT ON public.memberships FROM authenticated`,
+      /may only insert into contacts, opportunities and vehicles/,
+    ],
+  ];
+
+  it.each(unsafeStates)(
+    "0005 falla cerrada ante %s",
+    async (_, unsafe, restore, reason) => {
+      const h13a = await server.createDatabase();
+      await migrateUpTo(h13a.migrationUrl, "0004_vehicles_stock_persistence");
+      await h13a.admin.unsafe(unsafe);
+      try {
+        await expect(runMigrations(h13a.migrationUrl)).rejects.toThrow(
+          "pnpm db:migrate failed",
+        );
+        await expect(
+          migrateReportingErrors(h13a.migrationUrl),
+        ).rejects.toMatchObject({
+          cause: { message: expect.stringMatching(/^ADR-001: /) },
+        });
+        await expect(
+          migrateReportingErrors(h13a.migrationUrl),
+        ).rejects.toMatchObject({
+          cause: { message: expect.stringMatching(reason) },
+        });
+        expect(await vehiclePolicies(h13a.admin)).not.toContain(
+          "vehicles_insert_member",
+        );
+        expect(await history(h13a.admin)).toBe(5);
+      } finally {
+        await h13a.admin.unsafe(restore);
+      }
+      // Corregido el estado, 0005 se aplica.
+      await runMigrations(h13a.migrationUrl);
+      expect(await catalogSnapshot(h13a.admin)).toEqual(afterMigration);
     },
   );
 });

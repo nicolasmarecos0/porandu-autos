@@ -20,7 +20,8 @@ import { userOrgIds } from "./policies";
 /*
  * Estados de vehículo (TB §10): el mínimo que exige P1. Retirado/baja es
  * opcional y necesita un caso real de piloto. No es un enum de Postgres: un
- * CHECK que una migración puede reemplazar. H1.3A no habilita transiciones.
+ * CHECK que una migración puede reemplazar. Todavía no hay transiciones: el
+ * alta rápida (H1.3B) nace siempre en `in_preparation`.
  */
 export const vehicleStatuses = [
   "in_preparation",
@@ -56,10 +57,13 @@ export const vehicleCurrencies = ["PYG", "USD"] as const;
  *
  * No se persisten fotos (vehicle_media), sucursal, matches, interesados,
  * trade-in, entrega/financiación ni datos técnicos: no tienen fuente ni
- * consumidor todavía (H1.3A).
+ * consumidor todavía (H1.3A, H1.3B).
  *
- * Solo lectura (H1.3A): los vehículos de las organizaciones donde el usuario
- * tiene membership activa. Sin INSERT, UPDATE ni DELETE (default deny).
+ * Lectura (H1.3A) y alta rápida (H1.3B): los vehículos de las organizaciones
+ * donde el usuario tiene membership activa. Toda alta nace en
+ * `in_preparation`: lo fija el código (nunca el cliente) y lo exige el WITH
+ * CHECK de la policy de INSERT. El CHECK de `status` sigue admitiendo todos
+ * los estados. Sin UPDATE ni DELETE (default deny).
  */
 export const vehicles = pgTable(
   "vehicles",
@@ -97,6 +101,15 @@ export const vehicles = pgTable(
       for: "select",
       to: authenticatedRole,
       using: sql`${t.organizationId} IN ${userOrgIds}`,
+    }),
+    // Alta: organización con membership activa y siempre en preparación.
+    // La regla de alta es membership activa AND role IN ('admin', 'seller'):
+    // equivalente hoy porque membership_role es exactamente admin | seller
+    // (un test lo vigila). Los cambios de estado serán policies de UPDATE.
+    pgPolicy("vehicles_insert_member", {
+      for: "insert",
+      to: authenticatedRole,
+      withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.status} = 'in_preparation'`,
     }),
   ],
 ).enableRLS();
