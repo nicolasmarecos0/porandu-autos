@@ -49,7 +49,7 @@ describe("probeDataApi", () => {
     },
   );
 
-  it("consulta REST y GraphQL de cada tabla (H0 y H1.1), con la key y el token", async () => {
+  it("consulta REST y GraphQL de cada tabla (H0, H1.1 y H1.3A), con la key y el token", async () => {
     const fetch = vi.fn(async () => respond(503, {}));
     vi.stubGlobal("fetch", fetch);
     const [rest, graphql] = await probeDataApi(
@@ -69,6 +69,7 @@ describe("probeDataApi", () => {
         `${URL}/rest/v1/memberships?select=*&limit=1`,
         `${URL}/rest/v1/contacts?select=*&limit=1`,
         `${URL}/rest/v1/opportunities?select=*&limit=1`,
+        `${URL}/rest/v1/vehicles?select=*&limit=1`,
         `${URL}/graphql/v1`,
       ]),
     );

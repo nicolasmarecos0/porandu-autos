@@ -113,6 +113,15 @@ const opportunitiesMockImport = {
   message: OPPORTUNITIES_MOCK_MESSAGE,
 };
 
+// H1.3A: la Stock List se lee de PostgreSQL. Ninguna fixture la alimenta:
+// ni la página, ni sus componentes, ni su loader importan mocks/.
+const STOCK_MOCK_MESSAGE =
+  "The Stock List is read from PostgreSQL (db/queries/vehicles.ts). It has no fixtures in runtime: do not import mocks/.";
+const stockMockImport = {
+  regex: "(^|/)mocks(/|$)",
+  message: STOCK_MOCK_MESSAGE,
+};
+
 // H1.2: el alta de una oportunidad tiene una sola puerta, la Server Action
 // createOpportunity() (lib/opportunities/actions.ts), que obtiene el
 // contexto con requireTenant() y valida el formulario antes de escribir.
@@ -188,6 +197,27 @@ const eslintConfig = defineConfig([
         "error",
         {
           patterns: [...basePatterns, dbClientRelativeImport],
+        },
+      ],
+    },
+  },
+  // Stock List (H1.3A): una sola fuente, PostgreSQL.
+  {
+    files: ["app/(app)/stock/**", "components/stock/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [...basePatterns, dataLayerImport, stockMockImport] },
+      ],
+    },
+  },
+  {
+    files: ["db/queries/vehicles.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [...basePatterns, dbClientRelativeImport, stockMockImport],
         },
       ],
     },

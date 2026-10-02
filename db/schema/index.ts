@@ -8,11 +8,12 @@
  * app_runtime y `private.user_org_ids()` son SQL custom de
  * 0001_tenant_isolation, y los grants de `authenticated`, SQL custom de la
  * migración que crea cada tabla (0001 para las de H0, 0002 para contacts y
- * opportunities) o que habilita una escritura (0003: alta de contacts y
- * opportunities).
+ * opportunities, 0004 para vehicles) o que habilita una escritura (0003:
+ * alta de contacts y opportunities).
  */
 export * from "./organizations";
 export * from "./profiles";
 export * from "./memberships";
 export * from "./contacts";
 export * from "./opportunities";
+export * from "./vehicles";

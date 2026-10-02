@@ -48,13 +48,14 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0 y las de H1.1 (contacts, opportunities)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities) y la de H1.3A (vehicles)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "memberships",
       "opportunities",
       "organizations",
       "profiles",
+      "vehicles",
     ]);
   });
 
@@ -135,7 +136,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated y solo contacts y opportunities, la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated y solo contacts y opportunities, la de alta con WITH CHECK; vehicles solo lectura (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -220,6 +221,16 @@ describe("db/schema", () => {
         for: "select",
         to: ["authenticated"],
         using: '"profiles"."id" = (select auth.uid())',
+        withCheck: undefined,
+      },
+      {
+        table: "vehicles",
+        name: "vehicles_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"vehicles"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
       },
     ]);
@@ -359,6 +370,103 @@ describe("db/schema", () => {
     }
   });
 
+  it("vehicles: identificación, año y estado obligatorios; precio exacto con su moneda; sin datos sin fuente", () => {
+    expect(
+      table("vehicles").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", "PgUUID", true, true],
+      ["organization_id", "PgUUID", true, false],
+      ["brand", "PgText", true, false],
+      ["model", "PgText", true, false],
+      ["version", "PgText", false, false],
+      ["year", "PgSmallInt", true, false],
+      ["km", "PgInteger", false, false],
+      // Exacto: Drizzle lo lee como texto, nunca como float.
+      ["price", "PgNumeric", false, false],
+      ["currency", "PgText", false, false],
+      ["status", "PgText", true, false],
+      ["created_at", "PgTimestamp", true, true],
+      ["updated_at", "PgTimestamp", true, true],
+    ]);
+    expect(column("vehicles", "price")).toMatchObject({
+      precision: 14,
+      scale: 2,
+    });
+    expect(foreignKeys("vehicles")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+    ]);
+    const dialect = new PgDialect();
+    expect(
+      table("vehicles").checks.map((c) => ({
+        name: c.name,
+        sql: dialect.sqlToQuery(c.value).sql,
+      })),
+    ).toEqual([
+      {
+        name: "vehicles_status_check",
+        sql: `"vehicles"."status" IN ('in_preparation', 'available', 'reserved', 'sold')`,
+      },
+      {
+        name: "vehicles_currency_check",
+        sql: `"vehicles"."currency" IN ('PYG', 'USD')`,
+      },
+      {
+        name: "vehicles_price_check",
+        sql: `("vehicles"."price" IS NULL) = ("vehicles"."currency" IS NULL) AND ("vehicles"."price" IS NULL OR ("vehicles"."price" > 0 AND ("vehicles"."currency" <> 'PYG' OR "vehicles"."price" = trunc("vehicles"."price"))))`,
+      },
+      {
+        name: "vehicles_year_check",
+        sql: `"vehicles"."year" BETWEEN 1900 AND 2100`,
+      },
+      {
+        name: "vehicles_km_check",
+        sql: `"vehicles"."km" IS NULL OR "vehicles"."km" >= 0`,
+      },
+    ]);
+    expect(schema.vehicleStatuses).toEqual([
+      "in_preparation",
+      "available",
+      "reserved",
+      "sold",
+    ]);
+    expect(schema.vehicleCurrencies).toEqual(["PYG", "USD"]);
+    expect(
+      table("vehicles").indexes.map((i) => ({
+        name: i.config.name,
+        columns: i.config.columns.map((c) => ("name" in c ? c.name : c)),
+      })),
+    ).toEqual([
+      {
+        name: "vehicles_organization_id_created_at_idx",
+        columns: ["organization_id", "created_at"],
+      },
+    ]);
+    // H1.3A: fotos, sucursal, matches, interesados, trade-in, entrega y
+    // datos técnicos no tienen fuente ni consumidor todavía.
+    const names = table("vehicles").columns.map((c) => c.name);
+    for (const absent of [
+      "branch_id",
+      "photo_url",
+      "image",
+      "match_count",
+      "interested",
+      "source_trade_in",
+      "min_down_payment",
+      "transmission",
+      "fuel",
+      "color",
+      "vin",
+      "plate",
+    ]) {
+      expect(names).not.toContain(absent);
+    }
+  });
+
   it("toda tabla tenant-scoped tiene organization_id NOT NULL, FK e índice que empieza por él", () => {
     const tenantScoped = tables.filter(
       (t) => !NOT_TENANT_OWNED.includes(t.name),
@@ -367,6 +475,7 @@ describe("db/schema", () => {
       "contacts",
       "memberships",
       "opportunities",
+      "vehicles",
     ]);
 
     for (const t of tenantScoped) {

@@ -286,6 +286,55 @@ describe("opportunities (H1.1)", () => {
   });
 });
 
+describe("vehicles (H1.3A)", () => {
+  it("columnas: identificación y estado obligatorios; versión, km y precio opcionales; precio exacto", async () => {
+    expect(await columns(db.admin, "vehicles")).toEqual([
+      {
+        name: "id",
+        type: "uuid",
+        notNull: true,
+        default: "gen_random_uuid()",
+      },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "brand", type: "text", notNull: true, default: null },
+      { name: "model", type: "text", notNull: true, default: null },
+      { name: "version", type: "text", notNull: false, default: null },
+      { name: "year", type: "smallint", notNull: true, default: null },
+      { name: "km", type: "integer", notNull: false, default: null },
+      { name: "price", type: "numeric(14,2)", notNull: false, default: null },
+      { name: "currency", type: "text", notNull: false, default: null },
+      // Sin default: el estado de una unidad se declara, nunca se supone.
+      { name: "status", type: "text", notNull: true, default: null },
+      ...TIMESTAMPS,
+    ]);
+  });
+
+  it("PK, FK a organizations (RESTRICT) y CHECKs de estado, moneda, precio, año y km", async () => {
+    expect(await constraints(db.admin, "vehicles")).toEqual({
+      vehicles_pkey: "PRIMARY KEY (id)",
+      vehicles_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      vehicles_status_check:
+        "CHECK ((status = ANY (ARRAY['in_preparation'::text, 'available'::text, 'reserved'::text, 'sold'::text])))",
+      vehicles_currency_check:
+        "CHECK ((currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
+      vehicles_price_check:
+        "CHECK ((((price IS NULL) = (currency IS NULL)) AND ((price IS NULL) OR ((price > (0)::numeric) AND ((currency <> 'PYG'::text) OR (price = trunc(price)))))))",
+      vehicles_year_check: "CHECK (((year >= 1900) AND (year <= 2100)))",
+      vehicles_km_check: "CHECK (((km IS NULL) OR (km >= 0)))",
+    });
+  });
+
+  it("índices: la lista por organización e ingreso", async () => {
+    expect(await indexes(db.admin, "vehicles")).toEqual({
+      vehicles_pkey:
+        "CREATE UNIQUE INDEX vehicles_pkey ON public.vehicles USING btree (id)",
+      vehicles_organization_id_created_at_idx:
+        "CREATE INDEX vehicles_organization_id_created_at_idx ON public.vehicles USING btree (organization_id, created_at DESC)",
+    });
+  });
+});
+
 describe("invariantes de tenancy (ADR-001 §3.6)", () => {
   it("toda tabla de public tiene RLS habilitado", async () => {
     const tables = await tenancy(db.admin);
@@ -310,6 +359,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
       "contacts",
       "memberships",
       "opportunities",
+      "vehicles",
     ]);
     for (const table of tenantScoped) {
       expect(table).toEqual({
@@ -621,6 +671,157 @@ describe("identidad telefónica de contacts con datos (H1.2)", () => {
   });
 });
 
+describe("constraints de vehicles con datos (H1.3A)", () => {
+  type VehicleRow = {
+    organization_id?: string;
+    brand?: string;
+    model?: string;
+    version?: string | null;
+    year?: number;
+    km?: number | null;
+    price?: string | null;
+    currency?: string | null;
+    status?: string;
+  };
+  const valid: VehicleRow = {
+    organization_id: ORG_1,
+    brand: "Toyota",
+    model: "Hilux",
+    year: 2025,
+    km: 0,
+    price: "49900.00",
+    currency: "USD",
+    status: "available",
+  };
+  const insertVehicle = (sp: TransactionSql, row: VehicleRow) =>
+    sp`INSERT INTO public.vehicles ${sp(row as Record<string, unknown>)}`;
+  const without = (key: keyof VehicleRow): VehicleRow => {
+    const row = { ...valid };
+    delete row[key];
+    return row;
+  };
+
+  it("organización, marca, modelo, año y estado son obligatorios", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      for (const key of [
+        "organization_id",
+        "brand",
+        "model",
+        "year",
+        "status",
+      ] as const) {
+        await expectSqlError(tx, "23502", (sp) =>
+          insertVehicle(sp, without(key)),
+        );
+      }
+    });
+  });
+
+  it("estado y moneda solo aceptan los valores del CHECK", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      for (const status of ["inPreparation", "en_preparacion", "retired"]) {
+        await expectSqlError(tx, "23514", (sp) =>
+          insertVehicle(sp, { ...valid, status }),
+        );
+      }
+      for (const currency of ["BRL", "usd", "Gs."]) {
+        await expectSqlError(tx, "23514", (sp) =>
+          insertVehicle(sp, { ...valid, currency }),
+        );
+      }
+      for (const status of [
+        "in_preparation",
+        "available",
+        "reserved",
+        "sold",
+      ]) {
+        await insertVehicle(tx, { ...valid, status });
+      }
+    });
+  });
+
+  it("precio y moneda van juntos; sin precio es sin dato", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      await expectSqlError(tx, "23514", (sp) =>
+        insertVehicle(sp, { ...valid, currency: null }),
+      );
+      await expectSqlError(tx, "23514", (sp) =>
+        insertVehicle(sp, { ...valid, price: null }),
+      );
+      await insertVehicle(tx, {
+        ...valid,
+        price: null,
+        currency: null,
+        status: "in_preparation",
+      });
+    });
+  });
+
+  it("el precio es exacto, positivo y en guaraníes sin decimales", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      for (const price of ["0", "-1.00"]) {
+        await expectSqlError(tx, "23514", (sp) =>
+          insertVehicle(sp, { ...valid, price }),
+        );
+      }
+      await expectSqlError(tx, "23514", (sp) =>
+        insertVehicle(sp, { ...valid, price: "150000000.50", currency: "PYG" }),
+      );
+      // Más de 12 dígitos enteros no entra en numeric(14,2).
+      await expectSqlError(tx, "22003", (sp) =>
+        insertVehicle(sp, { ...valid, price: "1000000000000.00" }),
+      );
+      const rows = await tx<{ price: string }[]>`
+        INSERT INTO public.vehicles ${tx([
+          { ...valid, price: "32990.50" },
+          { ...valid, price: "150000000", currency: "PYG" },
+          { ...valid, price: "999999999999.99" },
+        ] as Record<string, unknown>[])}
+        RETURNING price
+      `;
+      // postgres-js devuelve numeric como texto: el valor exacto, sin float.
+      expect(rows.map((r) => r.price)).toEqual([
+        "32990.50",
+        "150000000.00",
+        "999999999999.99",
+      ]);
+    });
+  });
+
+  it("año entre 1900 y 2100; km nunca negativo (NULL es sin dato, 0 es 0 km)", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      for (const year of [1899, 2101, 0]) {
+        await expectSqlError(tx, "23514", (sp) =>
+          insertVehicle(sp, { ...valid, year }),
+        );
+      }
+      await expectSqlError(tx, "23514", (sp) =>
+        insertVehicle(sp, { ...valid, km: -1 }),
+      );
+      await insertVehicle(tx, { ...valid, km: null });
+      await insertVehicle(tx, { ...valid, km: 0, year: 1900 });
+    });
+  });
+
+  it("no se borra una organización con vehículos", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seed(tx);
+      await insertVehicle(tx, { ...valid, organization_id: ORG_2 });
+      await tx`DELETE FROM public.contacts WHERE organization_id = ${ORG_2}`;
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) => sp`DELETE FROM public.organizations WHERE id = ${ORG_2}`,
+      );
+    });
+  });
+});
+
 describe("acceso directo por rol, sin withTenant", () => {
   const tables = [
     "organizations",
@@ -628,6 +829,7 @@ describe("acceso directo por rol, sin withTenant", () => {
     "memberships",
     "contacts",
     "opportunities",
+    "vehicles",
   ];
 
   it("anon no puede leer ni escribir (42501, sin grants)", async () => {
@@ -659,6 +861,10 @@ describe("acceso directo por rol, sin withTenant", () => {
   it("authenticated sin claims no ve filas ni escribe", async () => {
     await inRolledBackTransaction(db.admin, async (tx) => {
       await seed(tx);
+      await tx`
+        INSERT INTO public.vehicles (organization_id, brand, model, year, status)
+        VALUES (${ORG_1}, 'Toyota', 'Hilux', 2025, 'available')
+      `;
       for (const table of tables) {
         const rows = await asRole(
           tx,

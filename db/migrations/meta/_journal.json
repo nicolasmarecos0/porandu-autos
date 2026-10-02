@@ -29,6 +29,13 @@
       "when": 1790882964904,
       "tag": "0003_contact_identity_opportunity_create",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790905444404,
+      "tag": "0004_vehicles_stock_persistence",
+      "breakpoints": true
     }
   ]
 }
