@@ -4,9 +4,10 @@ import { ESLint } from "eslint";
 import { describe, expect, it } from "vitest";
 
 /*
- * Guardas de ESLint de la Stock List (H1.3A):
+ * Guardas de ESLint de Stock (H1.3A, H1.3B):
  * - una sola fuente: ni la página /stock, ni sus componentes, ni su loader
- *   (db/queries/vehicles.ts) importan mocks/;
+ *   (db/queries/vehicles.ts), ni el alta rápida (lib/vehicles/,
+ *   db/queries/create-vehicle.ts) importan mocks/;
  * - la página y los componentes no conocen Drizzle, db/schema ni el
  *   boundary: leen con getStockList();
  * - el loader no puede saltear withTenant(): no importa db/client ni
@@ -47,6 +48,22 @@ describe("una sola fuente para la Stock List", { timeout: 30_000 }, () => {
     ],
     [LOADER, `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`],
     [LOADER, `import { STOCK } from "../../mocks/stock";${use("STOCK")}`],
+    [
+      "components/stock/new-vehicle-drawer.tsx",
+      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
+      "db/queries/create-vehicle.ts",
+      `import { VEHICLES } from "../../mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
+      "lib/vehicles/actions.ts",
+      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
+      "lib/vehicles/new-vehicle.ts",
+      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
+    ],
   ])("falla en %s: %s", async (filePath, code) => {
     expect(await restrictedBy(filePath, code)).toContain(
       "no-restricted-imports",

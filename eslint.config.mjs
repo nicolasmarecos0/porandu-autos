@@ -134,6 +134,18 @@ const createOpportunityImport = {
   message: CREATE_OPPORTUNITY_MESSAGE,
 };
 
+// H1.3B: el alta rápida de una unidad tiene una sola puerta, la Server
+// Action createVehicle() (lib/vehicles/actions.ts), que obtiene el contexto
+// con requireTenant() y valida el formulario antes de escribir.
+const CREATE_VEHICLE_MESSAGE =
+  "Vehicles are created only through the createVehicle() Server Action (lib/vehicles/actions.ts): requireTenant(), server-side validation, then withTenant().";
+const createVehicleImport = {
+  regex: "(^|/)db/queries/create-vehicle$|^\\.{1,2}/create-vehicle$",
+  // Los tipos del alta (NewVehicle) no escriben nada.
+  allowTypeImports: true,
+  message: CREATE_VEHICLE_MESSAGE,
+};
+
 // H1.2: libphonenumber-js (y su metadata) solo vive en el servidor, detrás
 // de lib/contacts/phone.ts (`import "server-only"`).
 const PHONE_LIBRARY_MESSAGE =
@@ -149,6 +161,7 @@ const basePatterns = [
   resolveTenantImport,
   opportunitiesMockImport,
   createOpportunityImport,
+  createVehicleImport,
   phoneLibraryImport,
 ];
 
@@ -201,7 +214,8 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // Stock List (H1.3A): una sola fuente, PostgreSQL.
+  // Stock (H1.3A, H1.3B): una sola fuente, PostgreSQL. Ni la lista ni el
+  // alta rápida tienen fixtures.
   {
     files: ["app/(app)/stock/**", "components/stock/**"],
     rules: {
@@ -212,13 +226,22 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    files: ["db/queries/vehicles.ts"],
+    files: ["db/queries/vehicles.ts", "db/queries/create-vehicle.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
           patterns: [...basePatterns, dbClientRelativeImport, stockMockImport],
         },
+      ],
+    },
+  },
+  {
+    files: ["lib/vehicles/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        { patterns: [...basePatterns, stockMockImport] },
       ],
     },
   },
@@ -255,6 +278,7 @@ const eslintConfig = defineConfig([
             resolveTenantImport,
             opportunitiesMockImport,
             createOpportunityImport,
+            createVehicleImport,
             phoneLibraryImport,
           ],
         },
@@ -273,6 +297,7 @@ const eslintConfig = defineConfig([
             withUserImport,
             opportunitiesMockImport,
             createOpportunityImport,
+            createVehicleImport,
             phoneLibraryImport,
           ],
         },
@@ -291,7 +316,28 @@ const eslintConfig = defineConfig([
             withUserImport,
             resolveTenantImport,
             opportunitiesMockImport,
+            createVehicleImport,
             phoneLibraryImport,
+          ],
+        },
+      ],
+    },
+  },
+  // Única puerta del alta rápida de unidades (H1.3B). Sin fixtures.
+  {
+    files: ["lib/vehicles/actions.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            dbClientImport,
+            withUserImport,
+            resolveTenantImport,
+            opportunitiesMockImport,
+            createOpportunityImport,
+            phoneLibraryImport,
+            stockMockImport,
           ],
         },
       ],
@@ -310,6 +356,7 @@ const eslintConfig = defineConfig([
             resolveTenantImport,
             opportunitiesMockImport,
             createOpportunityImport,
+            createVehicleImport,
           ],
         },
       ],
@@ -328,6 +375,7 @@ const eslintConfig = defineConfig([
             resolveTenantImport,
             opportunitiesMockImport,
             createOpportunityImport,
+            createVehicleImport,
             phoneLibraryImport,
           ],
         },
