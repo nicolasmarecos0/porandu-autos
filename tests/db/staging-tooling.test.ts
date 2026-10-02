@@ -124,6 +124,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0001_tenant_isolation",
       "0002_opportunities_persistence",
       "0003_contact_identity_opportunity_create",
+      "0004_vehicles_stock_persistence",
     ]);
   });
 
@@ -288,7 +289,7 @@ describe("comandos del workflow (scripts/staging/commands.mts)", () => {
     const output = lines.join("\n");
     expect(output).toContain("✗ postgres.database");
     expect(output).toContain(
-      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create",
+      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create, 0004_vehicles_stock_persistence",
     );
     expect(output).not.toContain(ctx.secrets[0]!);
     expect(output).not.toMatch(/postgres(ql)?:\/\//);
@@ -452,6 +453,28 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta un alta de vehicles (H1.3A es de solo lectura)", async () => {
+    await migrated.admin.unsafe(`
+      GRANT INSERT ON public.vehicles TO authenticated;
+      CREATE POLICY probe_insert ON public.vehicles FOR INSERT TO authenticated
+        WITH CHECK (organization_id IN (SELECT private.user_org_ids()));
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "rls.policies",
+        "privileges.authenticated",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(`
+        DROP POLICY probe_insert ON public.vehicles;
+        REVOKE INSERT ON public.vehicles FROM authenticated;
+      `);
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -462,34 +485,37 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real: staging está en H1.1 (0000 a 0002, DEC-023) y el
- * workflow aplica 0003 declarando solo ese tag (preflight → migrate →
- * verify).
+ * El próximo rollout real: staging está en H1.2 (0000 a 0003, DEC-024) y el
+ * workflow aplica 0004 declarando solo ese tag (preflight → migrate →
+ * verify). Esta rama no lo aplica: se corre después del merge.
  */
-describe("staging en H1.1: rollout de 0003", () => {
+describe("staging en H1.2: rollout de 0004", () => {
   let staging: TestDatabase;
 
   beforeAll(async () => {
     staging = await server.createDatabase();
-    await migrateUpTo(staging.migrationUrl, "0002_opportunities_persistence");
+    await migrateUpTo(
+      staging.migrationUrl,
+      "0003_contact_identity_opportunity_create",
+    );
   });
 
-  it("antes de migrar, verify y el resto de las operaciones exigen aplicar 0003", async () => {
+  it("antes de migrar, verify y el resto de las operaciones exigen aplicar 0004", async () => {
     expect(failures(await preflightOf(staging, "verify"))).toEqual([
       ...HARNESS_ONLY,
       "operation.up-to-date",
     ]);
   });
 
-  it("el preflight pasa con expected_migrations = 0003 y solo eso queda pendiente", async () => {
+  it("el preflight pasa con expected_migrations = 0004 y solo eso queda pendiente", async () => {
     const result = await preflightOf(staging, "migrate", [
-      "0003_contact_identity_opportunity_create",
+      "0004_vehicles_stock_persistence",
     ]);
     expect(failures(result)).toEqual(HARNESS_ONLY);
     expect(result.history).toEqual({
       kind: "consistent",
-      applied: REPO.slice(0, 3),
-      pending: REPO.slice(3),
+      applied: REPO.slice(0, 4),
+      pending: REPO.slice(4),
     });
     // Declarar de más (o de menos) aborta antes de migrar.
     expect(failures(await preflightOf(staging, "migrate", ALL_TAGS))).toContain(
@@ -497,7 +523,7 @@ describe("staging en H1.1: rollout de 0003", () => {
     );
   });
 
-  it("aplica solo 0003 y la verificación de catálogo pasa completa", async () => {
+  it("aplica solo 0004 y la verificación de catálogo pasa completa", async () => {
     const password = new URL(staging.migrationUrl).password;
     const output = await runOfficialMigrations(staging.migrationUrl, [
       password,
@@ -506,7 +532,7 @@ describe("staging en H1.1: rollout de 0003", () => {
     const [history] = await staging.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
     `;
-    expect(history?.count).toBe(4);
+    expect(history?.count).toBe(5);
 
     expect(failures(await preflightOf(staging, "verify"))).toEqual(
       HARNESS_ONLY,

@@ -6,8 +6,8 @@ import { finding, type Finding } from "./report.mts";
 /*
  * Verificación post-migración de staging (solo lectura): lo que dejaron
  * 0000_saas_core_schema, 0001_tenant_isolation,
- * 0002_opportunities_persistence y 0003_contact_identity_opportunity_create,
- * leído del catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4). Espeja
+ * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create y
+ * 0004_vehicles_stock_persistence, leído del catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4). Espeja
  * tests/db/tenant-catalog y tests/db/schema: si una migración nueva cambia
  * lo esperado, se actualiza junto con esos tests.
  */
@@ -18,6 +18,7 @@ const APP_TABLES = [
   "opportunities",
   "organizations",
   "profiles",
+  "vehicles",
 ];
 const PRIVILEGES = [
   "SELECT",
@@ -41,10 +42,10 @@ type Policy = {
 };
 
 /**
- * Policies de lectura de H0 (DEC-019) y de H1.1 (contacts, opportunities), y
- * de alta de H1.2 (contacts, opportunities, con WITH CHECK; la de
- * opportunities exige además la etapa `new`), tal como las deparsea
- * PostgreSQL 17.
+ * Policies de lectura de H0 (DEC-019), de H1.1 (contacts, opportunities) y de
+ * H1.3A (vehicles, solo lectura), y de alta de H1.2 (contacts, opportunities,
+ * con WITH CHECK; la de opportunities exige además la etapa `new`), tal como
+ * las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -115,6 +116,16 @@ export const EXPECTED_POLICIES: Policy[] = [
     using: "(id = ( SELECT auth.uid() AS uid))",
     withCheck: null,
   },
+  {
+    table: "vehicles",
+    name: "vehicles_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
 ];
 
 /** `contacts.phone_normalized` tal como lo deja 0003 (PostgreSQL 17). */
@@ -126,7 +137,10 @@ export const EXPECTED_PHONE_IDENTITY = {
     "CHECK (((phone_normalized IS NULL) OR ((phone IS NOT NULL) AND (phone_normalized ~ '^\\+[1-9][0-9]{1,14}$'::text))))",
 };
 
-/** Privilegios de authenticated: lectura en todo y alta de H1.2. */
+/**
+ * Privilegios de authenticated: lectura en todo y alta de H1.2 (vehicles es
+ * de solo lectura en H1.3A).
+ */
 const AUTHENTICATED_PRIVILEGES = [
   "INSERT contacts",
   "INSERT opportunities",
@@ -288,8 +302,8 @@ export async function verifyCatalog(
     ),
   );
 
-  // Policies (DEC-019, H1.1, H1.2): lectura y alta, con la forma de
-  // referencia; ningún UPDATE ni DELETE.
+  // Policies (DEC-019, H1.1, H1.2, H1.3A): lectura y alta, con la forma de
+  // referencia; ningún UPDATE ni DELETE, y ninguna alta de vehicles.
   const policies = await tx<Policy[]>`
     SELECT tablename AS table, policyname AS name, permissive,
       roles::text[] AS roles, cmd AS command, qual AS using,
@@ -477,7 +491,7 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts and opportunities; no UPDATE or DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts and opportunities only; no UPDATE or DELETE)`,
     ),
   );
 
@@ -601,6 +615,7 @@ const DATA_API_TABLES = [
   "memberships",
   "contacts",
   "opportunities",
+  "vehicles",
 ];
 /** Nombres que pg_graphql daría a los tipos de la app. */
 const GRAPHQL_APP_TYPES = [
@@ -610,6 +625,7 @@ const GRAPHQL_APP_TYPES = [
   "MembershipRole",
   "Contacts",
   "Opportunities",
+  "Vehicles",
 ];
 
 export type DataApiProbeKind =

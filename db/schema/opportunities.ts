@@ -1,4 +1,4 @@
-import { sql, type SQL } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import {
   check,
   foreignKey,
@@ -8,10 +8,10 @@ import {
   text,
   timestamp,
   uuid,
-  type PgColumn,
 } from "drizzle-orm/pg-core";
 import { authenticatedRole } from "drizzle-orm/supabase";
 
+import { oneOf } from "./checks";
 import { timestamps } from "./columns";
 import { contacts } from "./contacts";
 import { organizations } from "./organizations";
@@ -41,11 +41,6 @@ export const opportunitySources = [
   "showroom",
   "referral",
 ] as const;
-
-/** `column IN ('a', 'b', …)` con literales fijos del código (para CHECK). */
-function oneOf(column: PgColumn, values: readonly string[]): SQL {
-  return sql`${column} IN (${sql.raw(values.map((value) => `'${value}'`).join(", "))})`;
-}
 
 /*
  * Oportunidad comercial ("leads" en TB §10; Opportunity en la UI, DEC-015):

@@ -35,6 +35,7 @@ describe("readRepoMigrations", () => {
       [1, "0001_tenant_isolation"],
       [2, "0002_opportunities_persistence"],
       [3, "0003_contact_identity_opportunity_create"],
+      [4, "0004_vehicles_stock_persistence"],
     ]);
   });
 
@@ -61,15 +62,15 @@ describe("compareHistory", () => {
     expect(compareHistory(REPO, applied(1))).toEqual({
       kind: "consistent",
       applied: [REPO[0]],
-      pending: [REPO[1], REPO[2], REPO[3]],
+      pending: [REPO[1], REPO[2], REPO[3], REPO[4]],
     });
-    // Staging hoy (H1.1): solo 0003 pendiente.
-    expect(compareHistory(REPO, applied(3))).toEqual({
+    // Staging hoy (H1.2): solo 0004 pendiente.
+    expect(compareHistory(REPO, applied(4))).toEqual({
       kind: "consistent",
-      applied: [REPO[0], REPO[1], REPO[2]],
-      pending: [REPO[3]],
+      applied: [REPO[0], REPO[1], REPO[2], REPO[3]],
+      pending: [REPO[4]],
     });
-    expect(compareHistory(REPO, [...applied(4)].reverse())).toMatchObject({
+    expect(compareHistory(REPO, [...applied(5)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -89,8 +90,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(4), { id: 5, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 4",
+      [...applied(5), { id: 6, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 5",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -129,7 +130,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0003: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0004: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -163,7 +164,7 @@ describe("expectedFootprint", () => {
     };
     expect(expectedFootprint(REPO.slice(0, 3))).toEqual(h11);
     // 0003 no crea tablas: suma las policies de alta.
-    expect(expectedFootprint(REPO)).toEqual({
+    const h12 = {
       ...h11,
       policies: [
         "contacts.contacts_insert_member",
@@ -174,6 +175,13 @@ describe("expectedFootprint", () => {
         "organizations.organizations_select_member",
         "profiles.profiles_select_own",
       ],
+    };
+    expect(expectedFootprint(REPO.slice(0, 4))).toEqual(h12);
+    // 0004 suma vehicles, con su única policy (lectura).
+    expect(expectedFootprint(REPO)).toEqual({
+      ...h12,
+      tables: [...h12.tables, "vehicles"],
+      policies: [...h12.policies, "vehicles.vehicles_select_member"],
     });
   });
 });
