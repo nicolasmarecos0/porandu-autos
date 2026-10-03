@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { cn } from "@/components/ui/cn";
 import { CloseIcon } from "@/components/ui/icons";
+import { canMarkAvailable } from "@/domains/vehicles/availability";
 import {
   formatKm,
   formatPrice,
@@ -14,6 +15,10 @@ import {
   type StockVehicle,
 } from "@/domains/vehicles/stock";
 
+import {
+  MarkAvailableDialog,
+  type AvailabilitySettled,
+} from "./mark-available-dialog";
 import { NewVehicleDrawer, type VehicleCreated } from "./new-vehicle-drawer";
 import { LITERAL, PriceParts, STATUS_DOT, STATUS_EDGE } from "./stock-status";
 import { StockSummary } from "./stock-summary";
@@ -37,7 +42,25 @@ import { EmptyUnitContext, UnitContext } from "./unit-context";
  * "Nueva unidad" (H1.3B) abre el alta rápida en un drawer. Al crear, la
  * Server Action revalida la página, la lista trae la unidad nueva (en
  * preparación) y la vista la selecciona y la muestra.
+ *
+ * "Marcar disponible" (H1.3C), en el rail de una unidad en preparación, pide
+ * confirmación y la pasa a disponible. La Server Action revalida la página:
+ * la unidad cambia de grupo (sigue seleccionada), los conteos y el medidor
+ * se recalculan, y la vista la muestra en la lista y devuelve el foco a la
+ * lista, porque el botón que la movió ya no existe.
  */
+
+/** Aviso de la última escritura (alta o disponibilidad). */
+type Notice = Readonly<{ tone: "success" | "neutral"; message: string }>;
+
+/**
+ * Unidad a mostrar cuando la lista nueva llegue del loader: la recién creada,
+ * al aparecer; la que se marcó disponible, al dejar "En preparación".
+ */
+type Reveal = Readonly<{
+  vehicleId: string;
+  until: "listed" | "leftPreparation";
+}>;
 
 export function StockView({
   title,
@@ -50,19 +73,45 @@ export function StockView({
   // El orden visual (agrupado) es el que recorre el teclado.
   const ordered = groups.flatMap((group) => group.vehicles);
   const [selectedId, setSelectedId] = useState(ordered[0]?.id);
-  const [created, setCreated] = useState<VehicleCreated | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [reveal, setReveal] = useState<Reveal | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const selected =
     ordered.find((vehicle) => vehicle.id === selectedId) ?? ordered[0];
 
-  // La unidad recién creada se muestra en la lista apenas llega del loader.
-  const createdId = created?.vehicleId;
-  const createdListed = ordered.some((vehicle) => vehicle.id === createdId);
+  // La unidad se muestra en la lista apenas llega del loader en su lugar
+  // nuevo. Tras marcarla disponible, el foco vuelve a la lista.
+  const revealedStatus = reveal
+    ? ordered.find((vehicle) => vehicle.id === reveal.vehicleId)?.status
+    : undefined;
+  const revealReady =
+    reveal !== null &&
+    (reveal.until === "listed"
+      ? revealedStatus !== undefined
+      : revealedStatus !== "inPreparation");
   useEffect(() => {
-    if (!createdId || !createdListed) return;
+    if (!reveal || !revealReady) return;
     document
-      .getElementById(optionId(createdId))
+      .getElementById(optionId(reveal.vehicleId))
       ?.scrollIntoView({ block: "nearest" });
-  }, [createdId, createdListed]);
+    if (reveal.until === "leftPreparation") {
+      listRef.current?.focus({ preventScroll: true });
+    }
+  }, [reveal, revealReady]);
+
+  function onCreated(result: VehicleCreated) {
+    setSelectedId(result.vehicleId);
+    setNotice({ tone: "success", message: createdMessage(result) });
+    setReveal({ vehicleId: result.vehicleId, until: "listed" });
+  }
+
+  function onAvailabilitySettled(
+    vehicleId: string,
+    result: AvailabilitySettled,
+  ) {
+    setNotice(availabilityNotice(result));
+    setReveal({ vehicleId, until: "leftPreparation" });
+  }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -82,23 +131,17 @@ export function StockView({
       <StockSummary
         title={title}
         vehicles={vehicles}
-        action={
-          <NewVehicleDrawer
-            onCreated={(result) => {
-              setSelectedId(result.vehicleId);
-              setCreated(result);
-            }}
-          />
-        }
+        action={<NewVehicleDrawer onCreated={onCreated} />}
       />
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_17rem] gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_23rem]">
         <div className="flex min-h-0 flex-col gap-3">
-          <CreatedNotice created={created} onDismiss={() => setCreated(null)} />
+          <StockNotice notice={notice} onDismiss={() => setNotice(null)} />
           {groups.length === 0 ? (
             <EmptyStock />
           ) : (
             <div
+              ref={listRef}
               role="listbox"
               aria-label="Unidades en stock, por estado"
               tabIndex={0}
@@ -124,7 +167,22 @@ export function StockView({
           aria-label="Unidad seleccionada"
           className="flex min-h-0 flex-col gap-3 overflow-y-auto pb-6"
         >
-          {selected ? <UnitContext vehicle={selected} /> : <EmptyUnitContext />}
+          {selected ? (
+            <UnitContext
+              vehicle={selected}
+              action={
+                canMarkAvailable(selected.status) ? (
+                  <MarkAvailableDialog
+                    key={selected.id}
+                    vehicle={selected}
+                    onSettled={onAvailabilitySettled}
+                  />
+                ) : null
+              }
+            />
+          ) : (
+            <EmptyUnitContext />
+          )}
         </aside>
       </div>
     </div>
@@ -264,32 +322,80 @@ function UnitRow({
   );
 }
 
+/** Alta: qué unidad entró y en qué estado. */
+function createdMessage(created: VehicleCreated): string {
+  return `Unidad creada: ${vehicleName(created)} ${created.year}, ${vehicleStatusLabel("inPreparation").toLowerCase()}.`;
+}
+
 /**
- * Confirmación del alta: qué unidad entró y en qué estado. El texto también
- * se anuncia por la región `status`, que existe siempre.
+ * Disponibilidad: qué pasó con la unidad. Si ya no estaba en preparación
+ * (otra persona la cambió antes) o no existe, se dice que no se cambió nada.
  */
-function CreatedNotice({
-  created,
+function availabilityNotice(result: AvailabilitySettled): Notice {
+  switch (result.status) {
+    case "available":
+      return {
+        tone: "success",
+        message: `Unidad disponible: ${vehicleName(result)} ${result.year}, lista para vender.`,
+      };
+    case "unchanged":
+      return {
+        tone: "neutral",
+        message:
+          result.current === "available"
+            ? `${vehicleName(result)} ${result.year} ya estaba disponible. No se hizo ningún cambio.`
+            : `${vehicleName(result)} ${result.year} ya no está en preparación: está ${vehicleStatusLabel(result.current).toLowerCase()}. No se hizo ningún cambio.`,
+      };
+    case "not_found":
+      return {
+        tone: "neutral",
+        message:
+          "No encontramos esa unidad en el stock. No se hizo ningún cambio.",
+      };
+  }
+}
+
+const NOTICE_TONE: Readonly<Record<Notice["tone"], string>> = {
+  success: "border-success-border bg-success-soft text-success",
+  neutral: "border-border-default bg-surface-2 text-text-secondary",
+};
+
+const NOTICE_DISMISS: Readonly<Record<Notice["tone"], string>> = {
+  success: "hover:bg-success-border/40",
+  neutral: "hover:bg-surface-3",
+};
+
+/**
+ * Aviso de la última escritura. El texto también se anuncia por la región
+ * `status`, que existe siempre.
+ */
+function StockNotice({
+  notice,
   onDismiss,
 }: {
-  created: VehicleCreated | null;
+  notice: Notice | null;
   onDismiss: () => void;
 }) {
-  const message = created
-    ? `Unidad creada: ${vehicleName(created)} ${created.year}, ${vehicleStatusLabel("inPreparation").toLowerCase()}.`
-    : "";
   return (
-    <div role="status" className={created ? undefined : "sr-only"}>
-      {created ? (
-        <p className="flex items-start gap-2 rounded-md border border-success-border bg-success-soft py-2 pr-1.5 pl-3 text-label text-success">
+    <div role="status" className={notice ? undefined : "sr-only"}>
+      {notice ? (
+        <p
+          className={cn(
+            "flex items-start gap-2 rounded-md border py-2 pr-1.5 pl-3 text-label",
+            NOTICE_TONE[notice.tone],
+          )}
+        >
           <span className={cn("min-w-0 flex-1 pt-0.5", LITERAL)}>
-            {message}
+            {notice.message}
           </span>
           <button
             type="button"
             aria-label="Cerrar aviso"
             onClick={onDismiss}
-            className="flex size-6 shrink-0 items-center justify-center rounded-sm hover:bg-success-border/40 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring"
+            className={cn(
+              "flex size-6 shrink-0 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring",
+              NOTICE_DISMISS[notice.tone],
+            )}
           >
             <CloseIcon className="size-3.5" />
           </button>

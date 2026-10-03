@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { cn } from "@/components/ui/cn";
 import { CheckIcon } from "@/components/ui/icons";
 import {
@@ -15,6 +16,9 @@ import { LITERAL, PriceParts, StatusChip } from "./stock-status";
  * que existe hoy (identidad, estado, precio, km, año). Fotos reales,
  * compradores potenciales y próxima acción se muestran como ausencia
  * explícita, sin botones, hasta que existan vehicle_media y sus motores.
+ *
+ * `action` es la acción de estado de la unidad, al pie de su tarjeta: la
+ * elige la vista (H1.3C: "Marcar disponible" solo en preparación).
  */
 
 const AVAILABILITY: Readonly<Record<VehicleStatus, string>> = {
@@ -24,7 +28,13 @@ const AVAILABILITY: Readonly<Record<VehicleStatus, string>> = {
   sold: "Vendida · operación cerrada",
 };
 
-export function UnitContext({ vehicle }: { vehicle: StockVehicle }) {
+export function UnitContext({
+  vehicle,
+  action,
+}: {
+  vehicle: StockVehicle;
+  action?: ReactNode;
+}) {
   const sold = vehicle.status === "sold";
   return (
     <>
@@ -84,6 +94,7 @@ export function UnitContext({ vehicle }: { vehicle: StockVehicle }) {
             </dd>
           </div>
         </dl>
+        {action}
       </section>
 
       <section
