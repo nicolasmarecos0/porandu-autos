@@ -14,10 +14,11 @@ import {
 /*
  * Roles, grants, función y policies que dejan 0001_tenant_isolation,
  * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
- * 0004_vehicles_stock_persistence y 0005_vehicle_quick_create, leídos del
- * catálogo de PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2, C3 y C9).
- * El acceso a datos se prueba en tenant-isolation.test.ts,
- * opportunities.test.ts, vehicles.test.ts y los tests de cada alta.
+ * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create y
+ * 0006_vehicle_availability, leídos del catálogo de PostgreSQL 17 (ADR-001
+ * §2, §3.6 y §4; criterios C2, C3 y C9). El acceso a datos se prueba en
+ * tenant-isolation.test.ts, opportunities.test.ts, vehicles.test.ts y los
+ * tests de cada escritura.
  */
 
 const TABLES = [
@@ -165,7 +166,7 @@ describe("rol de runtime app_runtime (ADR-001 §2)", () => {
 });
 
 describe("policies (ADR-001 §4)", () => {
-  it("lectura para authenticated y alta de contacts, opportunities y vehicles con WITH CHECK, con la forma de referencia", async () => {
+  it("lectura para authenticated, alta de contacts, opportunities y vehicles con WITH CHECK y disponibilidad de vehicles con USING y WITH CHECK, con la forma de referencia", async () => {
     expect(await policies(db.admin)).toEqual([
       {
         table: "contacts",
@@ -255,6 +256,17 @@ describe("policies (ADR-001 §4)", () => {
           "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
         withCheck: null,
       },
+      {
+        table: "vehicles",
+        name: "vehicles_update_mark_available",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "UPDATE",
+        using:
+          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'in_preparation'::text))",
+        withCheck:
+          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'available'::text))",
+      },
     ]);
   });
 
@@ -269,23 +281,41 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated tiene SELECT sobre las tablas de la app e INSERT solo sobre contacts, opportunities y vehicles", async () => {
+  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities y vehicles, y UPDATE solo sobre vehicles", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
       "authenticated INSERT contacts",
       "authenticated INSERT opportunities",
       "authenticated INSERT vehicles",
       ...TABLES.map((table) => `authenticated SELECT ${table}`),
+      "authenticated UPDATE vehicles",
     ]);
   });
 
-  it("authenticated no puede modificar, borrar ni vaciar ninguna tabla", async () => {
+  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza vehicles.status y vehicles.updated_at (por columna, nunca la tabla)", async () => {
     const writes = (await tablePrivileges(db.admin, ["authenticated"])).filter(
       (grant) => !/^authenticated (SELECT|INSERT) /.test(grant),
     );
-    expect(writes).toEqual([]);
+    expect(writes).toEqual(["authenticated UPDATE vehicles"]);
+
+    const [table] = await db.admin<{ update: boolean }[]>`
+      SELECT has_table_privilege('authenticated', 'public.vehicles', 'UPDATE') AS update
+    `;
+    expect(table?.update).toBe(false);
+    const columns = await db.admin<{ column: string }[]>`
+      SELECT c.relname || '.' || a.attname AS column
+      FROM pg_class c
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+      WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+        AND has_column_privilege('authenticated', c.oid, a.attnum, 'UPDATE')
+      ORDER BY 1
+    `;
+    expect(columns.map((row) => row.column)).toEqual([
+      "vehicles.status",
+      "vehicles.updated_at",
+    ]);
   });
 
-  it("toda policy de escritura tiene WITH CHECK", async () => {
+  it("toda policy de escritura tiene WITH CHECK, y la de UPDATE también USING", async () => {
     const writePolicies = (await policies(db.admin)).filter((policy) =>
       ["INSERT", "UPDATE", "ALL"].includes(policy.command),
     );
@@ -293,13 +323,19 @@ describe("grants (ADR-001 §3.6)", () => {
       "contacts_insert_member",
       "opportunities_insert_member",
       "vehicles_insert_member",
+      "vehicles_update_mark_available",
     ]);
     expect(writePolicies.every((policy) => policy.withCheck !== null)).toBe(
       true,
     );
+    expect(
+      writePolicies
+        .filter((policy) => policy.command !== "INSERT")
+        .every((policy) => policy.using !== null),
+    ).toBe(true);
   });
 
-  it("vehicles (H1.3B): SELECT e INSERT para authenticated, una policy de lectura y una de alta; sin UPDATE ni DELETE", async () => {
+  it("vehicles (H1.3C): SELECT, INSERT y UPDATE por columna para authenticated; policies de lectura, alta y disponibilidad; sin DELETE", async () => {
     expect(
       (
         await tablePrivileges(db.admin, [
@@ -311,6 +347,7 @@ describe("grants (ADR-001 §3.6)", () => {
     ).toEqual([
       "authenticated INSERT vehicles",
       "authenticated SELECT vehicles",
+      "authenticated UPDATE vehicles",
     ]);
     expect(
       (await policies(db.admin))
@@ -319,7 +356,23 @@ describe("grants (ADR-001 §3.6)", () => {
     ).toEqual([
       "vehicles_insert_member INSERT",
       "vehicles_select_member SELECT",
+      "vehicles_update_mark_available UPDATE",
     ]);
+  });
+
+  /*
+   * PostgreSQL combina las policies permisivas de un mismo comando con OR,
+   * por separado para USING y para WITH CHECK: con dos policies de UPDATE,
+   * el origen de una y el destino de la otra quedarían permitidos juntos. Con
+   * una sola, el par in_preparation → available es exacto. Una segunda
+   * transición necesita decidir otro mecanismo, no sumar una policy.
+   */
+  it("hay una sola policy de UPDATE en public: el par origen → destino de la transición es exacto", async () => {
+    expect(
+      (await policies(db.admin))
+        .filter((policy) => ["UPDATE", "ALL"].includes(policy.command))
+        .map((policy) => `${policy.table}.${policy.name}`),
+    ).toEqual(["vehicles.vehicles_update_mark_available"]);
   });
 
   it("anon y app_runtime no tienen privilegios sobre las tablas de public", async () => {
@@ -328,14 +381,20 @@ describe("grants (ADR-001 §3.6)", () => {
     );
   });
 
-  it("todo privilegio de authenticated sobre public está cubierto por una policy", async () => {
+  it("todo privilegio de authenticated sobre public está cubierto por una policy, también los de columna", async () => {
     const uncovered = await db.admin<{ grant: string }[]>`
       SELECT p.privilege || ' ' || c.relname AS grant
       FROM pg_class c
       CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) AS p(privilege)
       WHERE c.relnamespace = 'public'::regnamespace
         AND c.relkind IN ('r', 'p')
-        AND has_table_privilege('authenticated', c.oid, p.privilege)
+        AND (
+          has_table_privilege('authenticated', c.oid, p.privilege)
+          OR (
+            p.privilege IN ('SELECT', 'INSERT', 'UPDATE')
+            AND has_any_column_privilege('authenticated', c.oid, p.privilege)
+          )
+        )
         AND NOT EXISTS (
           SELECT 1 FROM pg_policies pol
           WHERE pol.schemaname = 'public'

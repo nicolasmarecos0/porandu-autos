@@ -9,7 +9,8 @@
  * 0001_tenant_isolation, y los grants de `authenticated`, SQL custom de la
  * migración que crea cada tabla (0001 para las de H0, 0002 para contacts y
  * opportunities, 0004 para vehicles) o que habilita una escritura (0003:
- * alta de contacts y opportunities).
+ * alta de contacts y opportunities; 0005: alta de vehicles; 0006: UPDATE de
+ * vehicles.status, por columna).
  */
 export * from "./organizations";
 export * from "./profiles";

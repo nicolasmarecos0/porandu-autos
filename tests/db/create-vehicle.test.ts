@@ -880,7 +880,9 @@ describe("sin withTenant() o sin privilegios, la escritura falla cerrado", () =>
     ).rejects.toMatchObject({ code: "42501" });
   });
 
-  it("UPDATE y DELETE siguen prohibidos por withTenant(), también en la organización propia y sobre una unidad recién creada", async () => {
+  it("el alta no abre la edición: los datos de la unidad no se editan y DELETE sigue prohibido, también en la organización propia y sobre una unidad recién creada", async () => {
+    // H1.3C solo habilita la transición in_preparation → available
+    // (tests/db/vehicle-availability.test.ts); el resto sigue sin UPDATE.
     const ctx = tenantContext(USER_A, ORG_1);
     const { id: fresh } = await createVehicleInPreparation(
       ctx,
@@ -892,7 +894,7 @@ describe("sin withTenant() o sin privilegios, la escritura falla cerrado", () =>
         withTenant(ctx, (tx) =>
           tx
             .update(vehicles)
-            .set({ status: "available" })
+            .set({ brand: "Pisada" })
             .where(eq(vehicles.id, id)),
         ),
         "42501",
@@ -902,7 +904,7 @@ describe("sin withTenant() o sin privilegios, la escritura falla cerrado", () =>
         "42501",
       );
     }
-    // Tampoco por ON CONFLICT DO UPDATE (requiere UPDATE).
+    // Tampoco por ON CONFLICT DO UPDATE sobre un dato de la unidad.
     await expectSqlError(
       withTenant(ctx, (tx) =>
         tx
@@ -917,7 +919,7 @@ describe("sin withTenant() o sin privilegios, la escritura falla cerrado", () =>
           })
           .onConflictDoUpdate({
             target: vehicles.id,
-            set: { status: "available" },
+            set: { brand: "Pisada" },
           }),
       ),
       "42501",
