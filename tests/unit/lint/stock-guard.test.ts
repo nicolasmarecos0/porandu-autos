@@ -4,10 +4,11 @@ import { ESLint } from "eslint";
 import { describe, expect, it } from "vitest";
 
 /*
- * Guardas de ESLint de Stock (H1.3A, H1.3B):
+ * Guardas de ESLint de Stock (H1.3A, H1.3B, H1.3C):
  * - una sola fuente: ni la página /stock, ni sus componentes, ni su loader
- *   (db/queries/vehicles.ts), ni el alta rápida (lib/vehicles/,
- *   db/queries/create-vehicle.ts) importan mocks/;
+ *   (db/queries/vehicles.ts), ni el alta rápida ni la disponibilidad
+ *   (lib/vehicles/, db/queries/create-vehicle.ts,
+ *   db/queries/mark-vehicle-available.ts) importan mocks/;
  * - la página y los componentes no conocen Drizzle, db/schema ni el
  *   boundary: leen con getStockList();
  * - el loader no puede saltear withTenant(): no importa db/client ni
@@ -62,6 +63,18 @@ describe("una sola fuente para la Stock List", { timeout: 30_000 }, () => {
     ],
     [
       "lib/vehicles/new-vehicle.ts",
+      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
+      "db/queries/mark-vehicle-available.ts",
+      `import { VEHICLES } from "../../mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
+      "lib/vehicles/availability.ts",
+      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
+      "components/stock/mark-available-dialog.tsx",
       `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
     ],
   ])("falla en %s: %s", async (filePath, code) => {
