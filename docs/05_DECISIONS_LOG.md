@@ -41,6 +41,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-025 | Vehicle persistence foundation | Aceptada | 2026-10-02 |
 | DEC-026 | Stock Surface Architecture | Aceptada | 2026-10-02 |
 | DEC-027 | Alta rápida de unidades (H1.3B) | Aceptada | 2026-10-02 |
+| DEC-028 | Disponibilidad de unidades (H1.3C) | Aceptada | 2026-10-04 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -387,6 +388,20 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   7. **Entrega mínima.** `min_down_payment` queda diferida hasta que se defina su semántica.
 - **Aclara:** amplía DEC-025 (las escrituras de `vehicles` se habilitan con su propio flujo y `WITH CHECK`). Prevalece sobre la Build Baseline según DEC-002.
 - **Consecuencias:** `0005` se aplica a staging después del merge con `preflight → migrate → verify`.
+
+## DEC-028 — Disponibilidad de unidades (H1.3C)
+- **Estado:** Aceptada · 2026-10-04
+- **Decisión:**
+  1. **Transición única.** La única transición de estado habilitada en H1.3C es `in_preparation → available`. Reservar, liberar una reserva, vender o volver a preparación siguen sin habilitar.
+  2. **Puerta única.** `markVehicleAvailable()` es la única puerta: `requireTenant()` → validación server-side del id → `withTenant()` → `UPDATE … WHERE id AND organization_id AND status = 'in_preparation'`. El cliente solo identifica la unidad; el destino `available` lo fija el servidor y `organization_id` sale del `TenantContext`. Una unidad inexistente o de otra organización falla como `not_found`; una que ya no está en preparación, como `unchanged`, sin escribir nada.
+  3. **Escritura (`0006_vehicle_availability`).** `authenticated` recibe UPDATE solo sobre `vehicles.status` y `vehicles.updated_at` (grant por columna). La policy `vehicles_update_mark_available` exige en `USING` una organización con membership activa y la fila actual en `in_preparation`, y en `WITH CHECK` la misma organización y la fila nueva en `available`. El resto de las columnas, DELETE y los privilegios de `app_runtime` y `anon` siguen prohibidos.
+  4. **Autorización.** La misma de DEC-027 §4: membership activa AND role IN (`admin`, `seller`).
+  5. **Semántica OR de PostgreSQL.** No se agrega una segunda policy permisiva de UPDATE para habilitar futuras transiciones sin una revisión específica de esa semántica: PostgreSQL combina las policies permisivas de un mismo comando con OR, por separado para `USING` y `WITH CHECK`, y cruzaría orígenes y destinos.
+  6. **Próximas transiciones.** Antes de implementar otra transición, se define un mecanismo que valide el par estado anterior → estado nuevo a nivel de base de datos. Se evaluará una policy tenant-scoped única con un trigger de transiciones permitidas.
+  7. **Matching.** El resultado `became_available` es el punto de integración futuro con Matching. No se implementan todavía el motor, eventos ni colas.
+  8. **Dependencia.** `@radix-ui/react-alert-dialog` queda aprobada como primitiva accesible para la confirmación de acciones con significado comercial.
+- **Aclara:** amplía DEC-027 §3 (las transiciones de estado requieren un flujo de UPDATE autorizado) y DEC-025 §4. Prevalece sobre la Build Baseline según DEC-002.
+- **Consecuencias:** `0006` se aplica a staging después del merge con `preflight → migrate → verify` (`expected_migrations = 0006_vehicle_availability`).
 
 ---
 
