@@ -20,8 +20,9 @@ import { userOrgIds } from "./policies";
 /*
  * Estados de vehículo (TB §10): el mínimo que exige P1. Retirado/baja es
  * opcional y necesita un caso real de piloto. No es un enum de Postgres: un
- * CHECK que una migración puede reemplazar. Todavía no hay transiciones: el
- * alta rápida (H1.3B) nace siempre en `in_preparation`.
+ * CHECK que una migración puede reemplazar. El alta rápida (H1.3B) nace
+ * siempre en `in_preparation`; la única transición aprobada es
+ * `in_preparation → available` (H1.3C).
  */
 export const vehicleStatuses = [
   "in_preparation",
@@ -63,7 +64,14 @@ export const vehicleCurrencies = ["PYG", "USD"] as const;
  * donde el usuario tiene membership activa. Toda alta nace en
  * `in_preparation`: lo fija el código (nunca el cliente) y lo exige el WITH
  * CHECK de la policy de INSERT. El CHECK de `status` sigue admitiendo todos
- * los estados. Sin UPDATE ni DELETE (default deny).
+ * los estados.
+ *
+ * Disponibilidad (H1.3C): la única edición es `in_preparation → available`.
+ * `authenticated` solo puede actualizar `status` y `updated_at` (grant por
+ * columna, 0006) y la policy de UPDATE exige la fila actual en preparación
+ * (USING) y la nueva en disponible (WITH CHECK), en una organización con
+ * membership activa. Marca, modelo, precio, km y el resto no se editan. Sin
+ * DELETE (default deny).
  */
 export const vehicles = pgTable(
   "vehicles",
@@ -105,11 +113,23 @@ export const vehicles = pgTable(
     // Alta: organización con membership activa y siempre en preparación.
     // La regla de alta es membership activa AND role IN ('admin', 'seller'):
     // equivalente hoy porque membership_role es exactamente admin | seller
-    // (un test lo vigila). Los cambios de estado serán policies de UPDATE.
+    // (un test lo vigila). Los cambios de estado son policies de UPDATE.
     pgPolicy("vehicles_insert_member", {
       for: "insert",
       to: authenticatedRole,
       withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.status} = 'in_preparation'`,
+    }),
+    // Única transición (H1.3C): en preparación → disponible, en la misma
+    // organización con membership activa (misma regla de rol que el alta).
+    // USING ve la fila actual y WITH CHECK la nueva: con una sola policy de
+    // UPDATE, el par origen → destino es exacto. Una segunda transición no
+    // puede ser otra policy permisiva (PostgreSQL combina los USING y los
+    // WITH CHECK por separado, con OR, y cruzaría orígenes y destinos).
+    pgPolicy("vehicles_update_mark_available", {
+      for: "update",
+      to: authenticatedRole,
+      using: sql`${t.organizationId} IN ${userOrgIds} AND ${t.status} = 'in_preparation'`,
+      withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.status} = 'available'`,
     }),
   ],
 ).enableRLS();

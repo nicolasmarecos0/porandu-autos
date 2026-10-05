@@ -126,6 +126,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0003_contact_identity_opportunity_create",
       "0004_vehicles_stock_persistence",
       "0005_vehicle_quick_create",
+      "0006_vehicle_availability",
     ]);
   });
 
@@ -290,7 +291,7 @@ describe("comandos del workflow (scripts/staging/commands.mts)", () => {
     const output = lines.join("\n");
     expect(output).toContain("✗ postgres.database");
     expect(output).toContain(
-      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create, 0004_vehicles_stock_persistence, 0005_vehicle_quick_create",
+      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create, 0004_vehicles_stock_persistence, 0005_vehicle_quick_create, 0006_vehicle_availability",
     );
     expect(output).not.toContain(ctx.secrets[0]!);
     expect(output).not.toMatch(/postgres(ql)?:\/\//);
@@ -353,6 +354,7 @@ describe("migración oficial y verificación post-migración", () => {
         "privileges.app_runtime",
         "privileges.anon",
         "privileges.authenticated",
+        "privileges.authenticated-update-columns",
         "privileges.policy-coverage",
         "privileges.create",
         "public.security-definer",
@@ -412,6 +414,7 @@ describe("migración oficial y verificación post-migración", () => {
         "app_runtime.membership",
         "app_runtime.assumable-roles",
         "privileges.authenticated",
+        "privileges.authenticated-update-columns",
         "privileges.policy-coverage",
       ]);
     } finally {
@@ -454,7 +457,7 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
-  it("la verificación detecta un alta de vehicles fuera de preparación y una edición de vehicles (H1.3B solo agrega el alta)", async () => {
+  it("la verificación detecta un alta de vehicles fuera de preparación y una edición de vehicles más allá de status (H1.3C)", async () => {
     await migrated.admin.unsafe(`
       ALTER POLICY vehicles_insert_member ON public.vehicles
         WITH CHECK (organization_id IN (SELECT private.user_org_ids()));
@@ -464,16 +467,19 @@ describe("migración oficial y verificación post-migración", () => {
       const sql = connect(migrated.migrationUrl);
       const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
       await sql.end({ timeout: 5 });
+      // El UPDATE de tabla se ve igual que el de columna en la lista de
+      // privilegios: lo detecta la verificación por columna.
       expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
         "rls.policies",
-        "privileges.authenticated",
-        "privileges.policy-coverage",
+        "privileges.authenticated-update-columns",
       ]);
     } finally {
+      // Revocar el UPDATE de tabla revoca también el de columna: se repone.
       await migrated.admin.unsafe(`
         ALTER POLICY vehicles_insert_member ON public.vehicles
           WITH CHECK (organization_id IN (SELECT private.user_org_ids()) AND status = 'in_preparation');
         REVOKE UPDATE ON public.vehicles FROM authenticated;
+        GRANT UPDATE (status, updated_at) ON public.vehicles TO authenticated;
       `);
     }
     const sql = connect(migrated.migrationUrl);
@@ -495,34 +501,34 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real: staging está en H1.3A (0000 a 0004, DEC-025) y el
- * workflow aplica 0005 declarando solo ese tag (preflight → migrate →
+ * El próximo rollout real: staging está en H1.3B (0000 a 0005, DEC-027) y el
+ * workflow aplica 0006 declarando solo ese tag (preflight → migrate →
  * verify). Esta rama no lo aplica: se corre después del merge.
  */
-describe("staging en H1.3A: rollout de 0005", () => {
+describe("staging en H1.3B: rollout de 0006", () => {
   let staging: TestDatabase;
 
   beforeAll(async () => {
     staging = await server.createDatabase();
-    await migrateUpTo(staging.migrationUrl, "0004_vehicles_stock_persistence");
+    await migrateUpTo(staging.migrationUrl, "0005_vehicle_quick_create");
   });
 
-  it("antes de migrar, verify y el resto de las operaciones exigen aplicar 0005", async () => {
+  it("antes de migrar, verify y el resto de las operaciones exigen aplicar 0006", async () => {
     expect(failures(await preflightOf(staging, "verify"))).toEqual([
       ...HARNESS_ONLY,
       "operation.up-to-date",
     ]);
   });
 
-  it("el preflight pasa con expected_migrations = 0005 y solo eso queda pendiente", async () => {
+  it("el preflight pasa con expected_migrations = 0006 y solo eso queda pendiente", async () => {
     const result = await preflightOf(staging, "migrate", [
-      "0005_vehicle_quick_create",
+      "0006_vehicle_availability",
     ]);
     expect(failures(result)).toEqual(HARNESS_ONLY);
     expect(result.history).toEqual({
       kind: "consistent",
-      applied: REPO.slice(0, 5),
-      pending: REPO.slice(5),
+      applied: REPO.slice(0, 6),
+      pending: REPO.slice(6),
     });
     // Declarar de más (o de menos) aborta antes de migrar.
     expect(failures(await preflightOf(staging, "migrate", ALL_TAGS))).toContain(
@@ -531,14 +537,14 @@ describe("staging en H1.3A: rollout de 0005", () => {
     expect(
       failures(
         await preflightOf(staging, "migrate", [
-          "0004_vehicles_stock_persistence",
           "0005_vehicle_quick_create",
+          "0006_vehicle_availability",
         ]),
       ),
     ).toContain("operation.pending");
   });
 
-  it("aplica solo 0005 y la verificación de catálogo pasa completa", async () => {
+  it("aplica solo 0006 y la verificación de catálogo pasa completa", async () => {
     const password = new URL(staging.migrationUrl).password;
     const output = await runOfficialMigrations(staging.migrationUrl, [
       password,
@@ -547,7 +553,7 @@ describe("staging en H1.3A: rollout de 0005", () => {
     const [history] = await staging.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
     `;
-    expect(history?.count).toBe(6);
+    expect(history?.count).toBe(7);
 
     expect(failures(await preflightOf(staging, "verify"))).toEqual(
       HARNESS_ONLY,

@@ -242,6 +242,15 @@ describe("db/schema", () => {
           '"vehicles"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
       },
+      {
+        table: "vehicles",
+        name: "vehicles_update_mark_available",
+        as: "permissive",
+        for: "update",
+        to: ["authenticated"],
+        using: `"vehicles"."organization_id" IN (SELECT private.user_org_ids()) AND "vehicles"."status" = 'in_preparation'`,
+        withCheck: `"vehicles"."organization_id" IN (SELECT private.user_org_ids()) AND "vehicles"."status" = 'available'`,
+      },
     ]);
   });
 

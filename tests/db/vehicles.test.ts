@@ -327,7 +327,7 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
     );
   });
 
-  it("por withTenant() nadie modifica ni borra vehículos, ni da de alta fuera de preparación, ni en su propia organización (H1.3B)", async () => {
+  it("por withTenant() nadie borra vehículos, ni da de alta fuera de preparación, ni cambia estados fuera de in_preparation → available, ni en su propia organización (H1.3C)", async () => {
     const ctx = tenantContext(USER_A, ORG_1);
     const own = VEHICLES[0]!;
     // El alta rápida (create-vehicle.test.ts) solo admite `in_preparation`
@@ -340,15 +340,19 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
         "42501",
       );
     }
-    await expectSqlError(
-      withTenant(ctx, (tx) =>
+    // La única transición es in_preparation → available
+    // (vehicle-availability.test.ts): una unidad disponible no cumple el
+    // USING de la policy, así que RLS no la deja tocar (0 filas, sin error).
+    expect(own.status).toBe("available");
+    expect(
+      await withTenant(ctx, (tx) =>
         tx
           .update(vehicles)
           .set({ status: "sold" })
-          .where(eq(vehicles.id, own.id)),
+          .where(eq(vehicles.id, own.id))
+          .returning({ id: vehicles.id }),
       ),
-      "42501",
-    );
+    ).toEqual([]);
     await expectSqlError(
       withTenant(ctx, (tx) =>
         tx.delete(vehicles).where(eq(vehicles.id, own.id)),
@@ -449,7 +453,7 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
       created = (await insert())[0]?.id;
       expect(created).toBeDefined();
       // tenant-catalog.test.ts y verify.mts esperan exactamente la policy de
-      // lectura y la de alta en preparación.
+      // lectura, la de alta en preparación y la de disponibilidad.
       expect(
         (await policies(db.admin))
           .filter((policy) => policy.table === "vehicles")
@@ -458,6 +462,7 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
         "probe_insert",
         "vehicles_insert_member",
         "vehicles_select_member",
+        "vehicles_update_mark_available",
       ]);
     } finally {
       await db.admin.unsafe(`DROP POLICY probe_insert ON public.vehicles;`);
@@ -473,6 +478,7 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
     ).toEqual([
       "authenticated INSERT vehicles",
       "authenticated SELECT vehicles",
+      "authenticated UPDATE vehicles",
     ]);
     request(USER_A);
     expect(await stockIds()).toEqual(vehicleIdsOf(ORG_1));

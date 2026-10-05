@@ -7,8 +7,9 @@ import { finding, type Finding } from "./report.mts";
  * Verificación post-migración de staging (solo lectura): lo que dejaron
  * 0000_saas_core_schema, 0001_tenant_isolation,
  * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
- * 0004_vehicles_stock_persistence y 0005_vehicle_quick_create, leído del
- * catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4). Espeja
+ * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create y
+ * 0006_vehicle_availability, leído del catálogo real (DEC-018, DEC-019,
+ * ADR-001 §2, §3.6 y §4). Espeja
  * tests/db/tenant-catalog y tests/db/schema: si una migración nueva cambia
  * lo esperado, se actualiza junto con esos tests.
  */
@@ -46,8 +47,9 @@ type Policy = {
  * Policies de lectura de H0 (DEC-019), de H1.1 (contacts, opportunities) y de
  * H1.3A (vehicles), y de alta de H1.2 (contacts, opportunities) y de H1.3B
  * (vehicles), con WITH CHECK: la de opportunities exige además la etapa
- * `new`, y la de vehicles, el estado `in_preparation`. Tal como las deparsea
- * PostgreSQL 17.
+ * `new`, y la de vehicles, el estado `in_preparation`. La de disponibilidad
+ * de H1.3C (vehicles) exige la fila actual en `in_preparation` (USING) y la
+ * nueva en `available` (WITH CHECK). Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -138,6 +140,17 @@ export const EXPECTED_POLICIES: Policy[] = [
       "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
     withCheck: null,
   },
+  {
+    table: "vehicles",
+    name: "vehicles_update_mark_available",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "UPDATE",
+    using:
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'in_preparation'::text))",
+    withCheck:
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'available'::text))",
+  },
 ];
 
 /** `contacts.phone_normalized` tal como lo deja 0003 (PostgreSQL 17). */
@@ -150,15 +163,21 @@ export const EXPECTED_PHONE_IDENTITY = {
 };
 
 /**
- * Privilegios de authenticated: lectura en todo y las altas de H1.2
- * (contacts, opportunities) y H1.3B (vehicles). Ningún UPDATE ni DELETE.
+ * Privilegios de authenticated: lectura en todo, las altas de H1.2
+ * (contacts, opportunities) y H1.3B (vehicles), y el UPDATE de H1.3C sobre
+ * vehicles, que es por columna (AUTHENTICATED_UPDATE_COLUMNS). Ningún
+ * DELETE.
  */
 const AUTHENTICATED_PRIVILEGES = [
   "INSERT contacts",
   "INSERT opportunities",
   "INSERT vehicles",
   ...APP_TABLES.map((table) => `SELECT ${table}`),
+  "UPDATE vehicles",
 ];
+
+/** Lo único que authenticated puede actualizar (H1.3C): nunca la tabla. */
+const AUTHENTICATED_UPDATE_COLUMNS = ["vehicles.status", "vehicles.updated_at"];
 
 function list(values: readonly string[]): string {
   return values.length === 0 ? "none" : values.join(", ");
@@ -315,8 +334,8 @@ export async function verifyCatalog(
     ),
   );
 
-  // Policies (DEC-019, H1.1, H1.2, H1.3A, H1.3B): lectura y alta, con la
-  // forma de referencia; ningún UPDATE ni DELETE.
+  // Policies (DEC-019, H1.1, H1.2, H1.3A, H1.3B, H1.3C): lectura, alta y
+  // disponibilidad, con la forma de referencia; ningún DELETE.
   const policies = await tx<Policy[]>`
     SELECT tablename AS table, policyname AS name, permissive,
       roles::text[] AS roles, cmd AS command, qual AS using,
@@ -504,7 +523,28 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities and vehicles only; no UPDATE or DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities and vehicles, UPDATE on vehicles only; no DELETE)`,
+    ),
+  );
+
+  // has_column_privilege también es verdadero con un UPDATE de tabla.
+  const updateColumns = await tx<{ column: string }[]>`
+    SELECT c.relname || '.' || a.attname AS column
+    FROM pg_class c
+    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+    WHERE c.relnamespace = 'public'::regnamespace
+      AND c.relkind IN ('r', 'p')
+      AND has_column_privilege('authenticated', c.oid, a.attnum, 'UPDATE')
+    ORDER BY 1
+  `;
+  findings.push(
+    finding(
+      "privileges.authenticated-update-columns",
+      equal(
+        updateColumns.map((u) => u.column),
+        AUTHENTICATED_UPDATE_COLUMNS,
+      ),
+      `authenticated may update: ${list(updateColumns.map((u) => u.column))} (expected: ${list(AUTHENTICATED_UPDATE_COLUMNS)})`,
     ),
   );
 
@@ -514,7 +554,13 @@ export async function verifyCatalog(
     CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) AS p(privilege)
     WHERE c.relnamespace = 'public'::regnamespace
       AND c.relkind IN ('r', 'p')
-      AND has_table_privilege('authenticated', c.oid, p.privilege)
+      AND (
+        has_table_privilege('authenticated', c.oid, p.privilege)
+        OR (
+          p.privilege IN ('SELECT', 'INSERT', 'UPDATE')
+          AND has_any_column_privilege('authenticated', c.oid, p.privilege)
+        )
+      )
       AND NOT EXISTS (
         SELECT FROM pg_policies pol
         WHERE pol.schemaname = 'public' AND pol.tablename = c.relname

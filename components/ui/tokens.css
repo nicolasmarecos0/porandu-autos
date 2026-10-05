@@ -186,4 +186,14 @@
       opacity: 0;
     }
   }
+
+  /* Confirmación centrada: aparece desde casi su tamaño; sale sin animación. */
+  --animate-dialog-in: dialog-in 160ms var(--ease-out-strong);
+
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
 }
