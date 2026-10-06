@@ -187,6 +187,7 @@ function newOpportunity(
     source: "showroom",
     interestModel: "Toyota Corolla Cross",
     interestVersion: "XEI 2.0 CVT",
+    demand: {},
     ...overrides,
   };
 }
@@ -750,9 +751,12 @@ describe("atomicidad: contacto y oportunidad en una sola transacción", () => {
         }),
       });
       expect(JSON.stringify(state)).not.toMatch(/opportunities_probe|23514/);
+      // Solo tipo, SQLSTATE y constraint (DEC-030 §6): ni la query ni los
+      // datos.
       expect(errors).toHaveBeenCalledWith("[opportunities] create failed", {
         name: expect.any(String),
         code: "23514",
+        constraint_name: "opportunities_probe_check",
       });
     } finally {
       errors.mockRestore();

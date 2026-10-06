@@ -19,4 +19,4 @@ export * from "./memberships";
 export * from "./contacts";
 export * from "./opportunities";
 export * from "./vehicles";
-export * from "./demand-facts";
+export * from "./opportunity-demand-facts";

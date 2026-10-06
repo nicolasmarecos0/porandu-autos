@@ -2,12 +2,20 @@ import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
 
+import {
+  DEMAND_FACTS,
+  type DemandFact,
+  type DemandValues,
+} from "@/domains/demand/facts";
+import type { DemandItem } from "@/domains/demand/planner";
+
 import { contacts, opportunities } from "../schema";
 import {
   withTenant,
   type ScopedTransaction,
   type TenantContext,
 } from "../tenant";
+import { appendDemand, type DemandWriteOutcome } from "./demand-facts";
 
 /*
  * Alta de una oportunidad con su contacto (H1.2): la primera escritura de
@@ -34,6 +42,10 @@ import {
  *   se actualizan (no hay edición de contactos en H1.2).
  * - La oportunidad nace en la etapa `new`, con la recencia y los timestamps
  *   de la base. Un mismo contacto puede tener varias oportunidades.
+ * - Demanda (H1.4, DEC-030): lo que busca el cliente se escribe en la misma
+ *   transacción, por el único módulo de escritura (db/queries/demand-facts.ts),
+ *   como actos `confirmed` del vendedor. Si un fact no se puede escribir, no
+ *   se crea nada: ni la oportunidad ni el contacto nuevo.
  */
 
 type OpportunityRecord = typeof opportunities.$inferInsert;
@@ -51,7 +63,14 @@ export type NewOpportunity = Readonly<{
   source: OpportunityRecord["source"];
   interestModel: string | null;
   interestVersion: string | null;
+  /** Demanda del alta, ya validada: solo los facts con dato. */
+  demand: NewOpportunityDemand;
 }>;
+
+/** Lo que busca el cliente al crear la oportunidad. Ausente = sin dato. */
+export type NewOpportunityDemand = Readonly<
+  Partial<{ [F in DemandFact]: DemandValues[F] }>
+>;
 
 export type CreatedOpportunity = Readonly<{
   opportunityId: string;
@@ -65,6 +84,14 @@ export type CreatedOpportunity = Readonly<{
 
 /** Etapa inicial de toda oportunidad creada a mano. No la elige el cliente. */
 const INITIAL_STAGE = "new" satisfies OpportunityRecord["stage"];
+
+/** La demanda del alta no se pudo escribir: el alta entera se revierte. */
+export class DemandCaptureError extends Error {
+  constructor(readonly outcome: DemandWriteOutcome["kind"]) {
+    super(`Could not record the demand of the new opportunity: ${outcome}`);
+    this.name = "DemandCaptureError";
+  }
+}
 
 export class ContactResolutionError extends Error {
   constructor() {
@@ -132,6 +159,22 @@ export async function createOpportunityWithContact(
       })
       .returning({ id: opportunities.id });
     if (!opportunity) throw new Error("INSERT … RETURNING returned no row");
+
+    const items: DemandItem[] = DEMAND_FACTS.flatMap((fact) => {
+      const value = input.demand[fact];
+      return value === undefined
+        ? []
+        : [{ op: "set" as const, fact, value, basedOnHead: null }];
+    });
+    if (items.length > 0) {
+      const outcome = await appendDemand(tx, organizationId, {
+        opportunityId: opportunity.id,
+        source: { kind: "member", userId: ctx.userId },
+        items,
+      });
+      if (outcome.kind !== "written")
+        throw new DemandCaptureError(outcome.kind);
+    }
     return { opportunityId: opportunity.id, contact };
   });
 }

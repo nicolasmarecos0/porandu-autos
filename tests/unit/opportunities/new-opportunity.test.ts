@@ -69,6 +69,7 @@ describe("parseNewOpportunityForm", () => {
         source: "showroom",
         interestModel: "Toyota Corolla Cross",
         interestVersion: "XEI 2.0 CVT",
+        demand: {},
       },
       values: VALID,
     });
@@ -91,6 +92,7 @@ describe("parseNewOpportunityForm", () => {
     if (!parsed.ok) throw new Error("expected ok");
     expect(Object.keys(parsed.input).sort()).toEqual([
       "contact",
+      "demand",
       "interestModel",
       "interestVersion",
       "source",

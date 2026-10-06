@@ -123,6 +123,7 @@ export function parseNewOpportunityForm(
       source,
       interestModel,
       interestVersion,
+      demand: {},
     },
     values: echo,
   };
