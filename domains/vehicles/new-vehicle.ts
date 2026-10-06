@@ -1,4 +1,9 @@
-import type { Currency } from "./stock";
+import {
+  CURRENCIES,
+  CURRENCY_LABELS,
+  MAX_AMOUNT_INTEGER_DIGITS,
+  parseAmount,
+} from "@/domains/money";
 
 /*
  * Alta rápida de una unidad (H1.3B): el contrato del formulario entre la UI y
@@ -44,16 +49,13 @@ export const VEHICLE_YEAR_RANGE = { min: 1900, max: 2100 } as const;
 export const MAX_KM = 2_147_483_647;
 
 /** Dígitos enteros del precio: `numeric(14, 2)` deja 12 antes de la coma. */
-export const MAX_PRICE_INTEGER_DIGITS = 12;
+export const MAX_PRICE_INTEGER_DIGITS = MAX_AMOUNT_INTEGER_DIGITS;
 
-/** Monedas del precio (DEC-025): las del CHECK de la base. */
-export const CURRENCIES: readonly Currency[] = ["PYG", "USD"];
-
-/** Copy de cada moneda en el formulario (es-PY). */
-export const CURRENCY_LABELS: Readonly<Record<Currency, string>> = {
-  PYG: "Gs. (guaraníes)",
-  USD: "USD (dólares)",
-};
+/*
+ * Monedas del precio (DEC-025, las del CHECK de la base), su copy y el parseo
+ * de montos es-PY: los de todo dinero de Porandú (domains/money.ts).
+ */
+export { CURRENCIES, CURRENCY_LABELS, parseAmount };
 
 /** Error de validación de un campo. El copy (es-PY) lo pone la UI. */
 export type NewVehicleFieldError =
@@ -80,7 +82,6 @@ export type NewVehicleValues = Readonly<Record<NewVehicleField, string>>;
  * ambiguo y se rechaza, en vez de leerse como decimal.
  */
 const WHOLE_NUMBER = /^(?:\d{1,3}(?:\.\d{3})+|\d+)$/;
-const AMOUNT = /^(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?$/;
 
 /**
  * Entero no negativo ("142.000" → 142000), o null si el texto no es un
@@ -90,18 +91,4 @@ export function parseWholeNumber(raw: string): number | null {
   if (!WHOLE_NUMBER.test(raw)) return null;
   const value = Number(raw.replaceAll(".", ""));
   return Number.isSafeInteger(value) ? value : null;
-}
-
-/**
- * Monto exacto como decimal canónico con dos decimales ("32.990,5" →
- * "32990.50"), o null si el texto no es un monto escrito en es-PY. Trabaja
- * sobre el texto, sin pasar por float. No valida signo ni rango: un monto
- * nunca lleva signo, y el cero o el largo los decide quien lo usa.
- */
-export function parseAmount(raw: string): string | null {
-  const match = AMOUNT.exec(raw);
-  if (!match) return null;
-  const integer = match[1]!.replaceAll(".", "").replace(/^0+(?=\d)/, "");
-  const fraction = (match[2] ?? "").padEnd(2, "0");
-  return `${integer}.${fraction}`;
 }
