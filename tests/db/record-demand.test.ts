@@ -140,8 +140,6 @@ function newOpportunity(demand: NewOpportunity["demand"] = {}): NewOpportunity {
       city: null,
     },
     source: "showroom",
-    interestModel: null,
-    interestVersion: null,
     demand,
   };
 }

@@ -1,3 +1,4 @@
+import type { DemandSummary } from "@/domains/demand/presentation";
 import type { Driver, ScoreSet } from "@/domains/scoring/types";
 import type {
   AlternativeMatch,
@@ -61,7 +62,16 @@ export type Opportunity = {
     live: boolean;
     company?: { contact: string };
   };
-  /** Vehículo que busca. */
+  /**
+   * Lo que busca, estructurado (H1.4, DEC-030): Current Truth resumida por
+   * fact. Es la fuente de la cola; el loader real siempre la trae.
+   */
+  demand?: DemandSummary;
+  /**
+   * Interés del contrato visual de B1 (fixtures). Con datos reales queda
+   * vacío: el legado `interest_model` / `interest_version` llega solo como
+   * vehículo "Dato anterior" de `demand`, nunca como fuente de verdad.
+   */
   interest: {
     model?: string;
     version?: string;

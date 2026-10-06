@@ -61,8 +61,6 @@ export type NewOpportunity = Readonly<{
     city: string | null;
   }>;
   source: OpportunityRecord["source"];
-  interestModel: string | null;
-  interestVersion: string | null;
   /** Demanda del alta, ya validada: solo los facts con dato. */
   demand: NewOpportunityDemand;
 }>;
@@ -154,8 +152,8 @@ export async function createOpportunityWithContact(
         contactId: contact.id,
         stage: INITIAL_STAGE,
         source: input.source,
-        interestModel: input.interestModel,
-        interestVersion: input.interestVersion,
+        // interest_model / interest_version quedan como legado de solo
+        // lectura: lo que busca vive en la demanda (H1.4).
       })
       .returning({ id: opportunities.id });
     if (!opportunity) throw new Error("INSERT … RETURNING returned no row");

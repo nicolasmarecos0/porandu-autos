@@ -201,7 +201,12 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
         channel: "WhatsApp",
         live: false,
       },
-      interest: { model: "Toyota Hilux", version: "SRV 2.8 4x4 AT" },
+      // H1.4: el legado solo es el vehículo "Dato anterior" mientras nunca
+      // se cargó un vehículo.
+      demand: expect.objectContaining({
+        vehicle: { title: "Toyota Hilux SRV 2.8 4x4 AT", source: "legacy" },
+      }),
+      interest: {},
       scores: {
         porandu: null,
         coverage: 0,
@@ -282,6 +287,78 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
     } finally {
       await setActive(true);
     }
+  });
+});
+
+describe("demanda en la cola (H1.4): lectura por lote, en el servidor", () => {
+  const RAMON = OPPORTUNITIES[0]!.id; // ORG_1, legado "Toyota Hilux"
+  const AGRO = OPPORTUNITIES.find((o) => o.organizationId === ORG_3)!.id;
+
+  beforeAll(async () => {
+    await db.admin`
+      INSERT INTO public.opportunity_demand_facts
+        (organization_id, opportunity_id, fact, status, source_kind, recorded_by, model, evidence_text)
+      VALUES (${ORG_1}, ${RAMON}, 'desired_vehicle', 'confirmed', 'member', ${USER_A}, 'Ranger', 'lo dijo en el showroom')
+    `;
+    await db.admin`
+      INSERT INTO public.opportunity_demand_facts
+        (organization_id, opportunity_id, fact, status, source_kind, recorded_by, amount, currency)
+      VALUES (${ORG_1}, ${RAMON}, 'budget_max', 'confirmed', 'member', ${USER_C}, '250000000', 'PYG')
+    `;
+    await db.admin`
+      INSERT INTO public.opportunity_demand_facts
+        (organization_id, opportunity_id, fact, status, source_kind, recorded_by, purchase_type)
+      VALUES (${ORG_3}, ${AGRO}, 'purchase_type', 'confirmed', 'member', ${USER_C}, 'cash')
+    `;
+  });
+
+  it("cada oportunidad trae su Current Truth resumida; el legado no aparece una vez cargado un vehículo", async () => {
+    request(USER_A);
+    const { opportunities: queue } = await getOpportunityQueue(NOW);
+    const ramon = queue.find((op) => op.id === RAMON)!;
+    expect(ramon.demand?.vehicle).toEqual({
+      title: "Ranger",
+      source: "demand",
+    });
+    expect(ramon.demand?.facts.budget_max).toMatchObject({
+      status: "confirmed",
+      display: "Hasta Gs. 250.000.000",
+      input: { budgetAmount: "250.000.000", budgetCurrency: "PYG" },
+    });
+    expect(ramon.demand?.facts.purchase_type).toMatchObject({
+      status: "unknown",
+      unknownReason: "never_captured",
+    });
+    // Las demás oportunidades de ORG_1 no tienen demanda.
+    for (const op of queue.filter((item) => item.id !== RAMON)) {
+      expect(op.demand?.facts.budget_max.status).toBe("unknown");
+    }
+  });
+
+  it("U6: a la página no llegan evidencia, historial ni ids de usuario", async () => {
+    request(USER_A);
+    const json = JSON.stringify(await getOpportunityQueue(NOW));
+    expect(json).not.toMatch(
+      /lo dijo en el showroom|history|recordedBy|evidence/,
+    );
+    expect(json).not.toContain(USER_A);
+    expect(json).not.toContain(USER_C);
+  });
+
+  it("la demanda de ORG_3 no llega a la cola de C con ORG_1 activa ni a otra organización", async () => {
+    request(USER_C, ORG_1);
+    const { opportunities: org1 } = await getOpportunityQueue(NOW);
+    expect(org1.map((op) => op.id)).not.toContain(AGRO);
+    request(USER_C, ORG_3);
+    const { opportunities: org3 } = await getOpportunityQueue(NOW);
+    expect(
+      org3.find((op) => op.id === AGRO)?.demand?.facts.purchase_type,
+    ).toMatchObject({ status: "confirmed", display: "Contado" });
+    request(USER_B);
+    const { opportunities: org2 } = await getOpportunityQueue(NOW);
+    expect(
+      org2.every((op) => op.demand?.facts.purchase_type.status === "unknown"),
+    ).toBe(true);
   });
 });
 

@@ -9,6 +9,7 @@ import {
   type OpportunityQueueRow,
 } from "@/db/queries/opportunities";
 import { opportunitySources, opportunityStages } from "@/db/schema";
+import { resolveDemand } from "@/domains/demand/resolver";
 import { bucketFromRecency } from "@/domains/opportunities/queue";
 import type { Opportunity } from "@/domains/opportunities/types";
 import { UNSCORED } from "@/domains/scoring/types";
@@ -22,7 +23,10 @@ import { OPPORTUNITY_FIXTURES } from "@/mocks/opportunities";
  *   con un usuario de varias organizaciones);
  * - el mapping fila → ViewModel contra el contrato visual de B1
  *   (mocks/opportunities.ts): lo persistido y lo derivado conservan
- *   exactamente su forma; la inteligencia sin fuente queda "sin dato".
+ *   exactamente su forma; la inteligencia sin fuente queda "sin dato";
+ * - la demanda (H1.4): el ledger de la cola se lee por lote en la misma
+ *   transacción y filtrado por organización; el legado `interest_*` solo
+ *   llega como vehículo "Dato anterior" mientras nunca se cargó uno.
  */
 
 vi.mock("server-only", () => ({}));
@@ -31,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   calls: [] as string[],
   queries: [] as { sql: string; params: unknown[] }[],
   rows: [] as unknown[],
+  demandRows: [] as unknown[],
   requireTenant: vi.fn(),
   withTenant: vi.fn(),
 }));
@@ -53,18 +58,44 @@ beforeEach(() => {
     mocks.calls.push("requireTenant");
     return CTX;
   });
+  mocks.demandRows = [];
   mocks.withTenant.mockReset();
   mocks.withTenant.mockImplementation(
-    async (
-      _ctx: unknown,
-      fn: (tx: unknown) => { toSQL(): { sql: string; params: unknown[] } },
-    ) => {
+    async (_ctx: unknown, fn: (tx: unknown) => Promise<unknown>) => {
       mocks.calls.push("withTenant");
-      mocks.queries.push(fn(drizzle.mock()).toSQL());
-      return mocks.rows;
+      return fn(fakeTransaction([mocks.rows, mocks.demandRows]));
     },
   );
 });
+
+/**
+ * Transacción falsa: cada `select … from` devuelve el siguiente resultado y
+ * registra el SQL que habría mandado Drizzle.
+ */
+function fakeTransaction(results: unknown[][]) {
+  const db = drizzle.mock();
+  return {
+    select: (fields?: Parameters<typeof db.select>[0]) => {
+      const builder = fields ? db.select(fields) : db.select();
+      return {
+        from: (table: Parameters<typeof builder.from>[0]) => {
+          const query = builder.from(table);
+          const result = results.shift() ?? [];
+          Object.defineProperty(query, "then", {
+            value: (
+              resolve: (value: unknown) => unknown,
+              reject: (error: unknown) => unknown,
+            ) => {
+              mocks.queries.push(query.toSQL());
+              return Promise.resolve(result).then(resolve, reject);
+            },
+          });
+          return query;
+        },
+      };
+    },
+  };
+}
 
 describe("getOpportunityQueue: requireTenant() → withTenant()", () => {
   it("obtiene el contexto con requireTenant() y lo pasa tal cual a withTenant()", async () => {
@@ -113,6 +144,30 @@ describe("getOpportunityQueue: requireTenant() → withTenant()", () => {
     );
   });
 
+  it("lee la demanda de toda la cola por lote, en la misma transacción y filtrada por organización", async () => {
+    mocks.rows = [
+      rowOf(OPPORTUNITY_FIXTURES[0]!),
+      rowOf(OPPORTUNITY_FIXTURES[1]!),
+    ];
+    await getOpportunityQueue(NOW);
+
+    expect(mocks.withTenant).toHaveBeenCalledTimes(1);
+    const [, demand] = mocks.queries;
+    expect(demand?.sql).toMatch(
+      /from "opportunity_demand_facts" where \("opportunity_demand_facts"\."organization_id" = \$1 and "opportunity_demand_facts"\."opportunity_id" in \(\$2, \$3\)\)$/,
+    );
+    expect(demand?.params).toEqual([
+      ORG,
+      OPPORTUNITY_FIXTURES[0]!.id,
+      OPPORTUNITY_FIXTURES[1]!.id,
+    ]);
+  });
+
+  it("sin oportunidades no lee la demanda", async () => {
+    await getOpportunityQueue(NOW);
+    expect(mocks.queries).toHaveLength(1);
+  });
+
   it("0 filas: cola vacía válida, con hora de referencia y composición", async () => {
     expect(await getOpportunityQueue(NOW)).toEqual({
       opportunities: [],
@@ -155,7 +210,13 @@ describe("toOpportunity: contrato visual de B1", () => {
     (_, fixture) => {
       const mapped = toOpportunity(rowOf(fixture), NOW);
       const { prospect, interest, lastActivity } = fixture;
+      const legacy = [interest.model, interest.version]
+        .filter(Boolean)
+        .join(" ");
 
+      expect(mapped.demand?.vehicle).toEqual(
+        legacy ? { title: legacy, source: "legacy" } : null,
+      );
       expect(mapped).toStrictEqual({
         id: fixture.id,
         prospect: {
@@ -166,7 +227,9 @@ describe("toOpportunity: contrato visual de B1", () => {
           channel: prospect.channel,
           live: false,
         },
-        interest: { model: interest.model, version: interest.version },
+        demand: mapped.demand,
+        // El legado no es fuente de verdad: solo el vehículo "Dato anterior".
+        interest: {},
         scores: UNSCORED,
         lastActivity: { minutes: lastActivity.minutes },
         stage: fixture.stage,
@@ -216,6 +279,53 @@ describe("toOpportunity: contrato visual de B1", () => {
     expect(mapped.prospect).not.toHaveProperty("phone");
     expect(mapped.prospect).not.toHaveProperty("city");
     expect(mapped.interest).toStrictEqual({});
+    expect(mapped.demand?.vehicle).toBeNull();
+  });
+
+  it("con un vehículo cargado, el legado no aparece; quitado, tampoco vuelve (T16)", () => {
+    const row = { ...rowOf(OPPORTUNITY_FIXTURES[0]!), interestModel: "Hilux" };
+    const loaded = {
+      id: "40000000-0000-4000-8000-000000000001",
+      fact: "desired_vehicle" as const,
+      status: "confirmed" as const,
+      sourceKind: "member" as const,
+      recordedBy: "00000000-0000-4000-8000-00000000000a",
+      recordedAt: NOW,
+      observedAt: null,
+      targetFactId: null,
+      previousMemberFactId: null,
+      value: { model: "Ranger" },
+      evidenceText: "nota interna",
+    };
+    expect(
+      toOpportunity(row, NOW, resolveDemand([loaded])).demand?.vehicle,
+    ).toEqual({ title: "Ranger", source: "demand" });
+
+    const removed = toOpportunity(
+      row,
+      NOW,
+      resolveDemand([
+        loaded,
+        {
+          ...loaded,
+          id: "40000000-0000-4000-8000-000000000002",
+          status: "rejected",
+          value: null,
+          targetFactId: loaded.id,
+          previousMemberFactId: loaded.id,
+          evidenceText: null,
+        },
+      ]),
+    );
+    expect(removed.demand?.vehicle).toBeNull();
+    expect(removed.demand?.facts.desired_vehicle).toMatchObject({
+      status: "unknown",
+      unknownReason: "withdrawn",
+    });
+    // U6: a la cola no llegan evidencia, historial ni ids de usuario.
+    expect(JSON.stringify(removed)).not.toMatch(
+      /nota interna|00000000000a|history|recordedBy/,
+    );
   });
 
   it("cada etapa y cada origen de la base tiene su valor en el dominio", () => {

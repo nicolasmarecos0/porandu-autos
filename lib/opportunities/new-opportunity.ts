@@ -11,6 +11,8 @@ import {
 import { normalizePhone } from "@/lib/contacts/phone";
 import { singleLine } from "@/lib/forms/text";
 
+import { parseDemandFields } from "./demand-form";
+
 /*
  * Validación definitiva del alta manual de una oportunidad (H1.2). Corre en
  * el servidor (el teléfono se normaliza con lib/contacts/phone.ts, solo
@@ -22,10 +24,14 @@ import { singleLine } from "@/lib/forms/text";
  *   ignora: no tiene adónde ir.
  * - Textos de una línea: NFC, sin caracteres de control y con un solo
  *   espacio entre palabras.
- * - Nombre, teléfono y origen son obligatorios; ciudad, modelo y versión,
- *   opcionales (vacío = sin dato).
+ * - Nombre, teléfono y origen son obligatorios; ciudad, opcional (vacío =
+ *   sin dato).
  * - El teléfono tiene que ser un número válido (E.164, Paraguay por
  *   defecto). El origen, uno de los permitidos.
+ * - "Lo que busca" (H1.4): todo opcional; un fact vacío no se crea. Se lee
+ *   con las reglas de la demanda (lib/opportunities/demand-form.ts) y se
+ *   escribe en la misma transacción del alta. `interest_model` e
+ *   `interest_version` ya no se escriben (DEC-030 §10).
  */
 
 /** Estado del formulario que devuelve la Server Action createOpportunity(). */
@@ -92,8 +98,9 @@ export function parseNewOpportunityForm(
     errors.phone = "invalid_phone";
   }
   const city = text("city", false);
-  const interestModel = text("interestModel", false);
-  const interestVersion = text("interestVersion", false);
+
+  const demand = parseDemandFields(formData);
+  if (!demand.ok) Object.assign(errors, demand.errors);
 
   const source = SOURCES.find((candidate) => candidate === values.source);
   if (!source) {
@@ -112,18 +119,21 @@ export function parseNewOpportunityForm(
     phone === null ||
     phoneNormalized === null ||
     source === undefined ||
+    !demand.ok ||
     Object.keys(errors).length > 0
   ) {
     return { ok: false, errors, values: echo };
   }
+  // Solo los facts con dato: un campo vacío o "Sin dato" no crea fact.
+  const facts = Object.fromEntries(
+    Object.entries(demand.values).filter(([, value]) => value !== null),
+  ) as NewOpportunity["demand"];
   return {
     ok: true,
     input: {
       contact: { name, phone, phoneNormalized, city },
       source,
-      interestModel,
-      interestVersion,
-      demand: {},
+      demand: facts,
     },
     values: echo,
   };

@@ -25,10 +25,14 @@ function Flag({ label, children }: { label: string; children: ReactNode }) {
 
 /**
  * Tarjeta de identidad del prospecto seleccionado: nombre, contacto, señales
- * rápidas (trade-in, forma de pago), estado y responsable.
+ * rápidas (usado, forma de pago), estado y responsable. Las señales salen de
+ * la demanda tipada (H1.4): `trade_in_intent` y `purchase_type`, sin parsear
+ * textos.
  */
 export function ProspectCard({ opportunity }: { opportunity: Opportunity }) {
-  const { prospect, interest, tradeIn, owner } = opportunity;
+  const { prospect, demand, owner } = opportunity;
+  const tradeIn = demand?.facts.trade_in_intent.input.tradeIn === "yes";
+  const payment = demand?.facts.purchase_type.input.purchaseType;
   return (
     <section
       aria-label="Prospecto seleccionado"
@@ -78,16 +82,16 @@ export function ProspectCard({ opportunity }: { opportunity: Opportunity }) {
           </ul>
           <div className="flex shrink-0 gap-1.5">
             {tradeIn ? (
-              <Flag label={`Entrega un usado: ${tradeIn.vehicle}`}>
+              <Flag label="Entrega un usado">
                 <SwapIcon className="size-4" />
               </Flag>
             ) : null}
-            {interest.payment?.startsWith("Contado") ? (
+            {payment === "cash" ? (
               <Flag label="Pago contado">
                 <WalletIcon className="size-4" />
               </Flag>
-            ) : interest.payment ? (
-              <Flag label={`Pago: ${interest.payment}`}>
+            ) : payment === "financed" ? (
+              <Flag label="Pago financiado">
                 <PercentIcon className="size-4" />
               </Flag>
             ) : null}

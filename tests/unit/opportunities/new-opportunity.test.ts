@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { opportunitySources } from "@/db/schema";
 import { SOURCE_LABELS, SOURCES } from "@/domains/opportunities/labels";
 import {
+  DEMAND_FORM_FIELDS,
+  EMPTY_DEMAND_FORM_VALUES,
+} from "@/domains/demand/form";
+import {
   NEW_OPPORTUNITY_FIELDS,
   NEW_OPPORTUNITY_MAX_LENGTH,
 } from "@/domains/opportunities/new-opportunity";
@@ -10,8 +14,9 @@ import { MAX_PHONE_INPUT_LENGTH } from "@/lib/contacts/phone";
 import { parseNewOpportunityForm } from "@/lib/opportunities/new-opportunity";
 
 /*
- * Validación server-side del alta manual (H1.2): qué acepta realmente el
- * servidor del formulario, sin base de datos.
+ * Validación server-side del alta manual (H1.2, H1.4): qué acepta realmente
+ * el servidor del formulario, sin base de datos. "Lo que busca" reemplaza a
+ * "Modelo buscado" y "Versión" (C-4): todo opcional.
  */
 
 vi.mock("server-only", () => ({}));
@@ -27,9 +32,12 @@ const VALID = {
   phone: "0981 555 214",
   city: "Luque",
   source: "showroom",
-  interestModel: "Toyota Corolla Cross",
-  interestVersion: "XEI 2.0 CVT",
+  brand: "Toyota",
+  model: "Corolla Cross",
 };
+
+/** El eco de todos los campos: los de la demanda que no vinieron, vacíos. */
+const ECHO = { ...EMPTY_DEMAND_FORM_VALUES, ...VALID };
 
 describe("contrato del formulario", () => {
   it("los orígenes son exactamente los del CHECK de la base, sin `manual`", () => {
@@ -42,15 +50,16 @@ describe("contrato del formulario", () => {
     expect(NEW_OPPORTUNITY_MAX_LENGTH.phone).toBe(MAX_PHONE_INPUT_LENGTH);
   });
 
-  it("los campos son solo datos del contacto y del interés", () => {
+  it("los campos son solo datos del contacto, el origen y lo que busca (sin Versión, C-4)", () => {
     expect(NEW_OPPORTUNITY_FIELDS).toEqual([
       "name",
       "phone",
       "city",
       "source",
-      "interestModel",
-      "interestVersion",
+      ...DEMAND_FORM_FIELDS,
     ]);
+    expect(NEW_OPPORTUNITY_FIELDS).not.toContain("interestModel");
+    expect(NEW_OPPORTUNITY_FIELDS).not.toContain("interestVersion");
   });
 });
 
@@ -67,11 +76,11 @@ describe("parseNewOpportunityForm", () => {
           city: "Luque",
         },
         source: "showroom",
-        interestModel: "Toyota Corolla Cross",
-        interestVersion: "XEI 2.0 CVT",
-        demand: {},
+        demand: {
+          desired_vehicle: { brand: "Toyota", model: "Corolla Cross" },
+        },
       },
-      values: VALID,
+      values: ECHO,
     });
   });
 
@@ -93,8 +102,6 @@ describe("parseNewOpportunityForm", () => {
     expect(Object.keys(parsed.input).sort()).toEqual([
       "contact",
       "demand",
-      "interestModel",
-      "interestVersion",
       "source",
     ]);
     expect(Object.keys(parsed.input.contact).sort()).toEqual([
@@ -132,10 +139,54 @@ describe("parseNewOpportunityForm", () => {
       form({ name: "Lucía", phone: "+595 981 555 214", source: "web" }),
     );
     if (!parsed.ok) throw new Error("expected ok");
-    expect(parsed.input).toMatchObject({
-      contact: { city: null },
-      interestModel: null,
-      interestVersion: null,
+    expect(parsed.input).toEqual({
+      contact: expect.objectContaining({ city: null }),
+      source: "web",
+      // Sin "Lo que busca": ningún fact (U1).
+      demand: {},
+    });
+  });
+
+  it("lo que busca: solo los facts con dato, en su forma canónica (T26: entrega 0)", () => {
+    const parsed = parseNewOpportunityForm(
+      form({
+        ...VALID,
+        brand: "",
+        model: "Hilux",
+        purchaseType: "financed",
+        downPaymentAmount: "0",
+        downPaymentCurrency: "PYG",
+        tradeIn: "yes",
+        budgetAmount: "250.000.000",
+        budgetCurrency: "PYG",
+        yearMin: "2018",
+        yearMax: "2021",
+      }),
+    );
+    if (!parsed.ok) throw new Error("expected ok");
+    expect(parsed.input.demand).toEqual({
+      desired_vehicle: { model: "Hilux" },
+      year_range: { min: 2018, max: 2021 },
+      budget_max: { amount: "250000000.00", currency: "PYG" },
+      purchase_type: "financed",
+      trade_in_intent: true,
+      down_payment: { amount: "0.00", currency: "PYG" },
+    });
+  });
+
+  it("un dato inválido de lo que busca vuelve con su error y no crea nada", () => {
+    expect(
+      parseNewOpportunityForm(
+        form({
+          ...VALID,
+          budgetAmount: "150.000.000,5",
+          budgetCurrency: "PYG",
+          yearMin: "18",
+        }),
+      ),
+    ).toMatchObject({
+      ok: false,
+      errors: { budgetAmount: "pyg_decimals", yearMin: "invalid_year" },
     });
   });
 
@@ -148,12 +199,11 @@ describe("parseNewOpportunityForm", () => {
       ok: false,
       errors: { name: "required", phone: "required", source: "required" },
       values: {
+        ...EMPTY_DEMAND_FORM_VALUES,
         name: "",
         phone: "",
         city: "Luque",
         source: "",
-        interestModel: "",
-        interestVersion: "",
       },
     });
     expect(parseNewOpportunityForm(new FormData())).toMatchObject({
@@ -198,22 +248,34 @@ describe("parseNewOpportunityForm", () => {
       ]),
     );
     expect(
-      parseNewOpportunityForm(form({ ...VALID, ...tooLong })),
+      parseNewOpportunityForm(
+        form({
+          ...VALID,
+          ...tooLong,
+          brand: "x".repeat(41),
+          model: "y".repeat(81),
+        }),
+      ),
     ).toMatchObject({
       ok: false,
       errors: {
         name: "too_long",
         phone: "too_long",
         city: "too_long",
-        interestModel: "too_long",
-        interestVersion: "too_long",
+        brand: "too_long",
+        model: "too_long",
       },
     });
-    const atLimit = Object.fromEntries(
-      (["name", "city", "interestModel", "interestVersion"] as const).map(
-        (field) => [field, "x".repeat(NEW_OPPORTUNITY_MAX_LENGTH[field])],
+    const atLimit = {
+      ...Object.fromEntries(
+        (["name", "city"] as const).map((field) => [
+          field,
+          "x".repeat(NEW_OPPORTUNITY_MAX_LENGTH[field]),
+        ]),
       ),
-    );
+      brand: "x".repeat(40),
+      model: "y".repeat(80),
+    };
     expect(parseNewOpportunityForm(form({ ...VALID, ...atLimit })).ok).toBe(
       true,
     );
@@ -221,10 +283,10 @@ describe("parseNewOpportunityForm", () => {
 
   it("el eco de un error está acotado", () => {
     const parsed = parseNewOpportunityForm(
-      form({ ...VALID, interestModel: "x".repeat(10_000) }),
+      form({ ...VALID, model: "x".repeat(10_000) }),
     );
     expect(parsed.ok).toBe(false);
-    expect(parsed.values.interestModel).toHaveLength(256);
+    expect(parsed.values.model).toHaveLength(256);
   });
 
   it("un archivo en lugar de texto cuenta como vacío", () => {

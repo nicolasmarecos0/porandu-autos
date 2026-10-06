@@ -167,8 +167,8 @@ function validForm(phone: string, overrides: Record<string, string> = {}) {
     phone,
     city: "Luque",
     source: "showroom",
-    interestModel: "Toyota Corolla Cross",
-    interestVersion: "XEI 2.0 CVT",
+    brand: "Toyota",
+    model: "Corolla Cross",
     ...overrides,
   });
 }
@@ -185,8 +185,6 @@ function newOpportunity(
       city: "Luque",
     },
     source: "showroom",
-    interestModel: "Toyota Corolla Cross",
-    interestVersion: "XEI 2.0 CVT",
     demand: {},
     ...overrides,
   };
@@ -304,9 +302,24 @@ describe("Server Action: requireTenant() → validación → withTenant()", () =
         contactId: contact!.id,
         stage: "new",
         source: "showroom",
-        interestModel: "Toyota Corolla Cross",
-        interestVersion: "XEI 2.0 CVT",
+        // H1.4: el interés legado ya no se escribe; lo que busca es demanda.
+        interestModel: null,
+        interestVersion: null,
         recent: true,
+      },
+    ]);
+    const facts = await db.admin<
+      { fact: string; status: string; brand: string; model: string }[]
+    >`
+      SELECT fact, status, brand, model FROM public.opportunity_demand_facts
+      WHERE opportunity_id = ${state.opportunityId}
+    `;
+    expect(facts).toEqual([
+      {
+        fact: "desired_vehicle",
+        status: "confirmed",
+        brand: "Toyota",
+        model: "Corolla Cross",
       },
     ]);
   });
@@ -329,7 +342,10 @@ describe("Server Action: requireTenant() → validación → withTenant()", () =
         channel: "Showroom",
         live: false,
       },
-      interest: { model: "Toyota Corolla Cross", version: "XEI 2.0 CVT" },
+      demand: {
+        vehicle: { title: "Toyota Corolla Cross", source: "demand" },
+      },
+      interest: {},
       stage: "new",
       bucket: "now",
     });
@@ -348,14 +364,24 @@ describe("Server Action: requireTenant() → validación → withTenant()", () =
         phone: phone.local,
         source: "whatsapp",
         city: " ",
-        interestModel: "",
+        brand: "",
+        model: " ",
       }),
     );
     const [contact] = await contactsWithPhone(phone.e164);
     expect(contact).toMatchObject({ name: "Néstor Villalba", city: null });
-    expect(await opportunitiesWithPhone(phone.e164)).toMatchObject([
-      { source: "whatsapp", interestModel: null, interestVersion: null },
-    ]);
+    const [opportunity] = await opportunitiesWithPhone(phone.e164);
+    expect(opportunity).toMatchObject({
+      source: "whatsapp",
+      interestModel: null,
+      interestVersion: null,
+    });
+    // U1: sin lo que busca, ningún fact.
+    const [facts] = await db.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.opportunity_demand_facts
+      WHERE opportunity_id = ${opportunity!.id}
+    `;
+    expect(facts?.count).toBe(0);
   });
 
   it("C crea en la organización activa de su cookie (ORG_3), no en ORG_1", async () => {
@@ -400,8 +426,13 @@ describe("Server Action: requireTenant() → validación → withTenant()", () =
     ],
     [
       "modelo demasiado largo",
-      { interestModel: "x".repeat(81) },
-      { interestModel: "too_long" },
+      { model: "x".repeat(81) },
+      { model: "too_long" },
+    ],
+    [
+      "presupuesto en guaraníes con decimales",
+      { budgetAmount: "150.000.000,5", budgetCurrency: "PYG" },
+      { budgetAmount: "pyg_decimals" },
     ],
   ])(
     "un payload inválido (%s) no escribe y vuelve con lo cargado",
@@ -413,14 +444,13 @@ describe("Server Action: requireTenant() → validación → withTenant()", () =
       expect(state).toEqual({
         status: "invalid",
         errors,
-        values: {
+        values: expect.objectContaining({
           name: String(data.get("name")).trim(),
           phone: String(data.get("phone")).trim(),
           city: "Luque",
           source: String(data.get("source")),
-          interestModel: String(data.get("interestModel")),
-          interestVersion: "XEI 2.0 CVT",
-        },
+          model: String(data.get("model")),
+        }),
       });
       expect(await contactsWithPhone(phone.e164)).toEqual([]);
       expect(mocks.revalidated).toEqual([]);
@@ -517,7 +547,7 @@ describe("identidad por teléfono: deduplicación", () => {
         name: "Otro Nombre",
         city: "Encarnación",
         source: "referral",
-        interestModel: "Toyota Hilux",
+        model: "Hilux",
       }),
     );
 
@@ -702,16 +732,16 @@ describe("concurrencia: la unicidad de la base es la autoridad", () => {
 describe("atomicidad: contacto y oportunidad en una sola transacción", () => {
   /*
    * Falla forzada al insertar la oportunidad: un CHECK de prueba (NOT VALID,
-   * no toca las filas existentes) rechaza un modelo puntual.
+   * no toca las filas existentes) rechaza un origen puntual.
    */
-  const FAILING_MODEL = "Falla forzada";
+  const FAILING_SOURCE = "meta_ads";
 
   async function withFailingOpportunityInsert<T>(
     fn: () => Promise<T>,
   ): Promise<T> {
     await db.admin.unsafe(`
       ALTER TABLE public.opportunities ADD CONSTRAINT opportunities_probe_check
-      CHECK (interest_model IS DISTINCT FROM '${FAILING_MODEL}') NOT VALID
+      CHECK (source IS DISTINCT FROM '${FAILING_SOURCE}') NOT VALID
     `);
     try {
       return await fn();
@@ -726,7 +756,7 @@ describe("atomicidad: contacto y oportunidad en una sola transacción", () => {
       expectSqlError(
         createOpportunityWithContact(
           tenantContext(USER_A, ORG_1),
-          newOpportunity(phone, { interestModel: FAILING_MODEL }),
+          newOpportunity(phone, { source: FAILING_SOURCE }),
         ),
         "23514",
       ),
@@ -740,14 +770,14 @@ describe("atomicidad: contacto y oportunidad en una sola transacción", () => {
     try {
       request(USER_A);
       const state = await withFailingOpportunityInsert(() =>
-        create(validForm(phone.local, { interestModel: FAILING_MODEL })),
+        create(validForm(phone.local, { source: FAILING_SOURCE })),
       );
       expect(state).toEqual({
         status: "failed",
         values: expect.objectContaining({
           name: "Lucía Ortiz",
           phone: phone.local,
-          interestModel: FAILING_MODEL,
+          source: FAILING_SOURCE,
         }),
       });
       expect(JSON.stringify(state)).not.toMatch(/opportunities_probe|23514/);
@@ -788,8 +818,6 @@ describe("atomicidad: contacto y oportunidad en una sola transacción", () => {
           contactId: contact!.id,
           stage: "new",
           source: input.source,
-          interestModel: input.interestModel,
-          interestVersion: input.interestVersion,
         }),
       );
     }
@@ -798,7 +826,7 @@ describe("atomicidad: contacto y oportunidad en una sola transacción", () => {
       expectSqlError(
         createInTwoTransactions(
           tenantContext(USER_A, ORG_1),
-          newOpportunity(phone, { interestModel: FAILING_MODEL }),
+          newOpportunity(phone, { source: FAILING_SOURCE }),
         ),
         "23514",
       ),

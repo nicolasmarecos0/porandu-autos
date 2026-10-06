@@ -83,8 +83,8 @@ const VALID = {
   phone: "0981 555 214",
   city: "Luque",
   source: "showroom",
-  interestModel: "Toyota Corolla Cross",
-  interestVersion: "",
+  brand: "Toyota",
+  model: "Corolla Cross",
 };
 
 describe("createOpportunity()", () => {
@@ -100,9 +100,7 @@ describe("createOpportunity()", () => {
         city: "Luque",
       },
       source: "showroom",
-      interestModel: "Toyota Corolla Cross",
-      interestVersion: null,
-      demand: {},
+      demand: { desired_vehicle: { brand: "Toyota", model: "Corolla Cross" } },
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/opportunities");
     expect(state).toEqual({
@@ -175,7 +173,10 @@ describe("createOpportunity()", () => {
     });
     try {
       const state = await createOpportunity(null, form(VALID));
-      expect(state).toEqual({ status: "failed", values: VALID });
+      expect(state).toEqual({
+        status: "failed",
+        values: expect.objectContaining(VALID),
+      });
       expect(mocks.revalidatePath).not.toHaveBeenCalled();
       expect(errors).toHaveBeenCalledWith("[opportunities] create failed", {
         name: "Error",
