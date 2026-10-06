@@ -402,6 +402,13 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   8. **Dependencia.** `@radix-ui/react-alert-dialog` queda aprobada como primitiva accesible para la confirmación de acciones con significado comercial.
 - **Aclara:** amplía DEC-027 §3 (las transiciones de estado requieren un flujo de UPDATE autorizado) y DEC-025 §4. Prevalece sobre la Build Baseline según DEC-002.
 - **Consecuencias:** `0006` se aplica a staging después del merge con `preflight → migrate → verify` (`expected_migrations = 0006_vehicle_availability`).
+- **Evidencia de cierre (2026-10-05):** DEC-028 está implementada y validada en staging. H1.3C queda cerrado.
+  - PR #22 (`feat/h1-vehicle-availability`) mergeado a `main`; merge commit `39a5ed6f5e32accfa803f15ec6dc8d56f7ca964c`.
+  - `0006_vehicle_availability` aplicada en staging.
+  - Runtime Acceptance: 12/12.
+  - Auth → Tenant Acceptance: 11/11.
+  - Staging alineado con `main`; migraciones pendientes: 0.
+  - Limpieza de datos sintéticos (synthetic cleanup) correcta.
 
 ---
 

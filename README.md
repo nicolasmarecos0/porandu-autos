@@ -3,7 +3,8 @@
 **Automotive Revenue OS / Sales Intelligence Platform** para playas, showrooms y concesionarias.
 Porandú conecta inventario, conversaciones, intención de compra y operación comercial para ayudar a vender más vehículos.
 
-> Estado: **Build Baseline B1**, que cubre Hito 0 (Foundation) y el Vertical Slice visual sobre mock data. **Hito 1 en curso:** H1.1 lleva la cola de Opportunities a PostgreSQL real (ver "Opportunities con datos reales (H1.1)"), H1.2 agrega el alta manual de oportunidades (ver "Alta de oportunidades (H1.2)"), H1.3A lleva la Stock List a PostgreSQL real (ver "Stock con datos reales (H1.3A)"), H1.3B agrega el alta rápida de unidades desde Stock (ver "Alta rápida de unidades (H1.3B)") y H1.3C permite marcar disponible una unidad en preparación (ver "Disponibilidad de unidades (H1.3C)").
+> Estado: **Build Baseline B1**, que cubre Hito 0 (Foundation) y el Vertical Slice visual sobre mock data. **Hito 1 en curso.** Completados: H1.1 lleva la cola de Opportunities a PostgreSQL real (ver "Opportunities con datos reales (H1.1)"), H1.2 agrega el alta manual de oportunidades (ver "Alta de oportunidades (H1.2)"), H1.3A lleva la Stock List a PostgreSQL real (ver "Stock con datos reales (H1.3A)"), H1.3B agrega el alta rápida de unidades desde Stock (ver "Alta rápida de unidades (H1.3B)") y H1.3C permite marcar disponible una unidad en preparación (ver "Disponibilidad de unidades (H1.3C)").
+> **H1.3C completado (DEC-028):** transición controlada `in_preparation → available`, migración `0006_vehicle_availability` con su RLS y privilegios (policy `vehicles_update_mark_available` y UPDATE por columna), aplicada en staging con Runtime Acceptance 12/12 y Auth → Tenant Acceptance 11/11.
 > Alcance vigente: [`docs/03_BUILD_BASELINE_B1.md`](docs/03_BUILD_BASELINE_B1.md)
 
 ---
@@ -338,7 +339,7 @@ withTenant(): UPDATE … WHERE id AND organization_id AND status = 'in_preparati
 - **Match Engine:** no existe todavía y la UI no lo menciona. El resultado `became_available` de la escritura es la única señal de que este pedido hizo la transición (una vez por unidad): es el punto donde Hito 3 engancha "vehicle became available → matching", sin reescribir la transición.
 - **UX:** la confirmación abre con el foco en "Cancelar", no se cierra con un click afuera y, mientras marca ("Marcando…"), tampoco con Escape. Al terminar se cierra, la unidad aparece en Disponibles y sigue seleccionada, los conteos y el medidor se recalculan, la fila se desplaza a la vista y el foco vuelve a la lista. Un aviso confirma el resultado ("Unidad disponible: …, lista para vender."), o explica que no se hizo ningún cambio si ya estaba disponible o en otro estado. Una falla inesperada deja la confirmación abierta para reintentar, sin detalles de la base. La confirmación usa `@radix-ui/react-alert-dialog` (patrón WAI-ARIA alertdialog).
 - **Fuera de H1.3C:** reservar, liberar una reserva, vender, volver a preparación, editar datos de la unidad, borrar, matches, compradores potenciales y jobs.
-- `0006` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify` (`expected_migrations = 0006_vehicle_availability`).
+- `0006_vehicle_availability` se aplicó a staging después del merge (PR #22): Runtime Acceptance 12/12 y Auth → Tenant Acceptance 11/11, sin migraciones pendientes.
 
 ## Convenciones
 

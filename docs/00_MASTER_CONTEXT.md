@@ -1743,6 +1743,25 @@ Claude puede actuar como:
 
 Ningún agente debe cambiar el producto por iniciativa propia.
 
+## Estado actual de construcción — 5 oct 2026
+
+Checkpoint de estado. No modifica las decisiones selladas ni el alcance de P1; las decisiones vigentes están en `docs/05_DECISIONS_LOG.md`.
+
+- H0 completado.
+- H1.1 completado.
+- H1.2 completado.
+- H1.3A completado.
+- H1.3B completado.
+- H1.3C completado (DEC-028, Disponibilidad de unidades):
+  - PR #22 mergeado; `main` = `39a5ed6f5e32accfa803f15ec6dc8d56f7ca964c`.
+  - Migración `0006_vehicle_availability` aplicada en staging.
+  - Runtime Acceptance: 12/12.
+  - Auth → Tenant Acceptance: 11/11.
+  - Staging sin migraciones pendientes.
+  - Rama `feat/h1-vehicle-availability` eliminada.
+
+**Próximo paso:** Roadmap checkpoint para definir H1.4.
+
 ---
 
 # 42. ESTRUCTURA DOCUMENTAL RECOMENDADA DEL REPO
