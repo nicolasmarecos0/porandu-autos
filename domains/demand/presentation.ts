@@ -9,11 +9,13 @@ import {
   type YearRange,
 } from "./facts";
 import type { DemandFormField } from "./form";
-import type {
-  CurrentStatus,
-  DemandTruth,
-  FactTruth,
-  UnknownReason,
+import {
+  isHumanRow,
+  type CurrentStatus,
+  type DemandTruth,
+  type FactTruth,
+  type HistoryEntry,
+  type UnknownReason,
 } from "./resolver";
 
 /*
@@ -218,4 +220,278 @@ export function demandSummary(
         ? { title: legacyTitle, source: "legacy" }
         : null;
   return { facts, vehicle };
+}
+
+/*
+ * Detalle de la demanda en /opportunities/[id] (DEC-030 §10, criterio U5):
+ * responde "¿Por qué Porandú cree que este cliente busca esto?" para cada
+ * fact, con su historial append-only. Corre en el servidor: el autor se
+ * presenta como "Vos" u "Otro miembro" a partir del usuario que mira, y
+ * nunca se expone otro id de usuario.
+ */
+
+/** Zona horaria de presentación: P1 opera en Paraguay. */
+export const DEMAND_TIME_ZONE = "America/Asuncion";
+
+const DATE_TIME = new Intl.DateTimeFormat("es-PY", {
+  timeZone: DEMAND_TIME_ZONE,
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+/** Fecha y hora de Asunción: "6 oct 2026 14:32". */
+export function formatDemandDate(date: Date): string {
+  const parts = Object.fromEntries(
+    DATE_TIME.formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  const month = (parts.month ?? "").replace(/\.$/, "");
+  return `${parts.day} ${month} ${parts.year} ${parts.hour}:${parts.minute}`;
+}
+
+/** Autor visible: "Vos", "Otro miembro" o, sin miembro, una detección. */
+export function authorLabel(
+  recordedBy: string | null,
+  viewerUserId: string,
+): string {
+  if (recordedBy === null) return "Detección automática";
+  return recordedBy === viewerUserId ? "Vos" : "Otro miembro";
+}
+
+/** Etiqueta de una fila del historial (spec §10). */
+function historyLabel<F extends DemandFact>(
+  entry: HistoryEntry<F>,
+  truth: FactTruth<F>,
+  byId: ReadonlyMap<string, HistoryEntry<F>>,
+): string {
+  switch (entry.label) {
+    case "current":
+      return "Actual";
+    case "superseded":
+      return "Reemplazado";
+    case "erroneous":
+      return "Corregido";
+    case "withdrawn":
+      return "Quitado";
+    case "discarded":
+      return "Descartado";
+    case "pending":
+      return "Pendiente";
+    case "corroboration":
+      return "Coincide";
+    case "covered":
+      return "Anterior";
+    case "rejection": {
+      // El acto que quitó o descartó: si dejó el fact en Sin dato y sigue
+      // siendo el último, es lo actual; si quitó un valor humano y después
+      // hubo otro, quedó reemplazado.
+      if (truth.status === "unknown" && truth.headId === entry.factId) {
+        return "Actual";
+      }
+      const target = entry.targetFactId
+        ? byId.get(entry.targetFactId)
+        : undefined;
+      return target?.sourceKind === "member" ? "Reemplazado" : "Descartado";
+    }
+  }
+}
+
+export type DemandHistoryItem = Readonly<{
+  factId: string;
+  /** Valor formateado, o "Sin dato" para un acto que quitó o descartó. */
+  display: string;
+  label: string;
+  author: string;
+  at: string;
+  /** "Nota de la edición: …" o, de una detección, "Evidencia: …". */
+  note: string | null;
+}>;
+
+export type DemandFactDetail = Readonly<{
+  fact: DemandFact;
+  label: string;
+  status: CurrentStatus;
+  /** Badge: Confirmado, Corregido o Detectado. Null si es Sin dato. */
+  statusLabel: string | null;
+  display: string | null;
+  /** Por qué Porandú cree esto: autor, fecha, valor anterior, nota. */
+  explanation: readonly string[];
+  history: readonly DemandHistoryItem[];
+}>;
+
+export type DemandDetail = Readonly<{
+  facts: readonly DemandFactDetail[];
+  /** Interés libre de H1.1/H1.2, solo mientras nunca se cargó un vehículo. */
+  legacy: string | null;
+  /** Ningún fact se cargó todavía. */
+  empty: boolean;
+}>;
+
+/** Orden del detalle: el de la card "Busca". */
+const DETAIL_ORDER: readonly DemandFact[] = [
+  "desired_vehicle",
+  "year_range",
+  "budget_max",
+  "purchase_type",
+  "down_payment",
+  "trade_in_intent",
+];
+
+/**
+ * La nota de un acto humano es "Nota de la edición"; lo que trae una
+ * detección (H2a+) es "Evidencia".
+ */
+function noteLine(
+  text: string | null,
+  sourceKind: HistoryEntry["sourceKind"],
+): string | null {
+  if (!text) return null;
+  return isHumanRow({ sourceKind })
+    ? `Nota de la edición: ${text}`
+    : `Evidencia: ${text}`;
+}
+
+function explain<F extends DemandFact>(
+  truth: FactTruth<F>,
+  viewerUserId: string,
+  createdAt: Date,
+): string[] {
+  const lines: string[] = [];
+  const note = (text: string | null) => {
+    const line = noteLine(text, "member");
+    if (line) lines.push(line);
+  };
+  switch (truth.status) {
+    case "confirmed":
+    case "corrected": {
+      const author = authorLabel(truth.recordedBy, viewerUserId);
+      const at = formatDemandDate(truth.recordedAt!);
+      lines.push(
+        truth.recordedAt!.getTime() === createdAt.getTime()
+          ? `Cargado al crear la oportunidad por ${author} · ${at}`
+          : `${DEMAND_STATUS_LABELS[truth.status]} por ${author} · ${at}`,
+      );
+      break;
+    }
+    case "detected":
+      lines.push(
+        `Detectado automáticamente · ${formatDemandDate(truth.recordedAt!)}`,
+      );
+      break;
+    case "unknown":
+      switch (truth.unknownReason) {
+        case "never_captured":
+          lines.push("Todavía no se cargó");
+          break;
+        case "withdrawn":
+          lines.push(
+            `Quitado por ${authorLabel(truth.closedBy?.recordedBy ?? null, viewerUserId)} · ${formatDemandDate(truth.closedBy!.recordedAt)}`,
+          );
+          note(truth.closedBy?.evidenceText ?? null);
+          break;
+        case "dismissed":
+          lines.push(
+            `Se descartó lo detectado · ${authorLabel(truth.closedBy?.recordedBy ?? null, viewerUserId)} · ${formatDemandDate(truth.closedBy!.recordedAt)}`,
+          );
+          note(truth.closedBy?.evidenceText ?? null);
+          break;
+        default:
+          lines.push("No pudimos leer este dato. Avisá al administrador.");
+      }
+      return lines.concat(pendingLine(truth));
+  }
+  if (
+    truth.replaced !== null &&
+    truth.value !== null &&
+    formatDemandValue(truth.fact, truth.replaced) !==
+      formatDemandValue(truth.fact, truth.value)
+  ) {
+    lines.push(`Antes: ${formatDemandValue(truth.fact, truth.replaced)}`);
+  }
+  // La evidencia mostrada es la del ancla o, si el ancla humana no tiene
+  // nota y aceptó una detección, la de esa detección.
+  const anchor = truth.history.find((entry) => entry.factId === truth.factId);
+  const evidence = noteLine(
+    truth.evidenceText,
+    anchor?.evidenceText ? anchor.sourceKind : "extractor",
+  );
+  if (evidence) lines.push(evidence);
+  return lines.concat(pendingLine(truth));
+}
+
+/** H2a+: una detección distinta espera que un humano la revise. */
+function pendingLine<F extends DemandFact>(truth: FactTruth<F>): string[] {
+  return truth.pending
+    ? [
+        `Detectado sin revisar: ${formatDemandValue(truth.fact, truth.pending.value)}`,
+      ]
+    : [];
+}
+
+function factDetail<F extends DemandFact>(
+  truth: FactTruth<F>,
+  viewerUserId: string,
+  createdAt: Date,
+): DemandFactDetail {
+  const byId = new Map(truth.history.map((entry) => [entry.factId, entry]));
+  const value = truth.status === "unknown" ? null : truth.value;
+  return {
+    fact: truth.fact,
+    label: DEMAND_FACT_LABELS[truth.fact],
+    status: truth.status,
+    statusLabel:
+      truth.status === "unknown" ? null : DEMAND_STATUS_LABELS[truth.status],
+    display: value === null ? null : formatDemandValue(truth.fact, value),
+    explanation: explain(truth, viewerUserId, createdAt),
+    history: truth.history.map((entry) => ({
+      factId: entry.factId,
+      display:
+        entry.value === null
+          ? NO_DATA
+          : formatDemandValue(truth.fact, entry.value),
+      label: historyLabel(entry, truth, byId),
+      author: authorLabel(entry.recordedBy, viewerUserId),
+      at: formatDemandDate(entry.recordedAt),
+      note: noteLine(entry.evidenceText, entry.sourceKind),
+    })),
+  };
+}
+
+/**
+ * Detalle de la demanda para el usuario que mira (`viewerUserId`).
+ * `createdAt` es el alta de la oportunidad: lo cargado en esa misma
+ * transacción se explica como "Cargado al crear la oportunidad".
+ */
+export function demandDetail(
+  truth: DemandTruth,
+  {
+    viewerUserId,
+    createdAt,
+    legacy = {},
+  }: Readonly<{
+    viewerUserId: string;
+    createdAt: Date;
+    legacy?: LegacyInterest;
+  }>,
+): DemandDetail {
+  const facts = DETAIL_ORDER.map((fact) =>
+    factDetail(truth[fact] as FactTruth, viewerUserId, createdAt),
+  );
+  const legacyText = [legacy.model, legacy.version]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ");
+  return {
+    facts,
+    legacy:
+      truth.desired_vehicle.unknownReason === "never_captured" && legacyText
+        ? legacyText
+        : null,
+    empty: DEMAND_FACTS.every(
+      (fact) => truth[fact].unknownReason === "never_captured",
+    ),
+  };
 }

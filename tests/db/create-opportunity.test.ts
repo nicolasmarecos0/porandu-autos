@@ -8,6 +8,7 @@ import {
   createOpportunityWithContact,
   type NewOpportunity,
 } from "@/db/queries/create-opportunity";
+import { getOpportunityDetail } from "@/db/queries/opportunity-detail";
 import { getOpportunityQueue } from "@/db/queries/opportunities";
 import { contacts, opportunities } from "@/db/schema";
 import { withTenant, type TenantContext } from "@/db/tenant";
@@ -353,6 +354,48 @@ describe("Server Action: requireTenant() → validación → withTenant()", () =
 
     request(USER_B);
     expect(await queueIds()).not.toContain(opportunityId);
+  });
+
+  it("U5: lo cargado en el alta se explica «Cargado al crear la oportunidad» (mismo now())", async () => {
+    const phone = freshPhone();
+    request(USER_A);
+    const { opportunityId } = await created(
+      validForm(phone.local, {
+        purchaseType: "financed",
+        budgetAmount: "250.000.000",
+        budgetCurrency: "PYG",
+      }),
+    );
+    const [times] = await db.admin<{ same: boolean }[]>`
+      SELECT bool_and(f.recorded_at = o.created_at) AS same
+      FROM public.opportunity_demand_facts f
+      JOIN public.opportunities o ON o.id = f.opportunity_id
+      WHERE o.id = ${opportunityId}
+    `;
+    expect(times?.same).toBe(true);
+
+    request(USER_A);
+    const detail = (await getOpportunityDetail(opportunityId))!;
+    const facts = new Map(detail.demand.facts.map((f) => [f.fact, f]));
+    for (const [fact, display] of [
+      ["desired_vehicle", "Toyota Corolla Cross"],
+      ["purchase_type", "Financiado"],
+      ["budget_max", "Hasta Gs. 250.000.000"],
+    ] as const) {
+      expect(facts.get(fact)).toMatchObject({
+        display,
+        statusLabel: "Confirmado",
+        explanation: [
+          expect.stringMatching(
+            /^Cargado al crear la oportunidad por Vos · \d{1,2} [a-z]{3} \d{4} \d{2}:\d{2}$/,
+          ),
+        ],
+      });
+    }
+    expect(facts.get("year_range")!.explanation).toEqual([
+      "Todavía no se cargó",
+    ]);
+    expect(detail.demand).toMatchObject({ empty: false, legacy: null });
   });
 
   it("los opcionales vacíos quedan sin dato", async () => {
