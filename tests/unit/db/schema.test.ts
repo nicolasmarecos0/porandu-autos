@@ -11,6 +11,12 @@ import {
 import { describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
+import { DEMAND_FACTS, PURCHASE_TYPES } from "@/domains/demand/facts";
+import {
+  DEMAND_FACT_STATUSES,
+  IMPLEMENTED_SOURCE_KINDS,
+} from "@/domains/demand/resolver";
+import { CURRENCIES } from "@/domains/money";
 
 /*
  * Schema de Drizzle (db/schema), sin base de datos. El catálogo real que
@@ -48,11 +54,12 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities) y la de H1.3A (vehicles)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles) y la de H1.4 (opportunity_demand_facts)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "memberships",
       "opportunities",
+      "opportunity_demand_facts",
       "organizations",
       "profiles",
       "vehicles",
@@ -136,7 +143,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities y vehicles, la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles y opportunity_demand_facts, la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -203,6 +210,25 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using:
           '"opportunities"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "opportunity_demand_facts",
+        name: "opportunity_demand_facts_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck: `"opportunity_demand_facts"."organization_id" IN (SELECT private.user_org_ids()) AND "opportunity_demand_facts"."source_kind" = 'member' AND "opportunity_demand_facts"."status" IN ('confirmed', 'corrected', 'rejected') AND "opportunity_demand_facts"."recorded_by" = (select auth.uid()) AND "opportunity_demand_facts"."recorded_at" = now()`,
+      },
+      {
+        table: "opportunity_demand_facts",
+        name: "opportunity_demand_facts_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"opportunity_demand_facts"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
       },
       {
@@ -485,6 +511,124 @@ describe("db/schema", () => {
     }
   });
 
+  it("opportunity_demand_facts: ledger append-only con el contrato de demanda del dominio (H1.4)", () => {
+    expect(
+      table("opportunity_demand_facts").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", "PgUUID", true, true],
+      ["organization_id", "PgUUID", true, false],
+      ["opportunity_id", "PgUUID", true, false],
+      ["fact", "PgText", true, false],
+      ["status", "PgText", true, false],
+      ["source_kind", "PgText", true, false],
+      ["recorded_by", "PgUUID", false, false],
+      // Reloj de la base: `defaultNow()`, nunca `$defaultFn`.
+      ["recorded_at", "PgTimestamp", true, true],
+      ["target_fact_id", "PgUUID", false, false],
+      ["previous_member_fact_id", "PgUUID", false, false],
+      ["brand", "PgText", false, false],
+      ["model", "PgText", false, false],
+      ["year_min", "PgSmallInt", false, false],
+      ["year_max", "PgSmallInt", false, false],
+      ["amount", "PgNumeric", false, false],
+      ["currency", "PgText", false, false],
+      ["purchase_type", "PgText", false, false],
+      ["trade_in", "PgBoolean", false, false],
+      ["evidence_text", "PgText", false, false],
+    ]);
+    const recordedAt = column("opportunity_demand_facts", "recorded_at");
+    expect(recordedAt.defaultFn).toBeUndefined();
+    expect(recordedAt).toMatchObject({
+      withTimezone: true,
+      precision: undefined,
+    });
+    expect(column("opportunity_demand_facts", "amount")).toMatchObject({
+      precision: 14,
+      scale: 2,
+    });
+    expect(foreignKeys("opportunity_demand_facts")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,opportunity_id -> public.opportunities(organization_id,id) ON DELETE restrict",
+      "organization_id,opportunity_id,fact,source_kind,previous_member_fact_id -> public.opportunity_demand_facts(organization_id,opportunity_id,fact,source_kind,id) ON DELETE restrict",
+      "organization_id,opportunity_id,fact,target_fact_id -> public.opportunity_demand_facts(organization_id,opportunity_id,fact,id) ON DELETE restrict",
+      "recorded_by -> public.profiles(id) ON DELETE restrict",
+    ]);
+    expect(table("opportunity_demand_facts").checks.map((c) => c.name)).toEqual(
+      [
+        "opportunity_demand_facts_fact_check",
+        "opportunity_demand_facts_status_check",
+        "opportunity_demand_facts_source_kind_check",
+        "opportunity_demand_facts_currency_check",
+        "opportunity_demand_facts_purchase_type_check",
+        "opportunity_demand_facts_value_check",
+        "opportunity_demand_facts_status_target_check",
+        "opportunity_demand_facts_source_status_check",
+        "opportunity_demand_facts_member_author_check",
+        "opportunity_demand_facts_member_chain_check",
+        "opportunity_demand_facts_self_reference_check",
+        "opportunity_demand_facts_text_check",
+      ],
+    );
+    // Nombres de constraints e índices dentro del límite de PostgreSQL.
+    for (const name of [
+      ...table("opportunity_demand_facts").checks.map((c) => c.name),
+      ...table("opportunity_demand_facts").indexes.map((i) => i.config.name),
+      ...table("opportunity_demand_facts").uniqueConstraints.map((u) =>
+        u.getName(),
+      ),
+      ...table("opportunity_demand_facts").foreignKeys.map((fk) =>
+        fk.getName(),
+      ),
+    ]) {
+      expect(Buffer.byteLength(name ?? "")).toBeLessThanOrEqual(63);
+    }
+    // El schema y el dominio comparten el contrato.
+    expect(schema.demandFacts).toEqual(DEMAND_FACTS);
+    expect(schema.demandFactStatuses).toEqual(DEMAND_FACT_STATUSES);
+    expect(schema.demandSourceKinds).toEqual(IMPLEMENTED_SOURCE_KINDS);
+    expect(schema.demandPurchaseTypes).toEqual(PURCHASE_TYPES);
+    expect(schema.demandCurrencies).toEqual(CURRENCIES);
+    expect(schema.demandMemberStatuses).toEqual([
+      "confirmed",
+      "corrected",
+      "rejected",
+    ]);
+    // Sin Origin, confianza ni conversaciones en H1.4 (C-5, C-14).
+    const names = table("opportunity_demand_facts").columns.map((c) => c.name);
+    for (const absent of [
+      "origin",
+      "confidence",
+      "basis",
+      "observed_at",
+      "message_id",
+      "media_id",
+      "version",
+      "conversation",
+      "updated_at",
+    ]) {
+      expect(names).not.toContain(absent);
+    }
+  });
+
+  it("opportunities: unique (organization_id, id), destino de la FK de la demanda (H1.4)", () => {
+    expect(
+      table("opportunities").uniqueConstraints.map((u) => ({
+        name: u.getName(),
+        columns: u.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "opportunities_organization_id_id_key",
+        columns: ["organization_id", "id"],
+      },
+    ]);
+  });
+
   it("toda tabla tenant-scoped tiene organization_id NOT NULL, FK e índice que empieza por él", () => {
     const tenantScoped = tables.filter(
       (t) => !NOT_TENANT_OWNED.includes(t.name),
@@ -493,6 +637,7 @@ describe("db/schema", () => {
       "contacts",
       "memberships",
       "opportunities",
+      "opportunity_demand_facts",
       "vehicles",
     ]);
 

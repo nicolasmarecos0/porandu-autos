@@ -38,6 +38,7 @@ describe("readRepoMigrations", () => {
       [4, "0004_vehicles_stock_persistence"],
       [5, "0005_vehicle_quick_create"],
       [6, "0006_vehicle_availability"],
+      [7, "0007_opportunity_demand_facts"],
     ]);
   });
 
@@ -64,15 +65,15 @@ describe("compareHistory", () => {
     expect(compareHistory(REPO, applied(1))).toEqual({
       kind: "consistent",
       applied: [REPO[0]],
-      pending: [REPO[1], REPO[2], REPO[3], REPO[4], REPO[5], REPO[6]],
+      pending: REPO.slice(1),
     });
-    // Staging hoy (H1.3B): solo 0006 pendiente.
-    expect(compareHistory(REPO, applied(6))).toEqual({
+    // Staging hoy (H1.3C): solo 0007 pendiente.
+    expect(compareHistory(REPO, applied(7))).toEqual({
       kind: "consistent",
-      applied: [REPO[0], REPO[1], REPO[2], REPO[3], REPO[4], REPO[5]],
-      pending: [REPO[6]],
+      applied: REPO.slice(0, 7),
+      pending: [REPO[7]],
     });
-    expect(compareHistory(REPO, [...applied(7)].reverse())).toMatchObject({
+    expect(compareHistory(REPO, [...applied(8)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -92,8 +93,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(7), { id: 8, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 7",
+      [...applied(8), { id: 9, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 8",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -132,7 +133,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0006: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0007: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -197,9 +198,37 @@ describe("expectedFootprint", () => {
     };
     expect(expectedFootprint(REPO.slice(0, 6))).toEqual(h13b);
     // 0006 no crea tablas: suma la policy de disponibilidad de vehicles.
-    expect(expectedFootprint(REPO)).toEqual({
+    const h13c = {
       ...h13b,
       policies: [...h13b.policies, "vehicles.vehicles_update_mark_available"],
+    };
+    expect(expectedFootprint(REPO.slice(0, 7))).toEqual(h13c);
+    // 0007 suma el ledger de demanda, con sus policies de lectura y alta.
+    expect(expectedFootprint(REPO)).toEqual({
+      ...h13c,
+      tables: [
+        "contacts",
+        "memberships",
+        "opportunities",
+        "opportunity_demand_facts",
+        "organizations",
+        "profiles",
+        "vehicles",
+      ],
+      policies: [
+        "contacts.contacts_insert_member",
+        "contacts.contacts_select_member",
+        "memberships.memberships_select_member",
+        "opportunities.opportunities_insert_member",
+        "opportunities.opportunities_select_member",
+        "opportunity_demand_facts.opportunity_demand_facts_insert_member",
+        "opportunity_demand_facts.opportunity_demand_facts_select_member",
+        "organizations.organizations_select_member",
+        "profiles.profiles_select_own",
+        "vehicles.vehicles_insert_member",
+        "vehicles.vehicles_select_member",
+        "vehicles.vehicles_update_mark_available",
+      ],
     });
   });
 });

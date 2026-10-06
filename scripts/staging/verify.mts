@@ -7,9 +7,9 @@ import { finding, type Finding } from "./report.mts";
  * Verificación post-migración de staging (solo lectura): lo que dejaron
  * 0000_saas_core_schema, 0001_tenant_isolation,
  * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
- * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create y
- * 0006_vehicle_availability, leído del catálogo real (DEC-018, DEC-019,
- * ADR-001 §2, §3.6 y §4). Espeja
+ * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
+ * 0006_vehicle_availability y 0007_opportunity_demand_facts, leído del
+ * catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030). Espeja
  * tests/db/tenant-catalog y tests/db/schema: si una migración nueva cambia
  * lo esperado, se actualiza junto con esos tests.
  */
@@ -18,6 +18,7 @@ const APP_TABLES = [
   "contacts",
   "memberships",
   "opportunities",
+  "opportunity_demand_facts",
   "organizations",
   "profiles",
   "vehicles",
@@ -49,7 +50,10 @@ type Policy = {
  * (vehicles), con WITH CHECK: la de opportunities exige además la etapa
  * `new`, y la de vehicles, el estado `in_preparation`. La de disponibilidad
  * de H1.3C (vehicles) exige la fila actual en `in_preparation` (USING) y la
- * nueva en `available` (WITH CHECK). Tal como las deparsea PostgreSQL 17.
+ * nueva en `available` (WITH CHECK). La demanda de H1.4
+ * (opportunity_demand_facts) tiene lectura y un alta append-only: miembro
+ * activo, fuente `member`, estado humano, autor de la request y reloj de la
+ * base. Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -95,6 +99,26 @@ export const EXPECTED_POLICIES: Policy[] = [
   {
     table: "opportunities",
     name: "opportunities_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "opportunity_demand_facts",
+    name: "opportunity_demand_facts_insert_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "INSERT",
+    using: null,
+    withCheck:
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (source_kind = 'member'::text) AND (status = ANY (ARRAY['confirmed'::text, 'corrected'::text, 'rejected'::text])) AND (recorded_by = ( SELECT auth.uid() AS uid)) AND (recorded_at = now()))",
+  },
+  {
+    table: "opportunity_demand_facts",
+    name: "opportunity_demand_facts_select_member",
     permissive: "PERMISSIVE",
     roles: ["authenticated"],
     command: "SELECT",
@@ -163,14 +187,37 @@ export const EXPECTED_PHONE_IDENTITY = {
 };
 
 /**
+ * Cadena humana lineal y FKs propias de la demanda (H1.4, 0007), tal como
+ * las deja PostgreSQL 17: un solo root y un solo sucesor por acto, `target`
+ * y `previous` dentro de la misma oportunidad y del mismo fact, el
+ * predecesor humano (la FK incluye `source_kind`) y la oportunidad de la
+ * misma organización.
+ */
+export const EXPECTED_DEMAND_CHAIN = {
+  indexes: [
+    "CREATE UNIQUE INDEX opportunity_demand_facts_member_next_key ON public.opportunity_demand_facts USING btree (organization_id, opportunity_id, fact, previous_member_fact_id) WHERE ((source_kind = 'member'::text) AND (previous_member_fact_id IS NOT NULL))",
+    "CREATE UNIQUE INDEX opportunity_demand_facts_member_root_key ON public.opportunity_demand_facts USING btree (organization_id, opportunity_id, fact) WHERE ((source_kind = 'member'::text) AND (previous_member_fact_id IS NULL))",
+  ],
+  foreignKeys: [
+    "opportunity_demand_facts_opportunity_fk FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+    "opportunity_demand_facts_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "opportunity_demand_facts_previous_fk FOREIGN KEY (organization_id, opportunity_id, fact, source_kind, previous_member_fact_id) REFERENCES opportunity_demand_facts(organization_id, opportunity_id, fact, source_kind, id) ON DELETE RESTRICT",
+    "opportunity_demand_facts_recorded_by_profiles_id_fk FOREIGN KEY (recorded_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    "opportunity_demand_facts_target_fk FOREIGN KEY (organization_id, opportunity_id, fact, target_fact_id) REFERENCES opportunity_demand_facts(organization_id, opportunity_id, fact, id) ON DELETE RESTRICT",
+  ],
+};
+
+/**
  * Privilegios de authenticated: lectura en todo, las altas de H1.2
- * (contacts, opportunities) y H1.3B (vehicles), y el UPDATE de H1.3C sobre
+ * (contacts, opportunities), H1.3B (vehicles) y H1.4
+ * (opportunity_demand_facts, de tabla: diseño A), y el UPDATE de H1.3C sobre
  * vehicles, que es por columna (AUTHENTICATED_UPDATE_COLUMNS). Ningún
  * DELETE.
  */
 const AUTHENTICATED_PRIVILEGES = [
   "INSERT contacts",
   "INSERT opportunities",
+  "INSERT opportunity_demand_facts",
   "INSERT vehicles",
   ...APP_TABLES.map((table) => `SELECT ${table}`),
   "UPDATE vehicles",
@@ -351,6 +398,38 @@ export async function verifyCatalog(
     ),
   );
 
+  // Demanda (H1.4): la cadena humana lineal y las FKs propias del ledger.
+  const [demandChain] = await tx<
+    { indexes: string[] | null; foreignKeys: string[] | null }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(indexdef ORDER BY indexname) FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname IN (
+            'opportunity_demand_facts_member_root_key',
+            'opportunity_demand_facts_member_next_key'
+          )
+      ) AS indexes,
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.opportunity_demand_facts')
+          AND contype = 'f'
+      ) AS "foreignKeys"
+  `;
+  const chain = {
+    indexes: demandChain?.indexes ?? [],
+    foreignKeys: demandChain?.foreignKeys ?? [],
+  };
+  findings.push(
+    finding(
+      "schema.demand-facts-chain",
+      equal(chain, EXPECTED_DEMAND_CHAIN),
+      `opportunity_demand_facts: ${chain.indexes.length} chain indexes, ${chain.foreignKeys.length} foreign keys (expected: ${EXPECTED_DEMAND_CHAIN.indexes.length} and ${EXPECTED_DEMAND_CHAIN.foreignKeys.length}, exact definitions)`,
+    ),
+  );
+
   // Schema private y private.user_org_ids() (ADR-001 §4).
   const [privateSchema] = await tx<
     {
@@ -523,7 +602,7 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities and vehicles, UPDATE on vehicles only; no DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles and opportunity_demand_facts, UPDATE on vehicles only; no DELETE)`,
     ),
   );
 
@@ -574,6 +653,19 @@ export async function verifyCatalog(
       "privileges.policy-coverage",
       uncovered.length === 0,
       `authenticated privileges without policy: ${list(uncovered.map((u) => u.grant))}`,
+    ),
+  );
+
+  // C-11: el ledger de demanda es append-only también para service_role.
+  const serviceWrites = (await tablePrivileges(tx, "service_role")).filter(
+    (grant) =>
+      /^(UPDATE|DELETE|TRUNCATE) opportunity_demand_facts$/.test(grant),
+  );
+  findings.push(
+    finding(
+      "privileges.service_role-demand-facts",
+      serviceWrites.length === 0,
+      `service_role on opportunity_demand_facts: ${list(serviceWrites)} (expected: no UPDATE, DELETE or TRUNCATE)`,
     ),
   );
 
@@ -667,7 +759,10 @@ export async function serviceRolePrivileges(
  * se registran status y categoría: nunca el cuerpo.
  */
 
-/** Tablas de la app; pg_graphql las expone como `<tabla>Collection`. */
+/**
+ * Tablas de la app; pg_graphql las expone como `<tabla>Collection`, con el
+ * nombre inflectado en camelCase (`opportunityDemandFactsCollection`).
+ */
 const DATA_API_TABLES = [
   "organizations",
   "profiles",
@@ -675,6 +770,7 @@ const DATA_API_TABLES = [
   "contacts",
   "opportunities",
   "vehicles",
+  "opportunity_demand_facts",
 ];
 /** Nombres que pg_graphql daría a los tipos de la app. */
 const GRAPHQL_APP_TYPES = [
@@ -685,7 +781,13 @@ const GRAPHQL_APP_TYPES = [
   "Contacts",
   "Opportunities",
   "Vehicles",
+  "OpportunityDemandFacts",
 ];
+
+/** Campo de colección de pg_graphql con nombres inflectados. */
+export function graphqlCollection(table: string): string {
+  return `${table.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())}Collection`;
+}
 
 export type DataApiProbeKind =
   "rest-table" | "rest-root" | "graphql-collection" | "graphql-schema";
@@ -730,7 +832,7 @@ export function exposesPoranduData(
     return false;
   }
   if (kind === "graphql-collection") {
-    return data?.[`${table}Collection`] != null;
+    return table !== undefined && data?.[graphqlCollection(table)] != null;
   }
   const schema = record(data?.__schema);
   const types = Array.isArray(schema?.types) ? schema.types : [];
@@ -824,7 +926,7 @@ export async function probeDataApi(
         "graphql-collection",
         `${supabaseUrl}/graphql/v1`,
         graphql(
-          `{ ${table}Collection(first: 1) { edges { node { __typename } } } }`,
+          `{ ${graphqlCollection(table)}(first: 1) { edges { node { __typename } } } }`,
         ),
         table,
       ),
