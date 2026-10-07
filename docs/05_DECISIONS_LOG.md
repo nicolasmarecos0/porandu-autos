@@ -42,6 +42,8 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-026 | Stock Surface Architecture | Aceptada | 2026-10-02 |
 | DEC-027 | Alta rápida de unidades (H1.3B) | Aceptada | 2026-10-02 |
 | DEC-028 | Disponibilidad de unidades (H1.3C) | Aceptada | 2026-10-04 |
+| DEC-029 | Roadmap Checkpoint H1 y contrato de demanda | Aceptada | 2026-10-06 |
+| DEC-030 | Demand Contract y Current Truth (H1.4) | Aceptada | 2026-10-06 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -402,6 +404,74 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   8. **Dependencia.** `@radix-ui/react-alert-dialog` queda aprobada como primitiva accesible para la confirmación de acciones con significado comercial.
 - **Aclara:** amplía DEC-027 §3 (las transiciones de estado requieren un flujo de UPDATE autorizado) y DEC-025 §4. Prevalece sobre la Build Baseline según DEC-002.
 - **Consecuencias:** `0006` se aplica a staging después del merge con `preflight → migrate → verify` (`expected_migrations = 0006_vehicle_availability`).
+
+## DEC-029 — Roadmap Checkpoint H1 y contrato de demanda
+- **Estado:** Aceptada · 2026-10-06. Propuesta en el Roadmap Checkpoint H1 y aprobada por el fundador el mismo día, junto con las 20 decisiones de producto que definen H1.4.
+- **Decisión:**
+  1. **Adquisición de datos.** Las conversaciones (WhatsApp) son una fuente principal de datos comerciales mediante extracción automática; el vendedor confirma, corrige o rechaza y no está obligado a cargar todo. Ratifica MC §9 y §39.
+  2. **Capas.** Domain Truth, Source/Evidence, Ingestion y Presentation se separan. El dominio no conoce proveedores (WhatsApp, BSP, LLM).
+  3. **H1.4 = contrato de demanda de la oportunidad:** hechos tipados append-only de una lista cerrada, Current Truth derivada por reglas puras y una única operación de ingesta agnóstica de fuente. El vendedor es la única fuente en H1.4. Amplía DEC-023 ("las preferencias estructuradas quedan para Qualification"): la estructura entra en H1.4 y la extracción en Hito 2.
+  4. **Estados.** Detectado, Confirmado, Corregido y Rechazado se persisten; Desconocido se deriva. El estado lo deriva el dominio según la fuente. Corregido es el reemplazo humano de una detección automática; un cambio real del cliente es un nuevo Confirmado. Amplía MC §9, VB §2 y BB §3.2.
+  5. **Prioridad humana.** Un dato con intervención humana solo cambia por un acto humano. Una detección posterior distinta queda pendiente y nunca se aplica sola. Precisa MC §9.
+  6. **Hechos del vehículo** derivados de conversaciones (precio, promociones, ofertas, disponibilidad) son propuestas con aprobación humana, en un dominio propio. No forman parte de H1.4.
+  7. **H1.5 = Match v0** determinista, síncrono y explicable, sin jobs ni IA, antes de WhatsApp. Reordena MC §34 y adelanta una fórmula provisoria respecto de DEC-005, que se registra en su propia DEC.
+  8. **H1.4 y H1.5** se entregan al piloto como una sola capacidad visible.
+  9. **Hito 2 se divide** en H2a (extracción asistida iniciada por el usuario, sobre requireTenant/withTenant) y H2b (Cloud API, que requiere un ADR de identidad de sistema que no satisfaga las policies de miembro).
+  10. **Tracks paralelos:** H0.9/E3 + provisioning (gate de piloto), trámites Meta/BSP y validación de la topología de WhatsApp con el piloto.
+  11. **Gobernanza:** se crea una baseline de Hito 1 (alcance, DoD, non-goals).
+- **Secuencia aprobada:** H1.4 Demand Contract → H1.5 Match v0 → **H1.6 — Opportunity Stages** → H2a assisted extraction → ADR-002 → H2b WhatsApp Cloud API. La etapa H1.6 se aprobó como "H1.6 lifecycle" y se renombra (C-7 de la spec H1.4): son las etapas y los estados terminales de la oportunidad, no el Lifecycle de posventa, que sigue fuera de alcance (CLAUDE.md §2, MC §28).
+- **Aclara / supersede:** DEC-023 (intención mínima), MC §9 / VB §2 / BB §3.2 (estados), MC §34 (orden H2/H3), DEC-005 (momento de la fórmula, solo para v0). Prevalece según DEC-002.
+- **Precisada por:** DEC-030, en el punto 4: Corregido también reemplaza un valor humano erróneo (C-2).
+- **Consecuencias:** el modelo concreto (tabla, policies, grants, postcondiciones) se registra como DEC-030 junto con la spec de H1.4. `interest_model` queda congelado como legado.
+
+## DEC-030 — Demand Contract y Current Truth (H1.4)
+- **Estado:** Aceptada · 2026-10-06. Formaliza el H1.4 SPEC FINAL aprobado por el fundador, con los conflictos C-1 a C-14 resueltos según la opción recomendada.
+- **Decisión:**
+  1. **Contrato de demanda.** Cada Opportunity es dueña de un contrato tipado de 6 facts, en una lista cerrada: agregar un fact requiere migración y DEC. Todos son opcionales; el que no se conoce es Unknown ("Sin dato", DEC-005).
+     - `desired_vehicle` `{ brand?, model? }`: al menos uno; un solo vehículo; sin `version` (C-4). Sin catálogo ni normalización de mayúsculas.
+     - `year_range` `{ min?, max? }`: al menos un extremo, 1900–2100, `min ≤ max`; el extremo ausente queda abierto.
+     - `budget_max` `{ amount, currency }`: precio total máximo del vehículo, `amount > 0`.
+     - `purchase_type`: `cash | financed | undecided`. `undecided` ("A definir") es una respuesta, no Unknown.
+     - `trade_in_intent`: `true | false`. `false` no es Unknown.
+     - `down_payment` `{ amount, currency }`: efectivo inicial, sin el valor del usado; `amount ≥ 0`, y `0` es "Sin entrega inicial" (C-6).
+  2. **Ledger append-only.** `opportunity_demand_facts` guarda una fila inmutable por afirmación: nada se actualiza ni se borra. Current Truth no se persiste: la deriva por fact el resolver puro y determinista `resolveDemand()` (`domains/demand`).
+  3. **Estados.** Se persisten `detected`, `confirmed`, `corrected` y `rejected`; `unknown` es derivado, con motivo (`never_captured`, `withdrawn`, `dismissed`, `inconsistent`). Máquina → `detected`; humano → `confirmed`, `corrected` o `rejected`. Ninguna transición de máquina produce `confirmed` ni `corrected`.
+     - **C-1:** si no hubo ningún acto humano sobre un fact, la detección más reciente (orden de máquina) es el valor vigente provisorio y conserva el estado `detected`. Si hubo un acto humano, las detecciones posteriores no lo reemplazan: a lo sumo quedan pendientes.
+     - **C-2:** `corrected` es un humano reemplazando un valor erróneo, sea un valor humano anterior o una detección, con `target` obligatorio. Un cambio real del cliente es un nuevo `confirmed`. Precisa DEC-029 §4.
+     - **C-3:** "Quitar" es un `rejected` sobre el valor humano vigente y significa error de carga. La retractación voluntaria del cliente sin reemplazo queda para una evolución posterior.
+  4. **Prioridad humana.** Un dato con intervención humana solo cambia por un acto humano.
+     - Cadena humana lineal por (oportunidad, fact): `previous_member_fact_id` con dos índices únicos parciales (un solo root y un solo sucesor).
+     - Compare-and-set: cada ítem humano lleva el head que vio el usuario (`basedOnHead`). Un 23505 sobre la cadena o un 40P01 → rollback, una sola re-planificación en una transacción nueva y resultado `unchanged` o `stale`. Prohibido `onConflictDoNothing` / `onConflictDoUpdate` en la tabla.
+     - Una detección posterior distinta queda pendiente y nunca se aplica sola. Con un pendiente sin resolver, un acto humano sobre ese fact devuelve `pending_unresolved`.
+     - Una captura con cualquier ítem `stale`, `pending_unresolved`, `invalid` o `inconsistent` se aborta entera: nada se escribe.
+  5. **Ingesta.** Una sola operación agnóstica de la fuente (`DemandCapture` → `planDemandCapture()`). En H1.4 la única fuente implementada es `member`. El cliente nunca envía `status`, `source_kind`, `recorded_by`, `recorded_at`, `organization_id` ni `id`: los deriva el planner o los fija la base.
+  6. **Evidencia, fuente y origen.**
+     - `evidence_text` opcional, de 1 a 500 caracteres: la "Nota de la edición" del vendedor. Sin conversaciones, mensajes completos, archivos ni fotos.
+     - Source (`source_kind` + `recorded_by`) y Origin quedan separados. Origin no se persiste en H1.4 (C-5); el diseño lo admite como columna aditiva.
+     - Los logs registran solo `{ name, code, constraint_name }`: nunca valores, notas ni la captura.
+     - PII inmutable (C-14): las filas son append-only y H1.4 no tiene redacción de evidencia histórica. Se acepta como limitación conocida.
+  7. **Dinero.** `numeric(14,2)` también para la demanda (amplía DEC-025 §5); `PYG | USD`; PYG sin decimales; sin FX ni conversión. Una moneda distinta a la del precio es "sin dato" para Match.
+  8. **Puertas de escritura (C-8).** Un único módulo de escritura, `db/queries/demand-facts.ts`, que usan `createOpportunity()` (en la misma transacción del alta) y la Server Action `recordDemand()`. ESLint impide importarlo desde cualquier otro lado. Autorización: membership activa AND role IN (`admin`, `seller`) (DEC-027 §4); cualquier miembro edita la demanda que cargó otro (DEC-023: sin responsable asignado). Validación manual en el dominio, sin Zod (C-10).
+  9. **Base de datos (`0007_opportunity_demand_facts`).**
+     - `opportunities` recibe `UNIQUE (organization_id, id)`, destino de la FK compuesta de la demanda.
+     - FKs RESTRICT: organización; (organización, oportunidad); `target` y `previous` dentro de la misma oportunidad y del mismo fact; `previous` solo hacia un acto humano; `recorded_by` → `profiles` (C-9: dar de baja un usuario es `active = false`; borrar de `auth.users` a un autor con historial falla).
+     - CHECKs con nombre y seguros frente a NULL: forma de cada fact, estado y `target`, fuente y estado, autor humano, cadena, auto-referencia y textos (C-12: `brand` ≤ 40, `model` ≤ 80, `evidence_text` ≤ 500, recortados y sin caracteres de control; solo en esta tabla).
+     - RLS: SELECT con membership activa; INSERT con membership activa, `source_kind = 'member'`, `status IN ('confirmed', 'corrected', 'rejected')`, `recorded_by = auth.uid()` y `recorded_at = now()`. Sin policies de UPDATE, DELETE ni ALL.
+     - Grants, diseño A: `authenticated` recibe SELECT e INSERT de tabla. Drizzle lista todas las columnas en el INSERT, así que un grant por columna sin `id` o `recorded_at` fallaría (42501); lo fijan las pruebas P0, P1 y P2 en PostgreSQL 17. Los valores que no elige el cliente los controla el WITH CHECK.
+     - `service_role`: REVOKE de UPDATE, DELETE y TRUNCATE sobre la tabla (C-11). El owner `postgres` es la limitación documentada.
+     - Postcondiciones de `0007`: las de `0006`, con la tabla en la allow-list de INSERT, sin policies de UPDATE/DELETE/ALL sobre ella, sin UPDATE de `authenticated` en ninguna de sus columnas y sin UPDATE/DELETE/TRUNCATE de `service_role`.
+  10. **UI.**
+      - Alta: "Lo que busca" reemplaza a "Modelo buscado" y "Versión" (C-4), con pago, entrega, usado, presupuesto y años opcionales detrás de un disclosure cerrado. Todo se escribe `confirmed` en la transacción del alta.
+      - `/opportunities`: resumen "Busca" y edición en un drawer (amplía DEC-017). Solo llega al navegador un resumen por oportunidad: sin evidencia, historial ni ids de usuario.
+      - `/opportunities/[id]`: mínima (DEC-017), con Current Truth, estado, explicación, historial append-only, autor ("Vos" / "Otro miembro"), fecha y nota.
+      - `interest_model` / `interest_version` quedan congelados como legado de solo lectura: sin backfill, no se escriben más y se muestran solo mientras `desired_vehicle` nunca se cargó.
+      - La carga de demanda no modifica `last_activity_at` (amplía DEC-024 §7).
+  11. **Match.** H1.5 consume un `DemandSnapshot` por oportunidad: valor, estado y `factId` por fact, sin historial ni evidencia. Rechazados, quitados, descartados e inconsistentes llegan como `unknown`; un pendiente nunca es el valor; el legado nunca se incluye. La fórmula, el peso de `detected` y las monedas distintas los decide H1.5 en su propia DEC.
+  12. **Ingesta futura (H2a / H2b).** Solo cambios aditivos: ampliar el CHECK de `source_kind`, una policy INSERT para `detected`, `observed_at`, `origin`, `confidence` / `basis`, `message_id` / `media_id` con FK compuesta, serialización de escritores por (oportunidad, fact), idempotencia por mensaje y una tabla de redacciones. ADR-002 (identidad de sistema) es previa a H2b y esa identidad no puede satisfacer la policy de INSERT de miembros.
+- **Aclara / supersede:** DEC-023 (intención mínima: las preferencias estructuradas entran en H1.4), DEC-024 §4 (el alta también escribe la demanda, en la misma transacción, y `recordDemand()` es la segunda puerta sobre el mismo módulo) y §7 (`last_activity_at`), DEC-025 §5 (`numeric(14,2)`), DEC-017 (edición de la demanda en `/opportunities`; `/opportunities/[id]` mínima), MC §9 / VB §2 / B1 §3.2 (se suman Rechazado y Desconocido) y DEC-029 §4 (C-2). Registra el desvío de DEC-009 (C-10: sin Zod). No requiere un ADR nuevo: ADR-001 alcanza. Prevalece según DEC-002.
+- **Consecuencias:**
+  - `0007_opportunity_demand_facts` se aplica a staging después del merge con `preflight → migrate → verify` (`expected_migrations = 0007_opportunity_demand_facts`).
+  - C-13: el commit documental `9da9cc1` (cierre de H1.3C) tiene que estar en `main` antes de dar H1.4 por cerrado.
 
 ---
 

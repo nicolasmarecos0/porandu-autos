@@ -19,6 +19,13 @@ import {
 import { FormField, inputClassName } from "@/components/ui/form-field";
 import { PlusIcon } from "@/components/ui/icons";
 import {
+  DEMAND_FORM_FIELDS,
+  EMPTY_DEMAND_FORM_VALUES,
+  type DemandFormErrors,
+  type DemandFormField,
+  type DemandFormValues,
+} from "@/domains/demand/form";
+import {
   SOURCE_LABELS,
   SOURCES,
   stageLabel,
@@ -32,16 +39,20 @@ import {
 import { createOpportunity } from "@/lib/opportunities/actions";
 import type { CreateOpportunityState } from "@/lib/opportunities/new-opportunity";
 
+import { DemandFields } from "./demand-fields";
+
 /*
  * Alta manual de una oportunidad (H1.2): botón "Nueva oportunidad" y drawer
  * lateral con el formulario mínimo. No conoce la base: envía el formulario a
  * la Server Action createOpportunity(), que valida en el servidor, resuelve
  * el contacto por teléfono y crea la oportunidad en la organización activa.
  *
- * El formulario solo tiene campos del contacto y del interés: ni
- * organización, ni etapa, ni campos ocultos. Mientras guarda no se puede
- * cerrar ni reenviar. Un error deja lo cargado para corregir o reintentar;
- * al crear, el drawer se cierra y la vista selecciona la oportunidad nueva.
+ * El formulario solo tiene campos del contacto, el origen y "Lo que busca"
+ * (H1.4: marca y modelo a la vista; pago, entrega, usado, presupuesto y años
+ * detrás de un disclosure cerrado, todo opcional). Ni organización, ni
+ * etapa, ni estados, ni campos ocultos. Mientras guarda no se puede cerrar
+ * ni reenviar. Un error deja lo cargado para corregir o reintentar; al
+ * crear, el drawer se cierra y la vista selecciona la oportunidad nueva.
  */
 
 export type OpportunityCreated = Extract<
@@ -79,7 +90,7 @@ export function NewOpportunityDrawer({ onCreated }: NewOpportunityDrawerProps) {
       </DrawerTrigger>
       <DrawerContent
         title="Nueva oportunidad"
-        description="Cargá el contacto y lo que busca. Si el teléfono ya es de un contacto, se usa ese."
+        description="Cargá el contacto y, si lo sabés, lo que busca. Si el teléfono ya es de un contacto, se usa ese."
         closeDisabled={saving}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
@@ -102,15 +113,18 @@ export function NewOpportunityDrawer({ onCreated }: NewOpportunityDrawerProps) {
   );
 }
 
+/** Campos del contacto y el origen: los de "Lo que busca" tienen su copy. */
+type ContactField = Exclude<NewOpportunityField, DemandFormField>;
+
 /** Copy es-PY de cada error. Ninguno expone detalles internos. */
-const REQUIRED: Partial<Record<NewOpportunityField, string>> = {
+const REQUIRED: Partial<Record<ContactField, string>> = {
   name: "Ingresá el nombre del contacto.",
   phone: "Ingresá el teléfono del contacto.",
   source: "Elegí por dónde llegó.",
 };
 
 function errorMessage(
-  field: NewOpportunityField,
+  field: ContactField,
   error: NewOpportunityFieldError,
 ): string {
   switch (error) {
@@ -124,6 +138,8 @@ function errorMessage(
       return "No es un teléfono válido. Revisá los dígitos (por ejemplo, 0981 123 456).";
     case "invalid_source":
       return "Elegí un origen de la lista.";
+    default:
+      return "Revisá este dato.";
   }
 }
 
@@ -157,6 +173,15 @@ function NewOpportunityForm({
       ? state.values
       : undefined;
   const errors = state?.status === "invalid" ? state.errors : {};
+  // "Lo que busca" es controlado: lo cargado se conserva entre intentos.
+  const [demand, setDemand] = useState<DemandFormValues>(
+    EMPTY_DEMAND_FORM_VALUES,
+  );
+  const demandErrors: DemandFormErrors = Object.fromEntries(
+    DEMAND_FORM_FIELDS.flatMap((field) =>
+      errors[field] ? [[field, errors[field]]] : [],
+    ),
+  );
   // Solo un origen de la lista vuelve al select.
   const echoedSource =
     SOURCES.find((source) => source === values?.source) ?? "";
@@ -186,7 +211,7 @@ function NewOpportunityForm({
   useEffect(() => settle(), [state]);
 
   /** Props de accesibilidad de un campo según su error. */
-  const described = (field: NewOpportunityField, hint?: boolean) => {
+  const described = (field: ContactField, hint?: boolean) => {
     const error = errors[field];
     const ids = [
       hint ? `${fieldId(field)}-hint` : null,
@@ -313,47 +338,18 @@ function NewOpportunityForm({
               ))}
             </select>
           </FormField>
-          <FormField
-            label="Modelo buscado"
-            optional
-            htmlFor={fieldId("interestModel")}
-            error={
-              errors.interestModel &&
-              errorMessage("interestModel", errors.interestModel)
-            }
-            errorId={`${fieldId("interestModel")}-error`}
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              placeholder="Toyota Hilux"
-              maxLength={NEW_OPPORTUNITY_MAX_LENGTH.interestModel}
-              defaultValue={values?.interestModel}
-              className={inputClassName}
-              {...described("interestModel")}
-            />
-          </FormField>
-          <FormField
-            label="Versión"
-            optional
-            htmlFor={fieldId("interestVersion")}
-            error={
-              errors.interestVersion &&
-              errorMessage("interestVersion", errors.interestVersion)
-            }
-            errorId={`${fieldId("interestVersion")}-error`}
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              placeholder="SRV 2.8 4x4 AT"
-              maxLength={NEW_OPPORTUNITY_MAX_LENGTH.interestVersion}
-              defaultValue={values?.interestVersion}
-              className={inputClassName}
-              {...described("interestVersion")}
-            />
-          </FormField>
         </fieldset>
+
+        <DemandFields
+          idPrefix={id}
+          values={demand}
+          onChange={(field, value) =>
+            setDemand((current) => ({ ...current, [field]: value }))
+          }
+          errors={demandErrors}
+          disabled={pending}
+          collapsible
+        />
       </div>
 
       <footer className="flex shrink-0 justify-end gap-2 border-t border-border-subtle bg-surface-2 px-5 py-3">

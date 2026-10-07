@@ -6,9 +6,11 @@ import type { Opportunity } from "@/domains/opportunities/types";
 import { VehicleVisual } from "./vehicle-visual";
 
 /*
- * Vehicle Rail: vehículo buscado, Top Match (resaltado), alternativa y
- * trade-in. Tarjetas apiladas con pares clave-valor, como la columna derecha
- * de la referencia.
+ * Vehicle Rail: Top Match (resaltado), alternativa y trade-in. Tarjetas
+ * apiladas con pares clave-valor, como la columna derecha de la referencia.
+ * Lo que busca el cliente (la card "Busca") sale de la demanda estructurada
+ * (H1.4, components/opportunities/demand-card.tsx). Sin fuente todavía, nada
+ * de esto se muestra con datos reales.
  */
 
 function Pill({
@@ -32,9 +34,6 @@ function Pill({
   );
 }
 
-/** Dato que la fuente todavía no trae. */
-const NO_DATA = <span className="text-text-muted">Sin dato</span>;
-
 function KeyValues({ rows }: { rows: readonly [string, ReactNode][] }) {
   return (
     <dl className="grid flex-1 grid-cols-[5.5rem_1fr] gap-x-2 gap-y-1 text-label">
@@ -49,40 +48,9 @@ function KeyValues({ rows }: { rows: readonly [string, ReactNode][] }) {
 }
 
 export function VehicleRail({ opportunity }: { opportunity: Opportunity }) {
-  const { interest, topMatch: match, alternative, tradeIn } = opportunity;
+  const { topMatch: match, alternative, tradeIn } = opportunity;
   return (
     <>
-      <section
-        aria-label="Vehículo buscado"
-        className="shrink-0 rounded-lg bg-surface-1 p-4 shadow-card"
-      >
-        <header className="flex items-center gap-2">
-          <h3 className="text-label text-text-muted">Busca</h3>
-          {interest.condition ? (
-            <Pill tone="neutral">{interest.condition}</Pill>
-          ) : null}
-          {tradeIn ? <Pill tone="brand">Con trade-in</Pill> : null}
-        </header>
-        <p className="mt-2 text-heading text-text-primary">
-          {interest.quantity ? `${interest.quantity}× ` : null}
-          {interest.model ?? "Vehículo sin definir"}
-        </p>
-        {interest.version ? (
-          <p className="text-label text-text-secondary">{interest.version}</p>
-        ) : null}
-        <div className="mt-3 flex items-end gap-3">
-          <KeyValues
-            rows={[
-              ["Presupuesto", interest.budget ?? NO_DATA],
-              ["Pago", interest.payment?.split(" · ")[0] ?? NO_DATA],
-            ]}
-          />
-          {interest.body ? (
-            <VehicleVisual body={interest.body} className="h-20 w-34" />
-          ) : null}
-        </div>
-      </section>
-
       {match ? (
         <section
           aria-label="Top Match"

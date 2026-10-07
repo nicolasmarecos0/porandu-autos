@@ -13,6 +13,10 @@ import { describe, expect, it } from "vitest";
  * - la disponibilidad de una unidad (db/queries/mark-vehicle-available),
  *   también: la Server Action markVehicleAvailable() (lib/vehicles/actions.ts);
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
+ * - la demanda (H1.4) tiene un único módulo de escritura
+ *   (db/queries/demand-facts), que solo usan el alta
+ *   (db/queries/create-opportunity) y la Server Action recordDemand()
+ *   (lib/opportunities/actions.ts), y que nunca usa ON CONFLICT;
  * - libphonenumber-js (y su metadata) solo vive detrás de
  *   lib/contacts/phone.ts, que es server-only.
  */
@@ -181,6 +185,97 @@ describe(
           `import type { AvailabilityTransition } from "@/db/queries/mark-vehicle-available";\nexport type T = AvailabilityTransition;\n`,
         ),
       ).toEqual([]);
+    });
+  },
+);
+
+const importDemandWrite = `import { recordDemandCapture } from "@/db/queries/demand-facts";\nexport const use = recordDemandCapture;\n`;
+
+describe(
+  "un único módulo de escritura para la demanda (H1.4, C-8)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/opportunities/page.tsx",
+      "components/opportunities/opportunities-view.tsx",
+      "components/opportunities/new-opportunity-drawer.tsx",
+      "domains/demand/planner.ts",
+      "lib/opportunities/new-opportunity.ts",
+      "lib/opportunities/demand-form.ts",
+      "lib/vehicles/actions.ts",
+      "lib/tenant/session.ts",
+      "lib/contacts/phone.ts",
+      "db/queries/opportunities.ts",
+      "db/queries/demand-rows.ts",
+      "db/queries/create-vehicle.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importDemandWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/opportunities.ts",
+          `import { appendDemand } from "./demand-facts";\nexport const use = appendDemand;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en el alta (misma transacción) y en la Server Action recordDemand()", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/create-opportunity.ts",
+          `import { appendDemand } from "./demand-facts";\nexport const use = appendDemand;\n`,
+        ),
+      ).toEqual([]);
+      expect(
+        await restrictedBy("lib/opportunities/actions.ts", importDemandWrite),
+      ).toEqual([]);
+    });
+
+    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/opportunities/record-demand.ts",
+          `import type { DemandWriteOutcome } from "@/db/queries/demand-facts";\nexport type O = DemandWriteOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+
+    it("el schema puede exportar su tabla: el guard es del módulo de escritura", async () => {
+      expect(
+        await restrictedBy(
+          "db/schema/index.ts",
+          `export * from "./opportunity-demand-facts";\n`,
+        ),
+      ).toEqual([]);
+    });
+
+    it.each(["onConflictDoNothing", "onConflictDoUpdate"])(
+      "el módulo de escritura no usa %s (append-only, compare-and-set)",
+      async (method) => {
+        expect(
+          await restrictedBy(
+            "db/queries/demand-facts.ts",
+            `export const run = (q: { ${method}: (x?: unknown) => unknown }) => q.${method}();\n`,
+          ),
+        ).toContain("no-restricted-syntax");
+      },
+    );
+
+    it("db/queries/demand-facts.ts no importa db/client", async () => {
+      for (const code of [
+        `import { getDb } from "../client";\nexport const use = getDb;\n`,
+        `export const use = () => import("../client");\n`,
+      ]) {
+        expect(
+          await restrictedBy("db/queries/demand-facts.ts", code),
+        ).not.toEqual([]);
+      }
     });
   },
 );

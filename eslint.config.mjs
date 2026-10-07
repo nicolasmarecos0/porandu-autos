@@ -159,6 +159,30 @@ const markVehicleAvailableImport = {
   message: MARK_VEHICLE_AVAILABLE_MESSAGE,
 };
 
+// H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
+// db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
+// (db/queries/create-opportunity.ts, en su misma transacción) y la Server
+// Action recordDemand() (lib/opportunities/actions.ts), que obtiene el
+// contexto con requireTenant() antes de escribir.
+const DEMAND_FACTS_MESSAGE =
+  "Demand facts are written only through db/queries/demand-facts.ts, from createOpportunityWithContact() (db/queries/create-opportunity.ts) and the recordDemand() Server Action (lib/opportunities/actions.ts).";
+const demandFactsImport = {
+  regex: "(^|/)db/queries/demand-facts$|^\\.{1,2}/demand-facts$",
+  // Los tipos del resultado (DemandWriteOutcome) no escriben nada.
+  allowTypeImports: true,
+  message: DEMAND_FACTS_MESSAGE,
+};
+
+// H1.4: el ledger de demanda nunca usa ON CONFLICT. DO NOTHING descartaría
+// en silencio un acto humano y DO UPDATE editaría una fila append-only: un
+// choque de la cadena se re-planifica (compare-and-set).
+const noDemandOnConflict = {
+  selector:
+    "CallExpression[callee.property.name=/^onConflictDo(Nothing|Update)$/]",
+  message:
+    "opportunity_demand_facts is append-only: never use ON CONFLICT. A chain conflict (23505/40P01) is re-planned (DEC-030 §4).",
+};
+
 // H1.2: libphonenumber-js (y su metadata) solo vive en el servidor, detrás
 // de lib/contacts/phone.ts (`import "server-only"`).
 const PHONE_LIBRARY_MESSAGE =
@@ -176,6 +200,7 @@ const basePatterns = [
   createOpportunityImport,
   createVehicleImport,
   markVehicleAvailableImport,
+  demandFactsImport,
   phoneLibraryImport,
 ];
 
@@ -225,6 +250,34 @@ const eslintConfig = defineConfig([
         {
           patterns: [...basePatterns, dbClientRelativeImport],
         },
+      ],
+    },
+  },
+  // H1.4: el alta escribe la demanda en su misma transacción, por el único
+  // módulo de escritura.
+  {
+    files: ["db/queries/create-opportunity.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ...basePatterns.filter((pattern) => pattern !== demandFactsImport),
+            dbClientRelativeImport,
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["db/queries/demand-facts.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...noMigrationUrl,
+        noDbClientDynamicImport,
+        noDbClientRelativeDynamicImport,
+        noDemandOnConflict,
       ],
     },
   },
@@ -298,6 +351,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            demandFactsImport,
             phoneLibraryImport,
           ],
         },
@@ -318,13 +372,15 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            demandFactsImport,
             phoneLibraryImport,
           ],
         },
       ],
     },
   },
-  // Única puerta del alta de oportunidades (H1.2).
+  // Única puerta del alta de oportunidades (H1.2) y de la edición de la
+  // demanda (H1.4, recordDemand()).
   {
     files: ["lib/opportunities/actions.ts"],
     rules: {
@@ -358,6 +414,7 @@ const eslintConfig = defineConfig([
             resolveTenantImport,
             opportunitiesMockImport,
             createOpportunityImport,
+            demandFactsImport,
             phoneLibraryImport,
             stockMockImport,
           ],
@@ -380,6 +437,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            demandFactsImport,
           ],
         },
       ],
@@ -400,6 +458,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            demandFactsImport,
             phoneLibraryImport,
           ],
         },

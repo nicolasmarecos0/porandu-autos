@@ -1,3 +1,5 @@
+import { formatMoney, groupThousands, type Currency } from "@/domains/money";
+
 /*
  * Stock: unidades del inventario de una organización (H1.3A). Tipos, copy y
  * derivaciones de presentación, puras: no cargan datos ni conocen la base.
@@ -10,7 +12,7 @@
 export type VehicleStatus = "inPreparation" | "available" | "reserved" | "sold";
 
 /** Moneda del precio publicado. No se convierte entre monedas. */
-export type Currency = "PYG" | "USD";
+export type { Currency };
 
 /** Precio publicado exacto: decimal en texto, nunca un `number` (float). */
 export type Price = Readonly<{ amount: string; currency: Currency }>;
@@ -48,31 +50,13 @@ export function vehicleStatusLabel(status: VehicleStatus): string {
   return VEHICLE_STATUSES.find((item) => item.id === status)?.label ?? status;
 }
 
-const CURRENCY_PREFIX: Readonly<Record<Currency, string>> = {
-  USD: "USD",
-  PYG: "Gs.",
-};
-
-/** Agrupa los miles con punto (es-PY): "49900" → "49.900". */
-function groupThousands(digits: string): string {
-  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-}
-
-const DECIMAL = /^(\d+)(?:\.(\d+))?$/;
-
 /**
  * Precio para mostrar, con el formato del contrato visual de B1 ("USD 49.900",
- * "Gs. 150.000.000"). Trabaja sobre el texto decimal, sin pasar por float:
- * el valor que se ve es exactamente el guardado. Los centavos solo aparecen
- * si existen ("USD 49.900,50").
+ * "Gs. 150.000.000"): el de todo dinero de Porandú (domains/money.ts), exacto
+ * y sin pasar por float.
  */
-export function formatPrice({ amount, currency }: Price): string {
-  const match = DECIMAL.exec(amount.trim());
-  if (!match) throw new Error(`invalid decimal amount: ${amount}`);
-  const integer = match[1]!.replace(/^0+(?=\d)/, "");
-  const cents = (match[2] ?? "").replace(/0+$/, "");
-  const fraction = cents === "" ? "" : `,${cents.padEnd(2, "0")}`;
-  return `${CURRENCY_PREFIX[currency]} ${groupThousands(integer)}${fraction}`;
+export function formatPrice(price: Price): string {
+  return formatMoney(price);
 }
 
 /** Kilometraje para mostrar: "0 km", "142.000 km". */

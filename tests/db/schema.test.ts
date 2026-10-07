@@ -271,6 +271,8 @@ describe("opportunities (H1.1)", () => {
         "CHECK ((stage = ANY (ARRAY['new'::text, 'qualified'::text, 'test_drive'::text, 'negotiation'::text])))",
       opportunities_source_check:
         "CHECK ((source = ANY (ARRAY['whatsapp'::text, 'meta_ads'::text, 'web'::text, 'showroom'::text, 'referral'::text])))",
+      // H1.4: destino de la FK compuesta de opportunity_demand_facts.
+      opportunities_organization_id_id_key: "UNIQUE (organization_id, id)",
     });
   });
 
@@ -282,6 +284,8 @@ describe("opportunities (H1.1)", () => {
         "CREATE INDEX opportunities_organization_id_last_activity_at_idx ON public.opportunities USING btree (organization_id, last_activity_at DESC)",
       opportunities_organization_id_contact_id_idx:
         "CREATE INDEX opportunities_organization_id_contact_id_idx ON public.opportunities USING btree (organization_id, contact_id)",
+      opportunities_organization_id_id_key:
+        "CREATE UNIQUE INDEX opportunities_organization_id_id_key ON public.opportunities USING btree (organization_id, id)",
     });
   });
 });
@@ -335,6 +339,471 @@ describe("vehicles (H1.3A)", () => {
   });
 });
 
+describe("opportunity_demand_facts (H1.4)", () => {
+  it("columnas: ledger con fact, estado, fuente, autor, reloj de la base, enlaces y valor por fact", async () => {
+    const nullable = (name: string, type: string) => ({
+      name,
+      type,
+      notNull: false,
+      default: null,
+    });
+    expect(await columns(db.admin, "opportunity_demand_facts")).toEqual([
+      {
+        name: "id",
+        type: "uuid",
+        notNull: true,
+        default: "gen_random_uuid()",
+      },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "opportunity_id", type: "uuid", notNull: true, default: null },
+      { name: "fact", type: "text", notNull: true, default: null },
+      { name: "status", type: "text", notNull: true, default: null },
+      { name: "source_kind", type: "text", notNull: true, default: null },
+      nullable("recorded_by", "uuid"),
+      // timestamptz sin precisión reducida: el reloj de la base, el mismo
+      // now() que exige la policy de alta.
+      {
+        name: "recorded_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+      nullable("target_fact_id", "uuid"),
+      nullable("previous_member_fact_id", "uuid"),
+      nullable("brand", "text"),
+      nullable("model", "text"),
+      nullable("year_min", "smallint"),
+      nullable("year_max", "smallint"),
+      nullable("amount", "numeric(14,2)"),
+      nullable("currency", "text"),
+      nullable("purchase_type", "text"),
+      nullable("trade_in", "boolean"),
+      nullable("evidence_text", "text"),
+    ]);
+  });
+
+  it("PK, FKs RESTRICT (organización, oportunidad de la misma organización, autor, target y previous dentro del mismo fact) y CHECKs con nombre", async () => {
+    expect(await constraints(db.admin, "opportunity_demand_facts")).toEqual({
+      opportunity_demand_facts_pkey: "PRIMARY KEY (id)",
+      opportunity_demand_facts_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      opportunity_demand_facts_opportunity_fk:
+        "FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+      opportunity_demand_facts_recorded_by_profiles_id_fk:
+        "FOREIGN KEY (recorded_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+      opportunity_demand_facts_target_fk:
+        "FOREIGN KEY (organization_id, opportunity_id, fact, target_fact_id) REFERENCES opportunity_demand_facts(organization_id, opportunity_id, fact, id) ON DELETE RESTRICT",
+      opportunity_demand_facts_previous_fk:
+        "FOREIGN KEY (organization_id, opportunity_id, fact, source_kind, previous_member_fact_id) REFERENCES opportunity_demand_facts(organization_id, opportunity_id, fact, source_kind, id) ON DELETE RESTRICT",
+      opportunity_demand_facts_scope_key:
+        "UNIQUE (organization_id, opportunity_id, fact, id)",
+      opportunity_demand_facts_scope_source_key:
+        "UNIQUE (organization_id, opportunity_id, fact, source_kind, id)",
+      opportunity_demand_facts_fact_check:
+        "CHECK ((fact = ANY (ARRAY['desired_vehicle'::text, 'year_range'::text, 'budget_max'::text, 'purchase_type'::text, 'trade_in_intent'::text, 'down_payment'::text])))",
+      opportunity_demand_facts_status_check:
+        "CHECK ((status = ANY (ARRAY['detected'::text, 'confirmed'::text, 'corrected'::text, 'rejected'::text])))",
+      opportunity_demand_facts_source_kind_check:
+        "CHECK ((source_kind = 'member'::text))",
+      opportunity_demand_facts_currency_check:
+        "CHECK ((currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
+      opportunity_demand_facts_purchase_type_check:
+        "CHECK ((purchase_type = ANY (ARRAY['cash'::text, 'financed'::text, 'undecided'::text])))",
+      opportunity_demand_facts_value_check: `CHECK (
+CASE
+    WHEN (status = 'rejected'::text) THEN (num_nonnulls(brand, model, year_min, year_max, amount, currency, purchase_type, trade_in) = 0)
+    WHEN (fact = 'desired_vehicle'::text) THEN ((num_nonnulls(brand, model) >= 1) AND (num_nonnulls(year_min, year_max, amount, currency, purchase_type, trade_in) = 0))
+    WHEN (fact = 'year_range'::text) THEN ((num_nonnulls(year_min, year_max) >= 1) AND COALESCE(((year_min >= 1900) AND (year_min <= 2100)), true) AND COALESCE(((year_max >= 1900) AND (year_max <= 2100)), true) AND COALESCE((year_min <= year_max), true) AND (num_nonnulls(brand, model, amount, currency, purchase_type, trade_in) = 0))
+    WHEN (fact = 'budget_max'::text) THEN ((num_nonnulls(amount, currency) = 2) AND (amount > (0)::numeric) AND ((currency <> 'PYG'::text) OR (amount = trunc(amount))) AND (num_nonnulls(brand, model, year_min, year_max, purchase_type, trade_in) = 0))
+    WHEN (fact = 'down_payment'::text) THEN ((num_nonnulls(amount, currency) = 2) AND (amount >= (0)::numeric) AND ((currency <> 'PYG'::text) OR (amount = trunc(amount))) AND (num_nonnulls(brand, model, year_min, year_max, purchase_type, trade_in) = 0))
+    WHEN (fact = 'purchase_type'::text) THEN ((purchase_type IS NOT NULL) AND (num_nonnulls(brand, model, year_min, year_max, amount, currency, trade_in) = 0))
+    WHEN (fact = 'trade_in_intent'::text) THEN ((trade_in IS NOT NULL) AND (num_nonnulls(brand, model, year_min, year_max, amount, currency, purchase_type) = 0))
+    ELSE false
+END)`,
+      opportunity_demand_facts_status_target_check:
+        "CHECK ((((status <> ALL (ARRAY['rejected'::text, 'corrected'::text])) OR (target_fact_id IS NOT NULL)) AND ((status <> 'detected'::text) OR ((target_fact_id IS NULL) AND (previous_member_fact_id IS NULL)))))",
+      opportunity_demand_facts_source_status_check:
+        "CHECK (((status = 'detected'::text) = (source_kind <> 'member'::text)))",
+      opportunity_demand_facts_member_author_check:
+        "CHECK (((source_kind <> 'member'::text) OR (recorded_by IS NOT NULL)))",
+      opportunity_demand_facts_member_chain_check:
+        "CHECK (((source_kind = 'member'::text) OR (previous_member_fact_id IS NULL)))",
+      opportunity_demand_facts_self_reference_check:
+        "CHECK ((((target_fact_id IS NULL) OR (target_fact_id <> id)) AND ((previous_member_fact_id IS NULL) OR (previous_member_fact_id <> id))))",
+      opportunity_demand_facts_text_check:
+        "CHECK ((((brand IS NULL) OR (((char_length(brand) >= 1) AND (char_length(brand) <= 40)) AND (brand = btrim(brand)) AND (brand !~ '[[:cntrl:]]'::text))) AND ((model IS NULL) OR (((char_length(model) >= 1) AND (char_length(model) <= 80)) AND (model = btrim(model)) AND (model !~ '[[:cntrl:]]'::text))) AND ((evidence_text IS NULL) OR (((char_length(evidence_text) >= 1) AND (char_length(evidence_text) <= 500)) AND (evidence_text = btrim(evidence_text)) AND (evidence_text !~ '[[:cntrl:]]'::text)))))",
+    });
+  });
+
+  it("índices: todos empiezan por organization_id; la cadena humana tiene un root y un sucesor por acto", async () => {
+    expect(await indexes(db.admin, "opportunity_demand_facts")).toEqual({
+      opportunity_demand_facts_pkey:
+        "CREATE UNIQUE INDEX opportunity_demand_facts_pkey ON public.opportunity_demand_facts USING btree (id)",
+      opportunity_demand_facts_scope_key:
+        "CREATE UNIQUE INDEX opportunity_demand_facts_scope_key ON public.opportunity_demand_facts USING btree (organization_id, opportunity_id, fact, id)",
+      opportunity_demand_facts_scope_source_key:
+        "CREATE UNIQUE INDEX opportunity_demand_facts_scope_source_key ON public.opportunity_demand_facts USING btree (organization_id, opportunity_id, fact, source_kind, id)",
+      opportunity_demand_facts_member_root_key:
+        "CREATE UNIQUE INDEX opportunity_demand_facts_member_root_key ON public.opportunity_demand_facts USING btree (organization_id, opportunity_id, fact) WHERE ((source_kind = 'member'::text) AND (previous_member_fact_id IS NULL))",
+      opportunity_demand_facts_member_next_key:
+        "CREATE UNIQUE INDEX opportunity_demand_facts_member_next_key ON public.opportunity_demand_facts USING btree (organization_id, opportunity_id, fact, previous_member_fact_id) WHERE ((source_kind = 'member'::text) AND (previous_member_fact_id IS NOT NULL))",
+    });
+  });
+});
+
+describe("constraints de opportunity_demand_facts con datos (H1.4)", () => {
+  const OPP_1 = "30000000-0000-4000-8000-000000000001";
+  const OPP_1B = "30000000-0000-4000-8000-000000000002";
+
+  class Undo extends Error {}
+
+  type Row = Record<string, string | number | boolean | null>;
+
+  /** Usuarios, organizaciones y dos oportunidades de ORG_1. */
+  async function seedDemand(tx: TransactionSql): Promise<void> {
+    await seed(tx);
+    await tx`
+      INSERT INTO public.opportunities (id, organization_id, contact_id, stage, source)
+      VALUES (${OPP_1}, ${ORG_1}, ${CONTACT_1}, 'new', 'web'),
+        (${OPP_1B}, ${ORG_1}, ${CONTACT_1}, 'new', 'web')
+    `;
+  }
+
+  function row(overrides: Row): Row {
+    return {
+      organization_id: ORG_1,
+      opportunity_id: OPP_1,
+      status: "confirmed",
+      source_kind: "member",
+      recorded_by: USER_A,
+      ...overrides,
+    };
+  }
+
+  function insert(sp: TransactionSql, values: Row) {
+    return sp<{ id: string }[]>`
+      INSERT INTO public.opportunity_demand_facts ${sp(values)} RETURNING id
+    `;
+  }
+
+  /** Intenta el INSERT y lo deshace siempre: "ok" o el SQLSTATE. */
+  async function attempt(tx: TransactionSql, values: Row): Promise<string> {
+    try {
+      await tx.savepoint(async (sp) => {
+        await insert(sp, values);
+        throw new Undo();
+      });
+    } catch (error) {
+      if (error instanceof Undo) return "ok";
+      return (error as { code?: string }).code ?? String(error);
+    }
+    return "unreachable";
+  }
+
+  const valid: [string, Row][] = [
+    ["vehículo con modelo", { fact: "desired_vehicle", model: "Hilux" }],
+    ["vehículo con marca", { fact: "desired_vehicle", brand: "Toyota" }],
+    [
+      "vehículo con marca y modelo",
+      { fact: "desired_vehicle", brand: "Toyota", model: "Hilux" },
+    ],
+    [
+      "textos al límite",
+      {
+        fact: "desired_vehicle",
+        brand: "x".repeat(40),
+        model: "y".repeat(80),
+        evidence_text: "z".repeat(500),
+      },
+    ],
+    ["años desde", { fact: "year_range", year_min: 2022 }],
+    ["años hasta", { fact: "year_range", year_max: 2020 }],
+    ["años iguales", { fact: "year_range", year_min: 2022, year_max: 2022 }],
+    [
+      "presupuesto PYG",
+      { fact: "budget_max", amount: "250000000", currency: "PYG" },
+    ],
+    [
+      "presupuesto USD con centavos",
+      { fact: "budget_max", amount: "29990.50", currency: "USD" },
+    ],
+    ["entrega 0 (C-6)", { fact: "down_payment", amount: "0", currency: "PYG" }],
+    ["tipo de compra", { fact: "purchase_type", purchase_type: "undecided" }],
+    ["usado: no", { fact: "trade_in_intent", trade_in: false }],
+  ];
+
+  it.each(valid)("acepta %s", async (_, values) => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedDemand(tx);
+      expect(await attempt(tx, row(values))).toBe("ok");
+    });
+  });
+
+  const invalid: [string, Row][] = [
+    ["vehículo vacío", { fact: "desired_vehicle" }],
+    [
+      "vehículo con años",
+      { fact: "desired_vehicle", model: "Hilux", year_min: 2020 },
+    ],
+    ["marca en blanco", { fact: "desired_vehicle", brand: "  " }],
+    [
+      "marca con espacios en los bordes",
+      { fact: "desired_vehicle", brand: " Toyota" },
+    ],
+    [
+      "modelo con salto de línea",
+      { fact: "desired_vehicle", model: "Hilux\n" },
+    ],
+    [
+      "modelo con carácter de control",
+      { fact: "desired_vehicle", model: "Hi\u0007lux" },
+    ],
+    [
+      "marca de 41 caracteres",
+      { fact: "desired_vehicle", brand: "x".repeat(41) },
+    ],
+    [
+      "modelo de 81 caracteres",
+      { fact: "desired_vehicle", model: "y".repeat(81) },
+    ],
+    [
+      "nota de 501 caracteres",
+      {
+        fact: "desired_vehicle",
+        model: "Hilux",
+        evidence_text: "z".repeat(501),
+      },
+    ],
+    [
+      "nota vacía",
+      { fact: "desired_vehicle", model: "Hilux", evidence_text: "" },
+    ],
+    ["años vacíos", { fact: "year_range" }],
+    ["año 1850", { fact: "year_range", year_min: 1850 }],
+    ["año 2101", { fact: "year_range", year_max: 2101 }],
+    [
+      "desde mayor que hasta",
+      { fact: "year_range", year_min: 2023, year_max: 2020 },
+    ],
+    ["presupuesto sin monto", { fact: "budget_max", currency: "PYG" }],
+    ["presupuesto sin moneda", { fact: "budget_max", amount: "250000000" }],
+    ["presupuesto 0", { fact: "budget_max", amount: "0", currency: "PYG" }],
+    [
+      "presupuesto negativo",
+      { fact: "budget_max", amount: "-1", currency: "USD" },
+    ],
+    [
+      "presupuesto PYG con decimales",
+      { fact: "budget_max", amount: "150000000.5", currency: "PYG" },
+    ],
+    [
+      "presupuesto en BRL",
+      { fact: "budget_max", amount: "1000", currency: "BRL" },
+    ],
+    [
+      "presupuesto con modelo",
+      { fact: "budget_max", amount: "1000", currency: "USD", model: "Hilux" },
+    ],
+    [
+      "entrega negativa",
+      { fact: "down_payment", amount: "-1", currency: "PYG" },
+    ],
+    [
+      "entrega PYG con decimales",
+      { fact: "down_payment", amount: "50000000.5", currency: "PYG" },
+    ],
+    ["entrega sin monto", { fact: "down_payment", currency: "PYG" }],
+    ["tipo de compra vacío", { fact: "purchase_type" }],
+    ["tipo de compra mixed", { fact: "purchase_type", purchase_type: "mixed" }],
+    ["usado vacío", { fact: "trade_in_intent" }],
+    [
+      "usado con tipo de compra",
+      { fact: "trade_in_intent", trade_in: true, purchase_type: "cash" },
+    ],
+    ["fact desconocido (version)", { fact: "version", model: "SRV" }],
+    [
+      "un rechazo con valor",
+      {
+        fact: "purchase_type",
+        status: "rejected",
+        purchase_type: "cash",
+        target_fact_id: CONTACT_1,
+      },
+    ],
+    ["un rechazo sin target", { fact: "purchase_type", status: "rejected" }],
+    [
+      "una corrección sin target",
+      { fact: "purchase_type", status: "corrected", purchase_type: "cash" },
+    ],
+    [
+      "un miembro que detecta",
+      { fact: "purchase_type", status: "detected", purchase_type: "cash" },
+    ],
+    [
+      "una fuente que no es un miembro",
+      {
+        fact: "purchase_type",
+        source_kind: "extractor",
+        status: "detected",
+        recorded_by: null,
+        purchase_type: "cash",
+      },
+    ],
+    [
+      "un miembro sin autor",
+      { fact: "purchase_type", recorded_by: null, purchase_type: "cash" },
+    ],
+    [
+      "un estado desconocido",
+      { fact: "purchase_type", status: "unknown", purchase_type: "cash" },
+    ],
+  ];
+
+  it.each(invalid)("rechaza %s (23514)", async (_, values) => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedDemand(tx);
+      expect(await attempt(tx, row(values))).toBe("23514");
+    });
+  });
+
+  it("un acto no puede apuntarse a sí mismo (23514)", async () => {
+    const id = "40000000-0000-4000-8000-000000000001";
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedDemand(tx);
+      for (const link of ["target_fact_id", "previous_member_fact_id"]) {
+        expect(
+          await attempt(
+            tx,
+            row({
+              id,
+              fact: "purchase_type",
+              status: "corrected",
+              purchase_type: "cash",
+              target_fact_id: id,
+              [link]: id,
+            }),
+          ),
+        ).toBe("23514");
+      }
+    });
+  });
+
+  it.each([
+    "organization_id",
+    "opportunity_id",
+    "fact",
+    "status",
+    "source_kind",
+    "recorded_at",
+  ])("%s es obligatorio (23502)", async (column) => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedDemand(tx);
+      expect(
+        await attempt(
+          tx,
+          row({ fact: "purchase_type", purchase_type: "cash", [column]: null }),
+        ),
+      ).toBe("23502");
+    });
+  });
+
+  it("DB3: la cadena humana es lineal (un root, un sucesor) y su predecesor es del mismo fact y oportunidad", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedDemand(tx);
+      const purchase = { fact: "purchase_type", purchase_type: "cash" };
+      const [root] = await insert(tx, row(purchase));
+      // Un segundo root del mismo fact: 23505.
+      expect(
+        await attempt(tx, row({ ...purchase, purchase_type: "financed" })),
+      ).toBe("23505");
+      // Otro fact u otra oportunidad tienen su propio root.
+      expect(
+        await attempt(tx, row({ fact: "trade_in_intent", trade_in: true })),
+      ).toBe("ok");
+      expect(
+        await attempt(tx, row({ ...purchase, opportunity_id: OPP_1B })),
+      ).toBe("ok");
+
+      const next = {
+        ...purchase,
+        purchase_type: "financed",
+        target_fact_id: root!.id,
+        previous_member_fact_id: root!.id,
+      };
+      await insert(tx, row(next));
+      // Un segundo sucesor del mismo acto: 23505.
+      expect(
+        await attempt(tx, row({ ...next, purchase_type: "undecided" })),
+      ).toBe("23505");
+      // Un predecesor de otro fact o de otra oportunidad: 23503.
+      expect(
+        await attempt(
+          tx,
+          row({
+            fact: "trade_in_intent",
+            trade_in: true,
+            previous_member_fact_id: root!.id,
+          }),
+        ),
+      ).toBe("23503");
+      expect(await attempt(tx, row({ ...next, opportunity_id: OPP_1B }))).toBe(
+        "23503",
+      );
+      // Las FKs entrantes son RESTRICT: un acto citado no se borra.
+      await expect(
+        tx.savepoint(
+          (sp) =>
+            sp`DELETE FROM public.opportunity_demand_facts WHERE id = ${root!.id}`,
+        ),
+      ).rejects.toMatchObject({ code: "23503" });
+    });
+  });
+
+  it("DB3: el predecesor de un acto humano tiene que ser humano (FK con source_kind): 23503", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedDemand(tx);
+      // Solo para el test: sin los CHECKs de fuente, una detección.
+      await tx.unsafe(`
+        ALTER TABLE public.opportunity_demand_facts
+          DROP CONSTRAINT opportunity_demand_facts_source_kind_check
+      `);
+      const [detected] = await insert(
+        tx,
+        row({
+          fact: "purchase_type",
+          status: "detected",
+          source_kind: "extractor",
+          recorded_by: null,
+          purchase_type: "financed",
+        }),
+      );
+      expect(
+        await attempt(
+          tx,
+          row({
+            fact: "purchase_type",
+            purchase_type: "financed",
+            target_fact_id: detected!.id,
+            previous_member_fact_id: detected!.id,
+          }),
+        ),
+      ).toBe("23503");
+      // Apuntarla como target sí vale (confirmar una detección), sin
+      // previous: es el root humano.
+      expect(
+        await attempt(
+          tx,
+          row({
+            fact: "purchase_type",
+            purchase_type: "financed",
+            target_fact_id: detected!.id,
+          }),
+        ),
+      ).toBe("ok");
+    });
+  });
+});
+
 describe("invariantes de tenancy (ADR-001 §3.6)", () => {
   it("toda tabla de public tiene RLS habilitado", async () => {
     const tables = await tenancy(db.admin);
@@ -359,6 +828,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
       "contacts",
       "memberships",
       "opportunities",
+      "opportunity_demand_facts",
       "vehicles",
     ]);
     for (const table of tenantScoped) {
@@ -830,6 +1300,7 @@ describe("acceso directo por rol, sin withTenant", () => {
     "contacts",
     "opportunities",
     "vehicles",
+    "opportunity_demand_facts",
   ];
 
   it("anon no puede leer ni escribir (42501, sin grants)", async () => {

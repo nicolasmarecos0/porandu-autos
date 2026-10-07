@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { getOpportunityDetail } from "@/db/queries/opportunity-detail";
 import { getOpportunityQueue } from "@/db/queries/opportunities";
 import { contacts, opportunities } from "@/db/schema";
 import { withTenant, type TenantContext } from "@/db/tenant";
@@ -60,8 +61,10 @@ const mocks = vi.hoisted(() => {
       super(`redirect(${path})`);
     }
   }
+  class NotFoundSignal extends Error {}
   return {
     RedirectSignal,
+    NotFoundSignal,
     claims: null as Record<string, unknown> | null,
     jar: null as CookieJar | null,
     /** Simula una Tenant Resolution salteada o con un bug (A-03). */
@@ -86,7 +89,17 @@ vi.mock("next/headers", () => ({
     return mocks.jar.store;
   },
 }));
-vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next/navigation", () => ({
+  redirect: mocks.redirect,
+  notFound: () => {
+    throw new mocks.NotFoundSignal("notFound()");
+  },
+}));
+// La página /opportunities/[id] se prueba con el loader real; la vista
+// (React) no corre en este entorno.
+vi.mock("@/components/opportunities/opportunity-detail", () => ({
+  OpportunityDetailView: () => null,
+}));
 // requireTenant() es el real salvo cuando un test fuerza un contexto.
 vi.mock("@/lib/tenant/session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/tenant/session")>();
@@ -201,7 +214,12 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
         channel: "WhatsApp",
         live: false,
       },
-      interest: { model: "Toyota Hilux", version: "SRV 2.8 4x4 AT" },
+      // H1.4: el legado solo es el vehículo "Dato anterior" mientras nunca
+      // se cargó un vehículo.
+      demand: expect.objectContaining({
+        vehicle: { title: "Toyota Hilux SRV 2.8 4x4 AT", source: "legacy" },
+      }),
+      interest: {},
       scores: {
         porandu: null,
         coverage: 0,
@@ -282,6 +300,221 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
     } finally {
       await setActive(true);
     }
+  });
+});
+
+describe("demanda en la cola (H1.4): lectura por lote, en el servidor", () => {
+  const RAMON = OPPORTUNITIES[0]!.id; // ORG_1, legado "Toyota Hilux"
+  const AGRO = OPPORTUNITIES.find((o) => o.organizationId === ORG_3)!.id;
+
+  beforeAll(async () => {
+    await db.admin`
+      INSERT INTO public.opportunity_demand_facts
+        (organization_id, opportunity_id, fact, status, source_kind, recorded_by, model, evidence_text)
+      VALUES (${ORG_1}, ${RAMON}, 'desired_vehicle', 'confirmed', 'member', ${USER_A}, 'Ranger', 'lo dijo en el showroom')
+    `;
+    await db.admin`
+      INSERT INTO public.opportunity_demand_facts
+        (organization_id, opportunity_id, fact, status, source_kind, recorded_by, amount, currency)
+      VALUES (${ORG_1}, ${RAMON}, 'budget_max', 'confirmed', 'member', ${USER_C}, '250000000', 'PYG')
+    `;
+    await db.admin`
+      INSERT INTO public.opportunity_demand_facts
+        (organization_id, opportunity_id, fact, status, source_kind, recorded_by, purchase_type)
+      VALUES (${ORG_3}, ${AGRO}, 'purchase_type', 'confirmed', 'member', ${USER_C}, 'cash')
+    `;
+  });
+
+  it("cada oportunidad trae su Current Truth resumida; el legado no aparece una vez cargado un vehículo", async () => {
+    request(USER_A);
+    const { opportunities: queue } = await getOpportunityQueue(NOW);
+    const ramon = queue.find((op) => op.id === RAMON)!;
+    expect(ramon.demand?.vehicle).toEqual({
+      title: "Ranger",
+      source: "demand",
+    });
+    expect(ramon.demand?.facts.budget_max).toMatchObject({
+      status: "confirmed",
+      display: "Hasta Gs. 250.000.000",
+      input: { budgetAmount: "250.000.000", budgetCurrency: "PYG" },
+    });
+    expect(ramon.demand?.facts.purchase_type).toMatchObject({
+      status: "unknown",
+      unknownReason: "never_captured",
+    });
+    // Las demás oportunidades de ORG_1 no tienen demanda.
+    for (const op of queue.filter((item) => item.id !== RAMON)) {
+      expect(op.demand?.facts.budget_max.status).toBe("unknown");
+    }
+  });
+
+  it("U6: a la página no llegan evidencia, historial ni ids de usuario", async () => {
+    request(USER_A);
+    const json = JSON.stringify(await getOpportunityQueue(NOW));
+    expect(json).not.toMatch(
+      /lo dijo en el showroom|history|recordedBy|evidence/,
+    );
+    expect(json).not.toContain(USER_A);
+    expect(json).not.toContain(USER_C);
+  });
+
+  it("la demanda de ORG_3 no llega a la cola de C con ORG_1 activa ni a otra organización", async () => {
+    request(USER_C, ORG_1);
+    const { opportunities: org1 } = await getOpportunityQueue(NOW);
+    expect(org1.map((op) => op.id)).not.toContain(AGRO);
+    request(USER_C, ORG_3);
+    const { opportunities: org3 } = await getOpportunityQueue(NOW);
+    expect(
+      org3.find((op) => op.id === AGRO)?.demand?.facts.purchase_type,
+    ).toMatchObject({ status: "confirmed", display: "Contado" });
+    request(USER_B);
+    const { opportunities: org2 } = await getOpportunityQueue(NOW);
+    expect(
+      org2.every((op) => op.demand?.facts.purchase_type.status === "unknown"),
+    ).toBe(true);
+  });
+});
+
+describe("detalle /opportunities/[id] (H1.4): por qué Porandú cree esto", () => {
+  // Facts de RAMON (ORG_1) y AGRO (ORG_3): los del describe anterior.
+  const RAMON = OPPORTUNITIES[0]!.id;
+  const AGRO = OPPORTUNITIES.find((o) => o.organizationId === ORG_3)!.id;
+  const ORG_2_OPPORTUNITY = opportunityIdsOf(ORG_2)[0]!;
+  const DATE = String.raw`\d{1,2} [a-z]{3} \d{4} \d{2}:\d{2}`;
+
+  /** /opportunities/[id] con el loader real y la request actual. */
+  async function page(id: string) {
+    const { default: OpportunityDetailPage } =
+      await import("@/app/(app)/opportunities/[id]/page");
+    return OpportunityDetailPage({
+      params: Promise.resolve({ id }),
+      searchParams: Promise.resolve({}),
+    });
+  }
+
+  it("U5: cada fact con valor explica autor y fecha; el autor, contra quien mira", async () => {
+    request(USER_A);
+    const detail = (await getOpportunityDetail(RAMON))!;
+    expect(detail).toMatchObject({
+      id: RAMON,
+      contactName: "Ramón Benítez",
+      stage: "qualified",
+      demand: { empty: false, legacy: null },
+    });
+    const facts = new Map(detail.demand.facts.map((f) => [f.fact, f]));
+    expect(facts.get("desired_vehicle")).toMatchObject({
+      display: "Ranger",
+      statusLabel: "Confirmado",
+    });
+    expect(facts.get("desired_vehicle")!.explanation).toEqual([
+      expect.stringMatching(new RegExp(`^Confirmado por Vos · ${DATE}$`)),
+      "Nota de la edición: lo dijo en el showroom",
+    ]);
+    expect(facts.get("budget_max")!.explanation).toEqual([
+      expect.stringMatching(
+        new RegExp(`^Confirmado por Otro miembro · ${DATE}$`),
+      ),
+    ]);
+    expect(facts.get("purchase_type")!.explanation).toEqual([
+      "Todavía no se cargó",
+    ]);
+    expect(facts.get("desired_vehicle")!.history).toEqual([
+      expect.objectContaining({
+        display: "Ranger",
+        label: "Actual",
+        author: "Vos",
+      }),
+    ]);
+
+    // C mira la misma oportunidad: los autores se invierten.
+    request(USER_C, ORG_1);
+    const seenByC = (await getOpportunityDetail(RAMON))!;
+    const byFact = new Map(seenByC.demand.facts.map((f) => [f.fact, f]));
+    expect(byFact.get("desired_vehicle")!.history[0]!.author).toBe(
+      "Otro miembro",
+    );
+    expect(byFact.get("budget_max")!.history[0]!.author).toBe("Vos");
+  });
+
+  it("sin facts: estado vacío con el legado de solo lectura", async () => {
+    request(USER_A);
+    const fortuner = OPPORTUNITIES[2]!.id; // ORG_1, legado "Toyota Fortuner"
+    expect((await getOpportunityDetail(fortuner))!.demand).toMatchObject({
+      empty: true,
+      legacy: "Toyota Fortuner",
+    });
+  });
+
+  it("al detalle no llegan ids de usuario ni de la organización", async () => {
+    request(USER_A);
+    const json = JSON.stringify(await getOpportunityDetail(RAMON));
+    for (const secret of [USER_A, USER_C, ORG_1]) {
+      expect(json).not.toContain(secret);
+    }
+  });
+
+  it("U7: un id ajeno, inexistente o inválido da null y la página notFound()", async () => {
+    const cases: [string | null, string | undefined, string][] = [
+      // B (ORG_2) pide una oportunidad de ORG_1.
+      [USER_B, undefined, RAMON],
+      // A (ORG_1) pide una de ORG_3, donde no tiene membership.
+      [USER_A, undefined, AGRO],
+      // C con ORG_1 activa: RLS le deja ver ORG_3, el filtro explícito no.
+      [USER_C, ORG_1, AGRO],
+      // C con ORG_3 activa pide una de ORG_2 (membership inactiva).
+      [USER_C, ORG_3, ORG_2_OPPORTUNITY],
+      // Inexistente e inválidos.
+      [USER_A, undefined, "10000000-0000-4000-8000-000000009999"],
+      [USER_A, undefined, "no-es-un-uuid"],
+      [USER_A, undefined, `${RAMON}' OR '1'='1`],
+    ];
+    for (const [user, cookie, id] of cases) {
+      request(user, cookie);
+      expect(await getOpportunityDetail(id)).toBeNull();
+      request(user, cookie);
+      await expect(page(id)).rejects.toBeInstanceOf(mocks.NotFoundSignal);
+    }
+    // El dueño sí la ve: la página renderiza.
+    request(USER_C, ORG_3);
+    expect((await getOpportunityDetail(AGRO))!.demand.facts).toContainEqual(
+      expect.objectContaining({ fact: "purchase_type", display: "Contado" }),
+    );
+    request(USER_C, ORG_3);
+    await expect(page(AGRO)).resolves.toBeTruthy();
+  });
+
+  it("sin sesión o sin membership activa, no llega a la base: redirige", async () => {
+    request(null);
+    expect(await redirectOf(getOpportunityDetail(RAMON))).toBe("/login");
+    request(USER_D);
+    expect(await redirectOf(getOpportunityDetail(RAMON))).toBe("/no-access");
+  });
+
+  it("contexto falsificado (A-03): A con ORG_2 no ve ni ORG_2 ni ORG_1", async () => {
+    request(null);
+    mocks.forged = tenantContext(USER_A, ORG_2);
+    try {
+      expect(await getOpportunityDetail(ORG_2_OPPORTUNITY)).toBeNull();
+      expect(await getOpportunityDetail(RAMON)).toBeNull();
+    } finally {
+      mocks.forged = null;
+    }
+  });
+
+  it("leer el detalle no modifica la oportunidad ni el ledger", async () => {
+    const before = await db.admin`
+      SELECT last_activity_at, updated_at,
+        (SELECT count(*) FROM public.opportunity_demand_facts WHERE opportunity_id = ${RAMON}) AS facts
+      FROM public.opportunities WHERE id = ${RAMON}
+    `;
+    request(USER_A);
+    await getOpportunityDetail(RAMON);
+    const after = await db.admin`
+      SELECT last_activity_at, updated_at,
+        (SELECT count(*) FROM public.opportunity_demand_facts WHERE opportunity_id = ${RAMON}) AS facts
+      FROM public.opportunities WHERE id = ${RAMON}
+    `;
+    expect(after).toEqual(before);
   });
 });
 

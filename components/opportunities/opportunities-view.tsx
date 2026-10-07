@@ -15,6 +15,7 @@ import {
   type OpportunityCreated,
 } from "./new-opportunity-drawer";
 import { OpportunityQueue } from "./opportunity-queue";
+import { DemandCard } from "./demand-card";
 import { ProspectCard } from "./prospect-card";
 import { RecencyEmoji } from "./recency-emoji";
 import { useOpportunityQueue } from "./use-opportunity-queue";
@@ -37,6 +38,9 @@ const ID_PREFIX = "opportunity";
  *   ├ cola ───────┤ ¿Por qué ahora?         │ alternativa  │
  *   │             │ (fuertes / a validar)   │ trade-in     │
  *   └─────────────┴─────────────────────────┴──────────────┘
+ *
+ * "Busca" es la demanda estructurada (H1.4): Current Truth resumida, con
+ * edición en el drawer "Lo que busca" y el historial en /opportunities/[id].
  *
  * Cada columna tiene scroll propio. Los datos llegan del loader de la página
  * (PostgreSQL, tenant-scoped). Lo que la fuente no trae ("sin dato") no se
@@ -154,6 +158,13 @@ export function OpportunitiesView({
           aria-label="¿Qué ofrecerle?"
           className="flex w-98 shrink-0 flex-col gap-3 overflow-y-auto pb-6"
         >
+          {selected?.demand ? (
+            <DemandCard
+              key={selected.id}
+              opportunityId={selected.id}
+              demand={selected.demand}
+            />
+          ) : null}
           {selected ? <VehicleRail opportunity={selected} /> : null}
         </aside>
       </div>

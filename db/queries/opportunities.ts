@@ -2,6 +2,8 @@ import "server-only";
 
 import { and, asc, desc, eq } from "drizzle-orm";
 
+import { demandSummary } from "@/domains/demand/presentation";
+import { resolveDemand, type DemandTruth } from "@/domains/demand/resolver";
 import { SOURCE_LABELS } from "@/domains/opportunities/labels";
 import { initialsOf, maskPhone } from "@/domains/opportunities/prospect";
 import { bucketFromRecency } from "@/domains/opportunities/queue";
@@ -16,6 +18,7 @@ import { requireTenant } from "@/lib/tenant/session";
 
 import { contacts, opportunities } from "../schema";
 import { withTenant, type ScopedTransaction } from "../tenant";
+import { selectDemandRows } from "./demand-rows";
 
 /*
  * Cola de Opportunities desde PostgreSQL (H1.1). Es la única fuente de la
@@ -36,6 +39,12 @@ import { withTenant, type ScopedTransaction } from "../tenant";
  * Lo que la base todavía no tiene (scores, NBA, señales, matches, trade-in,
  * responsable, conversación en vivo) llega como "sin dato": nunca se
  * completa con valores inventados.
+ *
+ * Demanda (H1.4, DEC-030): el ledger de todas las oportunidades de la cola
+ * se lee por lote en la misma transacción withTenant() (filtro por
+ * organización + RLS), el resolver corre en el servidor y a la página solo
+ * llega un resumen por oportunidad: valores formateados, estado y los ids
+ * de la edición. Sin evidencia, historial ni ids de usuario.
  */
 
 /**
@@ -125,11 +134,13 @@ function present(value: string | null): string | undefined {
 
 /**
  * Fila persistida → ViewModel de Opportunities. Pura: `now` fija el momento
- * de la recencia. Solo completa lo persistido y lo que se deriva de ello.
+ * de la recencia y `demand` es la Current Truth de su ledger. Solo completa
+ * lo persistido y lo que se deriva de ello.
  */
 export function toOpportunity(
   row: OpportunityQueueRow,
   now: Date,
+  demand: DemandTruth = resolveDemand([]),
 ): Opportunity {
   const minutes = minutesSince(row.lastActivityAt, now);
   const phone = row.contactPhone ? maskPhone(row.contactPhone) : undefined;
@@ -147,10 +158,13 @@ export function toOpportunity(
       // Sin conversaciones persistidas todavía (Hito 2).
       live: false,
     },
-    interest: {
+    // El legado no es fuente de verdad: solo es el vehículo "Dato anterior"
+    // mientras `desired_vehicle` nunca se cargó.
+    demand: demandSummary(demand, {
       ...(model ? { model } : {}),
       ...(version ? { version } : {}),
-    },
+    }),
+    interest: {},
     scores: UNSCORED,
     lastActivity: { minutes },
     stage: stageFromDb[row.stage],
@@ -164,11 +178,19 @@ export async function getOpportunityQueue(
   now: Date = new Date(),
 ): Promise<OpportunityQueue> {
   const ctx = await requireTenant();
-  const rows = await withTenant(ctx, (tx) =>
-    selectQueue(tx, ctx.organizationId),
-  );
+  const { rows, demand } = await withTenant(ctx, async (tx) => {
+    const rows = await selectQueue(tx, ctx.organizationId);
+    const demand = await selectDemandRows(
+      tx,
+      ctx.organizationId,
+      rows.map((row) => row.id),
+    );
+    return { rows, demand };
+  });
   return {
-    opportunities: rows.map((row) => toOpportunity(row, now)),
+    opportunities: rows.map((row) =>
+      toOpportunity(row, now, resolveDemand(demand.get(row.id) ?? [])),
+    ),
     referenceMinuteOfDay: minuteOfDay(now, PRESENTATION_TIME_ZONE),
     scoreComposition: CONCEPTUAL_SCORE_COMPOSITION,
   };

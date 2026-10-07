@@ -50,6 +50,13 @@
       "when": 1791045142268,
       "tag": "0006_vehicle_availability",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791311079466,
+      "tag": "0007_opportunity_demand_facts",
+      "breakpoints": true
     }
   ]
 }

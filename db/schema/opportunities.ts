@@ -7,6 +7,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
 import { authenticatedRole } from "drizzle-orm/supabase";
@@ -52,12 +53,18 @@ export const opportunitySources = [
  *   contacto es siempre de la misma organización. RESTRICT: no se borra un
  *   contacto con oportunidades.
  * - `stage` y `source`: obligatorios y sin default, con CHECK.
- * - `interest_model` / `interest_version`: vehículo buscado, texto libre y
- *   opcional. Las preferencias estructuradas llegan con Qualification (H2).
+ * - `interest_model` / `interest_version`: legado de H1.1/H1.2, congelado y
+ *   de solo lectura (DEC-030 §10). La demanda estructurada vive en
+ *   `opportunity_demand_facts` (H1.4): estas columnas ya no se escriben, no
+ *   se backfillean y solo se muestran mientras `desired_vehicle` nunca se
+ *   cargó.
  * - `last_activity_at`: última interacción significativa (recencia, MC §12),
  *   no la última actualización técnica (`updated_at`).
  * - Índice (organization_id, last_activity_at DESC): la cola de una
  *   organización, de la actividad más reciente a la más vieja.
+ * - unique (organization_id, id) (H1.4): destino de la FK compuesta de
+ *   `opportunity_demand_facts`, que impide apuntar a una oportunidad de otra
+ *   organización.
  *
  * No se persisten scores, urgencia, NBA, señales, matches, trade-in ni
  * responsable: no tienen fuente todavía (H1.1).
@@ -101,6 +108,7 @@ export const opportunities = pgTable(
       t.organizationId,
       t.contactId,
     ),
+    unique("opportunities_organization_id_id_key").on(t.organizationId, t.id),
     check("opportunities_stage_check", oneOf(t.stage, opportunityStages)),
     check("opportunities_source_check", oneOf(t.source, opportunitySources)),
     pgPolicy("opportunities_select_member", {

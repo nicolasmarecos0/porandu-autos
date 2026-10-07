@@ -7,6 +7,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Tooltip } from "@/components/ui/tooltip";
 import { QUEUE_TABS, countByTab } from "@/domains/opportunities/queue";
 import { formatElapsedShort } from "@/domains/opportunities/recency";
+import { UNDEFINED_VEHICLE } from "@/domains/demand/presentation";
 import type { Opportunity } from "@/domains/opportunities/types";
 import type { ScoreComposition } from "@/domains/scoring/types";
 import { RecencyEmoji } from "./recency-emoji";
@@ -164,9 +165,12 @@ function QueueRow({
   elapsed,
   onSelect,
 }: QueueRowProps) {
-  const { prospect, interest, scores, lastActivity } = opportunity;
+  const { prospect, interest, demand, scores, lastActivity } = opportunity;
   const porandu = scores.porandu;
-  const vehicle = [interest.model, interest.version].filter(Boolean).join(" ");
+  // El vehículo sale de la demanda (H1.4); el legado, solo si nunca se cargó.
+  const vehicle = demand
+    ? demand.vehicle?.title
+    : [interest.model, interest.version].filter(Boolean).join(" ");
   return (
     <div
       id={id}
@@ -235,7 +239,7 @@ function QueueRow({
           ) : null}
         </span>
         <span className="block truncate text-caption text-text-muted">
-          {vehicle || "Vehículo sin definir"}
+          {vehicle || UNDEFINED_VEHICLE}
         </span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-0.5 text-caption text-text-muted tabular-nums">
