@@ -92,7 +92,8 @@ function fakeTransaction(results: unknown[][]) {
 
 const OPPORTUNITY_ROW = {
   id: OPPORTUNITY,
-  stage: "test_drive",
+  stage: "qualifying",
+  lossReason: null,
   createdAt: CREATED_AT,
   interestModel: " Hilux ",
   interestVersion: null,
@@ -158,7 +159,7 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
 
     const [query] = mocks.queries;
     expect(query?.sql).toMatch(
-      /^select "opportunities"\."id", "opportunities"\."stage", "opportunities"\."created_at", "opportunities"\."interest_model", "opportunities"\."interest_version", "contacts"\."name" from "opportunities"/,
+      /^select "opportunities"\."id", "opportunities"\."stage", "opportunities"\."loss_reason", "opportunities"\."created_at", "opportunities"\."interest_model", "opportunities"\."interest_version", "contacts"\."name" from "opportunities"/,
     );
     expect(query?.sql).toContain(
       'inner join "contacts" on ("contacts"."organization_id" = "opportunities"."organization_id" and "contacts"."id" = "opportunities"."contact_id")',
@@ -199,7 +200,8 @@ describe("getOpportunityDetail: ViewModel", () => {
     expect(detail).toMatchObject({
       id: OPPORTUNITY,
       contactName: "Ana Benítez",
-      stage: "testDrive",
+      stage: "qualifying",
+      lossReason: null,
       demand: { empty: true, legacy: "Hilux" },
       summary: { vehicle: { title: "Hilux", source: "legacy" } },
     });

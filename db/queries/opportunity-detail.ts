@@ -13,7 +13,7 @@ import { resolveDemand, type DemandRow } from "@/domains/demand/resolver";
 import { demandSnapshot } from "@/domains/demand/snapshot";
 import { findMatchesForDemand } from "@/domains/match/engine";
 import { matchRail, type MatchRail } from "@/domains/match/presentation";
-import type { Stage } from "@/domains/opportunities/types";
+import type { LossReason, Stage } from "@/domains/opportunities/stages";
 import { requireTenant } from "@/lib/tenant/session";
 
 import { contacts, opportunities } from "../schema";
@@ -39,6 +39,8 @@ import { selectMatchCandidates } from "./vehicles";
  * - Match v0 (H1.5, DEC-031 §5): en la misma transacción lee las unidades
  *   disponibles de la organización activa y calcula los matches en memoria
  *   con el DemandSnapshot de la oportunidad. No se persiste nada.
+ * - Etapa (H1.6, DEC-032): lee la etapa y el motivo de la pérdida; el panel
+ *   de etapa ofrece solo las acciones que la máquina de estados permite.
  * - Solo lee: no toca `last_activity_at`, el ledger ni el stock.
  */
 
@@ -49,6 +51,8 @@ export type OpportunityDetail = Readonly<{
   id: string;
   contactName: string;
   stage: Stage;
+  /** Motivo de la pérdida (H1.6): solo existe con la etapa `lost`. */
+  lossReason: LossReason | null;
   demand: DemandDetail;
   /** Lo mismo que recibe la card "Busca": lo que necesita el drawer. */
   summary: DemandSummary;
@@ -75,6 +79,7 @@ export async function getOpportunityDetail(
       .select({
         id: opportunities.id,
         stage: opportunities.stage,
+        lossReason: opportunities.lossReason,
         createdAt: opportunities.createdAt,
         interestModel: opportunities.interestModel,
         interestVersion: opportunities.interestVersion,
@@ -119,6 +124,7 @@ export async function getOpportunityDetail(
     id: opportunity.id,
     contactName: opportunity.contactName,
     stage: stageFromDb[opportunity.stage],
+    lossReason: opportunity.lossReason,
     demand: demandDetail(truth, {
       viewerUserId: ctx.userId,
       createdAt: opportunity.createdAt,

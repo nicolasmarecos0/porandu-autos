@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 
 import {
+  transitionOpportunityStage,
+  type StageChangeOutcome,
+} from "@/db/queries/change-opportunity-stage";
+import {
   createOpportunityWithContact,
   type CreatedOpportunity,
 } from "@/db/queries/create-opportunity";
@@ -18,6 +22,7 @@ import {
   type CreateOpportunityState,
 } from "./new-opportunity";
 import type { RecordDemandState } from "./record-demand";
+import { parseStageChange, type ChangeStageState } from "./stage-change";
 
 /*
  * Alta manual de una oportunidad (H1.2). Es un endpoint público y la única
@@ -48,7 +53,7 @@ const OPPORTUNITIES_PATH = "/opportunities";
  * registra.
  */
 function logFailure(
-  operation: "create" | "record demand",
+  operation: "create" | "record demand" | "change stage",
   error: unknown,
 ): void {
   const { name, cause } =
@@ -176,6 +181,87 @@ export async function recordDemand(
     // La fuente sale del contexto: `forbidden` no ocurre. Si ocurriera, no
     // revela nada más que una oportunidad inexistente.
     case "forbidden":
+      return { status: "not_found" };
+  }
+}
+
+/*
+ * Cambio de etapa (H1.6, DEC-032), changeOpportunityStage(): la única puerta
+ * de las transiciones de la oportunidad.
+ *
+ *   requireTenant() → leer el pedido → transitionOpportunityStage()
+ *   (withTenant(), fila bloqueada, máquina de estados del dominio, UPDATE,
+ *   trigger de transiciones) → revalidar /opportunities y /opportunities/[id]
+ *
+ * 1. El TenantContext sale de requireTenant(). Autorización: membership
+ *    activa AND role IN ('admin', 'seller') (DEC-027 §4), hoy todo contexto
+ *    que emite requireTenant(); si se agrega un rol, un test falla y esta
+ *    regla se revisa. Cualquier miembro mueve la oportunidad de otro
+ *    (DEC-023: sin responsable asignado).
+ * 2. El pedido solo trae la oportunidad, la etapa de destino y, para
+ *    `lost`, el motivo. La etapa de origen la lee el servidor de la fila
+ *    bloqueada; organización, usuario y reloj no salen del pedido. Un id
+ *    malformado o ajeno es `not_found`, sin revelar nada.
+ * 3. Falla de forma segura: un pase que la máquina no permite (p. ej. la
+ *    oportunidad ya estaba cerrada) es `invalid_transition` con la etapa
+ *    real, y pedir la etapa actual es `unchanged`; en ninguno cambia nada y
+ *    las páginas se revalidan igual para mostrar el estado real.
+ * 4. Un error inesperado no expone detalles de la base y no revalida.
+ *
+ * Cambiar de etapa no modifica `last_activity_at` (DEC-032 §7). El estado
+ * previo (`_previous`) lo envía el cliente: no se usa.
+ */
+export async function changeOpportunityStage(
+  _previous: ChangeStageState,
+  formData: FormData,
+): Promise<ChangeStageState> {
+  const ctx = await requireTenant();
+
+  const parsed = parseStageChange(formData);
+  if (parsed.kind === "not_found") return { status: "not_found" };
+  if (parsed.kind === "invalid") return { status: "invalid" };
+
+  let outcome: StageChangeOutcome;
+  try {
+    outcome = await transitionOpportunityStage(ctx, {
+      opportunityId: parsed.opportunityId,
+      to: parsed.to,
+      lossReason: parsed.lossReason,
+    });
+  } catch (error) {
+    logFailure("change stage", error);
+    return { status: "failed" };
+  }
+
+  const revalidate = (opportunityId: string) => {
+    revalidatePath(OPPORTUNITIES_PATH);
+    revalidatePath(`${OPPORTUNITIES_PATH}/${opportunityId}`);
+  };
+  switch (outcome.outcome) {
+    case "changed":
+      revalidate(outcome.opportunityId);
+      return {
+        status: "changed",
+        opportunityId: outcome.opportunityId,
+        from: outcome.from,
+        to: outcome.to,
+      };
+    case "unchanged":
+      return {
+        status: "unchanged",
+        opportunityId: outcome.opportunityId,
+        stage: outcome.stage,
+      };
+    case "invalid_transition":
+      revalidate(outcome.opportunityId);
+      return {
+        status: "invalid_transition",
+        opportunityId: outcome.opportunityId,
+        current: outcome.current,
+      };
+    case "loss_reason_required":
+      return { status: "loss_reason_required" };
+    case "not_found":
       return { status: "not_found" };
   }
 }
