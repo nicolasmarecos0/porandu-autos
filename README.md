@@ -113,7 +113,7 @@ Antes de abrir un PR deben pasar: `pnpm typecheck && pnpm lint && pnpm format:ch
 - El schema de Drizzle vive en `db/schema/` y las migraciones en `db/migrations/` (única fuente). `db:generate` y `db:migrate` leen `MIGRATION_DATABASE_URL` del entorno o de `.env.local`; la variable del entorno prevalece.
 - Las migraciones apuntan a Supabase: dependen de `auth.users`, `auth.uid()` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
 - `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `0003_contact_identity_opportunity_create` repite esas y agrega las de las primeras escrituras: toda policy de escritura tiene `WITH CHECK` y `authenticated` no tiene UPDATE, DELETE ni TRUNCATE sobre ninguna tabla. `0004_vehicles_stock_persistence` repite las de `0003` y agrega que `authenticated` solo da de alta en `contacts` y `opportunities` (`vehicles` es de solo lectura en H1.3A). `0005_vehicle_quick_create` repite las de `0004`, con `vehicles` entre las altas aprobadas. `0006_vehicle_availability` repite las de `0005`, extiende la cobertura por policy a los privilegios por columna, exige `USING` en toda policy de UPDATE y admite como única edición `vehicles.status` y `vehicles.updated_at`. `0007_opportunity_demand_facts` repite las de `0006`, con `opportunity_demand_facts` entre las altas aprobadas, y agrega que esa tabla es append-only: sin policies de UPDATE, DELETE ni ALL, sin UPDATE de `authenticated` y sin UPDATE, DELETE ni TRUNCATE de `service_role`. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
-- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), los loaders de Opportunities y de Stock (`requireTenant()` → `withTenant()` → RLS), el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) el alta rápida de unidades (Server Action, admin y seller, estado forzado, organización no inyectable, validaciones y RLS de escritura) y la disponibilidad de unidades (Server Action, admin y seller, membership inactiva, cross-tenant, destino fijo, solo desde `in_preparation`, columnas y DELETE prohibidos, RLS de transición, carreras concurrentes y la Stock List después) y la demanda (H1.4: append-only para todos los roles, RLS de lectura y alta, el SQL de Drizzle contra los grants, cadena humana, compare-and-set, carreras y un deadlock reales, el alta con demanda en una transacción y el detalle `/opportunities/[id]`) contra la base real, y que `0006` se aplica sobre una base en H1.3B y `0007` sobre una en H1.3C (como staging hoy) sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
+- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), los loaders de Opportunities y de Stock (`requireTenant()` → `withTenant()` → RLS), el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) el alta rápida de unidades (Server Action, admin y seller, estado forzado, organización no inyectable, validaciones y RLS de escritura) y la disponibilidad de unidades (Server Action, admin y seller, membership inactiva, cross-tenant, destino fijo, solo desde `in_preparation`, columnas y DELETE prohibidos, RLS de transición, carreras concurrentes y la Stock List después) y la demanda (H1.4: append-only para todos los roles, RLS de lectura y alta, el SQL de Drizzle contra los grants, cadena humana, compare-and-set, carreras y un deadlock reales, el alta con demanda en una transacción y el detalle `/opportunities/[id]`) y Match v0 (H1.5: solo unidades `available` de la organización activa, aislamiento entre organizaciones y contexto falsificado, Top Match y alternativa reales, los tres "sin dato" y ninguna escritura) contra la base real, y que `0006` se aplica sobre una base en H1.3B y `0007` sobre una en H1.3C (como staging hoy) sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
 
 ```bash
 docker run -d --rm --name porandu-pg17 -p 127.0.0.1:55432:5432 \
@@ -384,6 +384,35 @@ planDemandCapture() → INSERT de las filas nuevas → RLS (WITH CHECK)
 - **Fuera de H1.4:** WhatsApp, Meta/BSP, extracción por IA, OCR, jobs, webhooks, Match, `stock_matches`, `trade_ins`, hechos del vehículo, import CSV y conversaciones completas.
 - **Secuencia (DEC-029):** H1.4 → H1.5 Match v0 (consume un `DemandSnapshot` por oportunidad) → H1.6 — Opportunity Stages → H2a → ADR-002 → H2b.
 - `0007` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify` (`expected_migrations = 0007_opportunity_demand_facts`). H1.4 se cierra con `9da9cc1` (cierre documental de H1.3C) ya en `main` (C-13).
+
+## Match v0 (H1.5)
+
+Qué unidad del stock ofrecerle a cada cliente, determinista y explicable (DEC-029 §7, DEC-031). Sin tablas, migraciones, jobs ni IA: los matches se calculan en memoria en cada lectura de `/opportunities/[id]`.
+
+```text
+/opportunities/[id] → requireTenant() → withTenant(): oportunidad, ledger y unidades
+`available` de la organización activa → RLS → resolveDemand() → demandSnapshot()
+→ findMatchesForDemand() → Top Match y alternativa
+```
+
+| Criterio | Puntos |
+|---|---|
+| Marca y modelo coinciden | 45 |
+| Solo modelo: la demanda no tiene marca y el modelo coincide | 35 |
+| Solo marca: la demanda no tiene modelo y la marca coincide | 35 |
+| Misma marca, otro modelo | 0, con la razón "Misma marca, modelo alternativo" |
+| Año dentro del rango (extremos incluidos; el ausente queda abierto) | 25 |
+| Precio menor o igual al presupuesto | 30 |
+| Precio sobre el presupuesto en menos del 10 % | 10 |
+
+- **Motor puro** en `domains/match/` (`evaluateMatch()`, `findMatchesForDemand()`): consume el `DemandSnapshot` de `domains/demand/` y no conoce la base, React ni Next. Match desde 40 de 100.
+- **Elegibilidad:** solo unidades `available`; una marca distinta descalifica. Marca y modelo se comparan sin espacios en los bordes ni mayúsculas.
+- **Sin dato no penaliza (DEC-005):** un fact Unknown suma 0 y no descalifica. Presupuesto y precio en monedas distintas no se convierten: no suman, no descalifican y no dan razón de precio. Los montos se comparan exactos, en centavos.
+- **Explicable:** cada match trae su puntaje por dimensión y sus razones en es-PY.
+- **Rail "Matches en stock"** en `/opportunities/[id]`: el Top Match y la alternativa (los dos mejores puntajes) con precio, km, puntaje y razones. Si la demanda no tiene vehículo, años ni presupuesto, si la organización no tiene unidades disponibles o si ninguna llega a 40, dice cuál de los tres casos es, sin fixtures. Sin silueta: el inventario no registra la carrocería.
+- **Aislamiento:** `selectMatchCandidates()` (`db/queries/vehicles.ts`) corre en la transacción del detalle con filtro explícito por organización y `status = 'available'` sobre RLS. El motor falla cerrado si recibe unidades de más de una organización.
+- **Solo lectura:** calcular matches no modifica `last_activity_at`, el ledger ni el stock.
+- **Fuera de H1.5:** persistir matches (`stock_matches`), matches en la cola de `/opportunities` y en Stock, recalcular ante `became_available` (DEC-028 §7) y notificaciones.
 
 ## Convenciones
 
