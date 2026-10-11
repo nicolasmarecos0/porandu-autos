@@ -35,8 +35,9 @@ export type MatchDimension = "vehicle" | "year" | "budget";
  * Resultado de una dimensión, para distinguir "sin dato" de "no coincide"
  * (DEC-005):
  * - `match`: coincide con lo que la demanda define;
- * - `partial`: cerca, con puntaje reducido (precio apenas sobre el
- *   presupuesto);
+ * - `partial`: coincide en parte: misma marca con otro modelo (no suma,
+ *   pero se explica) o precio apenas sobre el presupuesto (puntaje
+ *   reducido);
  * - `mismatch`: hay dato de los dos lados y no coincide;
  * - `unknown`: falta el dato, o no es comparable (monedas distintas,
  *   DEC-030 §7). Nunca penaliza.
@@ -46,7 +47,9 @@ export type DimensionStatus = "match" | "partial" | "mismatch" | "unknown";
 /** Copy de cada razón (es-PY), para el asesor comercial. */
 export const MATCH_REASONS = {
   brandAndModel: "Marca y modelo coinciden exactamente",
+  model: "Modelo coincide con el buscado",
   brand: "Marca coincide con la buscada",
+  alternativeModel: "Misma marca, modelo alternativo",
   yearInRange: "Año dentro del rango buscado",
   priceWithinBudget: "Precio dentro del presupuesto",
   priceNearBudget: "Precio cercano al presupuesto",
@@ -59,7 +62,10 @@ export type MatchReason = (typeof MATCH_REASONS)[keyof typeof MATCH_REASONS];
 export type DimensionEvaluation = Readonly<{
   status: DimensionStatus;
   points: number;
-  /** Solo cuando la dimensión suma puntos. */
+  /**
+   * Cuando la dimensión explica algo: suma puntos o, con un modelo
+   * alternativo de la misma marca, dice por qué no suma.
+   */
   reason: MatchReason | null;
 }>;
 

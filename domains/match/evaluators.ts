@@ -20,6 +20,7 @@ import {
 /** Puntos de cada criterio. El máximo posible es 45 + 25 + 30 = 100. */
 export const MATCH_POINTS = {
   brandAndModel: 45,
+  model: 35,
   brand: 35,
   yearInRange: 25,
   priceWithinBudget: 30,
@@ -46,36 +47,54 @@ export function normalizeName(text: string): string {
 /**
  * Vehículo buscado:
  * - marca y modelo definidos: coinciden los dos → 45; misma marca y otro
- *   modelo → 0, sin descalificar;
+ *   modelo → 0, sin descalificar, con la razón "modelo alternativo";
+ * - solo modelo: coincide → 35; otro modelo → 0, sin descalificar (sin
+ *   marca no hay con qué descalificar);
  * - solo marca: coincide → 35;
  * - marca distinta → descalifica;
  * - Unknown → 0, sin descalificar.
- *
- * Solo modelo, sin marca: DEC-031 no le asigna puntaje. No se inventa uno:
- * queda como sin dato (0, sin descalificar).
  */
 export function evaluateDesiredVehicle(
   desired: DesiredVehicle | null,
   vehicle: Pick<MatchableVehicle, "brand" | "model">,
 ): VehicleEvaluation {
-  if (desired?.brand === undefined) return UNKNOWN;
-  if (normalizeName(desired.brand) !== normalizeName(vehicle.brand)) {
+  const brand = desired?.brand;
+  const model = desired?.model;
+  if (brand === undefined && model === undefined) return UNKNOWN;
+  const sameModel =
+    model !== undefined &&
+    normalizeName(model) === normalizeName(vehicle.model);
+
+  if (brand === undefined) {
+    return sameModel
+      ? {
+          status: "match",
+          points: MATCH_POINTS.model,
+          reason: MATCH_REASONS.model,
+        }
+      : MISMATCH;
+  }
+  if (normalizeName(brand) !== normalizeName(vehicle.brand)) {
     return { status: "disqualified" };
   }
-  if (desired.model === undefined) {
+  if (model === undefined) {
     return {
       status: "match",
       points: MATCH_POINTS.brand,
       reason: MATCH_REASONS.brand,
     };
   }
-  return normalizeName(desired.model) === normalizeName(vehicle.model)
+  return sameModel
     ? {
         status: "match",
         points: MATCH_POINTS.brandAndModel,
         reason: MATCH_REASONS.brandAndModel,
       }
-    : MISMATCH;
+    : {
+        status: "partial",
+        points: 0,
+        reason: MATCH_REASONS.alternativeModel,
+      };
 }
 
 /**

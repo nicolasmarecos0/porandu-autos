@@ -82,6 +82,7 @@ describe("reglas de Match v0", () => {
   it("puntos de cada criterio: el máximo es 100 y el umbral 40", () => {
     expect(MATCH_POINTS).toEqual({
       brandAndModel: 45,
+      model: 35,
       brand: 35,
       yearInRange: 25,
       priceWithinBudget: 30,
@@ -209,11 +210,12 @@ describe("match parcial por marca sola", () => {
     });
   });
 
-  it("marca y modelo definidos, misma marca y otro modelo → 0 de vehículo, sin descalificar", () => {
+  it("marca y modelo definidos, misma marca y otro modelo → 0 de vehículo, sin descalificar, explicado como modelo alternativo", () => {
     expect(evaluateMatch(FULL_DEMAND, vehicle({ model: "Corolla" }))).toEqual({
       vehicleId: "v-hilux",
       score: { total: 55, vehicle: 0, year: 25, budget: 30 },
       reasons: [
+        "Misma marca, modelo alternativo",
         MATCH_REASONS.yearInRange,
         MATCH_REASONS.priceWithinBudget,
         MATCH_REASONS.available,
@@ -222,9 +224,13 @@ describe("match parcial por marca sola", () => {
     expect(
       evaluateDesiredVehicle(
         { brand: "Toyota", model: "Hilux" },
-        { brand: "Toyota", model: "Corolla" },
+        { brand: "toyota", model: "Corolla" },
       ),
-    ).toEqual({ status: "mismatch", points: 0, reason: null });
+    ).toEqual({
+      status: "partial",
+      points: 0,
+      reason: MATCH_REASONS.alternativeModel,
+    });
   });
 
   it("misma marca y otro modelo, sin otras señales → sin match", () => {
@@ -232,6 +238,65 @@ describe("match parcial por marca sola", () => {
       desired_vehicle: { brand: "Toyota", model: "Hilux" },
     });
     expect(evaluateMatch(demand, vehicle({ model: "Corolla" }))).toBeNull();
+  });
+});
+
+describe("match por modelo solo (DEC-031)", () => {
+  const MODEL_ONLY = snapshot({
+    desired_vehicle: { model: "Hilux" },
+    year_range: { min: 2020, max: 2024 },
+    budget_max: usd("35000.00"),
+  });
+
+  it("solo modelo: coincide → 35, sin mayúsculas ni espacios en los bordes", () => {
+    expect(evaluateMatch(MODEL_ONLY, vehicle({ model: " HILUX" }))).toEqual({
+      vehicleId: "v-hilux",
+      score: { total: 90, vehicle: 35, year: 25, budget: 30 },
+      reasons: [
+        "Modelo coincide con el buscado",
+        MATCH_REASONS.yearInRange,
+        MATCH_REASONS.priceWithinBudget,
+        MATCH_REASONS.available,
+      ],
+    });
+  });
+
+  it("el modelo solo no alcanza el umbral (35 < 40)", () => {
+    const demand = snapshot({ desired_vehicle: { model: "Hilux" } });
+    expect(evaluateMatch(demand, vehicle())).toBeNull();
+  });
+
+  it("otro modelo → 0 y no descalifica: sin marca no hay con qué descalificar", () => {
+    expect(
+      evaluateDesiredVehicle(
+        { model: "Hilux" },
+        { brand: "Ford", model: "Ranger" },
+      ),
+    ).toEqual({ status: "mismatch", points: 0, reason: null });
+    expect(
+      evaluateMatch(MODEL_ONLY, vehicle({ brand: "Ford", model: "Ranger" })),
+    ).toEqual({
+      vehicleId: "v-hilux",
+      score: { total: 55, vehicle: 0, year: 25, budget: 30 },
+      reasons: [
+        MATCH_REASONS.yearInRange,
+        MATCH_REASONS.priceWithinBudget,
+        MATCH_REASONS.available,
+      ],
+    });
+  });
+
+  it("ordena el modelo buscado antes que otro con el mismo año y precio", () => {
+    const matches = findMatchesForDemand(MODEL_ONLY, [
+      vehicle({ id: "v-ranger", brand: "Ford", model: "Ranger" }),
+      vehicle({ id: "v-hilux" }),
+    ]);
+    expect(
+      matches.map(({ vehicleId, score }) => [vehicleId, score.total]),
+    ).toEqual([
+      ["v-hilux", 90],
+      ["v-ranger", 55],
+    ]);
   });
 });
 
@@ -449,23 +514,6 @@ describe("ausencia honesta (DEC-005)", () => {
     expect(evaluateMatch(withExtras, vehicle())).toEqual(
       evaluateMatch(snapshot(base), vehicle()),
     );
-  });
-
-  it("solo modelo, sin marca: DEC-031 no le da puntaje; queda sin dato y no descalifica", () => {
-    expect(
-      evaluateDesiredVehicle(
-        { model: "Hilux" },
-        { brand: "Toyota", model: "Hilux" },
-      ),
-    ).toEqual({ status: "unknown", points: 0, reason: null });
-    const demand = snapshot({
-      desired_vehicle: { model: "Hilux" },
-      year_range: { min: 2020, max: 2024 },
-      budget_max: usd("35000.00"),
-    });
-    expect(
-      evaluateMatch(demand, vehicle({ brand: "Ford", model: "Ranger" })),
-    ).toMatchObject({ score: { total: 55, vehicle: 0 } });
   });
 
   it("los evaluadores devuelven sin dato, no «no coincide»", () => {
@@ -701,6 +749,7 @@ describe("pureza del dominio match (DEC-016, DEC-031)", () => {
       "engine.ts",
       "evaluators.ts",
       "index.ts",
+      "presentation.ts",
       "types.ts",
     ]);
   });
