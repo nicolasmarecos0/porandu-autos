@@ -4,8 +4,9 @@ import { parseStageChange } from "@/lib/opportunities/stage-change";
 
 /*
  * Lectura del pedido de la Server Action changeOpportunityStage() (H1.6): es
- * input no confiable. Solo importan la oportunidad, la etapa de destino y el
- * motivo; el resto no tiene adónde ir.
+ * input no confiable. Solo importan la oportunidad y la etapa de destino; el
+ * resto (también un motivo de pérdida: el cierre va por closeOpportunity(),
+ * DEC-034) no tiene adónde ir.
  */
 
 const ID = "10000000-0000-4000-8000-000000000101";
@@ -17,25 +18,16 @@ function form(fields: Record<string, string>): FormData {
 }
 
 describe("parseStageChange()", () => {
-  it("lee la oportunidad, la etapa y, con lost, el motivo", () => {
+  it("lee la oportunidad y la etapa", () => {
     expect(
       parseStageChange(form({ opportunityId: ID, stage: "qualifying" })),
-    ).toEqual({
-      kind: "ok",
-      opportunityId: ID,
-      to: "qualifying",
-      lossReason: null,
-    });
+    ).toEqual({ kind: "ok", opportunityId: ID, to: "qualifying" });
+    // Un cierre se lee igual: el dominio responde closure_required.
     expect(
       parseStageChange(
         form({ opportunityId: ID, stage: "lost", lossReason: "price" }),
       ),
-    ).toEqual({
-      kind: "ok",
-      opportunityId: ID,
-      to: "lost",
-      lossReason: "price",
-    });
+    ).toEqual({ kind: "ok", opportunityId: ID, to: "lost" });
   });
 
   it("normaliza el id (espacios y mayúsculas)", () => {
@@ -73,17 +65,7 @@ describe("parseStageChange()", () => {
     },
   );
 
-  it("un motivo desconocido o vacío es null: el dominio decide si hacía falta", () => {
-    for (const lossReason of ["", "caro", "PRICE", " "]) {
-      expect(
-        parseStageChange(
-          form({ opportunityId: ID, stage: "lost", lossReason }),
-        ),
-      ).toMatchObject({ kind: "ok", to: "lost", lossReason: null });
-    }
-  });
-
-  it("organización, usuario, origen, estado y reloj del pedido se ignoran", () => {
+  it("organización, usuario, origen, estado, metadatos de cierre y reloj del pedido se ignoran", () => {
     const parsed = parseStageChange(
       form({
         opportunityId: ID,
@@ -93,13 +75,10 @@ describe("parseStageChange()", () => {
         from: "negotiating",
         updated_at: "2020-01-01",
         userId: "x",
+        lossReason: "price",
+        salePrice: "47.500",
       }),
     );
-    expect(parsed).toEqual({
-      kind: "ok",
-      opportunityId: ID,
-      to: "qualifying",
-      lossReason: null,
-    });
+    expect(parsed).toEqual({ kind: "ok", opportunityId: ID, to: "qualifying" });
   });
 });

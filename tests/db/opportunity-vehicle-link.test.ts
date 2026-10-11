@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import postgres, { type TransactionSql } from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { transitionOpportunityStage } from "@/db/queries/change-opportunity-stage";
+import { closeOpportunityWithMetadata } from "@/db/queries/close-opportunity";
 import { setOpportunityVehicle } from "@/db/queries/link-opportunity-vehicle";
 import { getOpportunityDetail } from "@/db/queries/opportunity-detail";
 import { opportunities } from "@/db/schema";
@@ -15,13 +15,14 @@ import {
   canHoldVehicle,
 } from "@/domains/opportunities/vehicle-link";
 import {
-  changeOpportunityStage,
+  closeOpportunity,
   linkOpportunityVehicle,
 } from "@/lib/opportunities/actions";
 import type { LinkVehicleState } from "@/lib/opportunities/vehicle-link";
 import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
 
 import { cookieJar, type CookieJar } from "../unit/support/cookie-jar";
+import { closureColumns } from "./support/closures";
 import {
   runMigrations,
   startTestServer,
@@ -175,6 +176,7 @@ let sequence = 0;
  * Una oportunidad propia del caso, en `stage`, que busca `wants` (por
  * defecto una Toyota Hilux; null: sin demanda) y con `vehicleId` vinculada.
  * Creada (y actualizada por última vez) hace un día: así se ve qué cambia.
+ * Cerrada, trae metadatos de cierre válidos, y `won`, su unidad (DEC-034).
  */
 async function opportunity(
   organizationId: string,
@@ -194,13 +196,21 @@ async function opportunity(
     INSERT INTO public.contacts (id, organization_id, name)
     VALUES (${contactId}, ${organizationId}, ${`Prueba unidad ${sequence}`})
   `;
+  const linked =
+    vehicleId ?? (stage === "won" ? await vehicle(organizationId) : null);
   await db.admin`
-    INSERT INTO public.opportunities (id, organization_id, contact_id, stage,
-      loss_reason, vehicle_id, source, last_activity_at, created_at, updated_at)
-    VALUES (${id}, ${organizationId}, ${contactId}, ${stage},
-      ${stage === "lost" ? "other" : null}, ${vehicleId}, 'web',
-      now() - interval '1 day', now() - interval '1 day',
-      now() - interval '1 day')
+    INSERT INTO public.opportunities ${db.admin({
+      id,
+      organization_id: organizationId,
+      contact_id: contactId,
+      stage,
+      vehicle_id: linked,
+      source: "web",
+      ...closureColumns(stage),
+      last_activity_at: new Date(Date.now() - 86_400_000),
+      created_at: new Date(Date.now() - 86_400_000),
+      updated_at: new Date(Date.now() - 86_400_000),
+    })}
   `;
   if (wants) {
     const author =
@@ -335,13 +345,21 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
     expect(await unit(hilux)).toEqual(unitBefore);
   });
 
-  it("Ganada: vincula la unidad de la venta sin marcarla vendida", async () => {
-    const hilux = await vehicle(ORG_1);
-    const id = await opportunity(ORG_1, "won");
+  it("Ganada: la unidad vendida queda fija, sin marcarla vendida (DEC-034 §4)", async () => {
+    const sold = await vehicle(ORG_1);
+    const other = await vehicle(ORG_1);
+    const id = await opportunity(ORG_1, "won", { vehicleId: sold });
+    const before = await row(id);
     request(USER_A);
-    expect(await link(id, hilux)).toMatchObject({ status: "linked" });
-    expect(await row(id)).toMatchObject({ stage: "won", vehicleId: hilux });
-    expect((await unit(hilux))!.status).toBe("available");
+    for (const next of [other, null]) {
+      expect(await link(id, next)).toEqual({
+        status: "stage_not_allowed",
+        opportunityId: id,
+        stage: "won",
+      });
+    }
+    expect(await row(id)).toEqual(before);
+    expect((await unit(sold))!.status).toBe("available");
   });
 
   it("seller (C con ORG_1 activa) cambia la unidad que vinculó otro, y la quita", async () => {
@@ -372,7 +390,7 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
     expect(await link(id, triton)).toMatchObject({ status: "linked" });
   });
 
-  it.each(["new", "qualifying", "lost"] as const)(
+  it.each(["new", "qualifying", "won", "lost"] as const)(
     "en %s no se vincula ni se quita nada (stage_not_allowed, con la etapa real)",
     async (stage) => {
       const hilux = await vehicle(ORG_1);
@@ -603,30 +621,35 @@ describe("el detalle y los pases de etapa con la unidad vinculada", () => {
   });
 
   it.each([
-    ["won", null],
-    ["lost", "price"],
+    [
+      "won",
+      {
+        salePrice: "47.500",
+        saleCurrency: "USD",
+        paymentMethod: "cash",
+        deliveryStatus: "scheduled",
+        deliveryDate: "2100-01-15",
+      },
+    ],
+    ["lost", { lossReason: "price" }],
   ] as const)(
-    "pasar de En negociación a %s conserva la unidad vinculada (el pase no la toca)",
-    async (to, lossReason) => {
+    "cerrar En negociación como %s conserva la unidad vinculada (el cierre no la toca) y la deja fija",
+    async (outcome, fields) => {
       const hilux = await vehicle(ORG_1);
       const id = await opportunity(ORG_1);
       request(USER_A);
       await link(id, hilux);
       request(USER_A);
       expect(
-        await changeOpportunityStage(
+        await closeOpportunity(
           null,
-          form({
-            opportunityId: id,
-            stage: to,
-            ...(lossReason ? { lossReason } : {}),
-          }),
+          form({ opportunityId: id, outcome, ...fields }),
         ),
-      ).toMatchObject({ status: "changed", to });
-      expect(await row(id)).toMatchObject({ stage: to, vehicleId: hilux });
+      ).toMatchObject({ status: "closed", to: outcome });
+      expect(await row(id)).toMatchObject({ stage: outcome, vehicleId: hilux });
       request(USER_A);
       expect((await getOpportunityDetail(id))!.vehicleLink).toMatchObject({
-        canChange: to === "won",
+        canChange: false,
         linked: { vehicleId: hilux },
       });
     },
@@ -878,7 +901,7 @@ describe("concurrencia: la fila bloqueada serializa los pedidos", () => {
     const result = await whileRowIsHeld(
       id,
       async (tx) => {
-        await tx`UPDATE public.opportunities SET stage = 'lost', loss_reason = 'no_response' WHERE id = ${id}`;
+        await tx`UPDATE public.opportunities SET stage = 'lost', loss_reason = 'ghosted' WHERE id = ${id}`;
       },
       () =>
         setOpportunityVehicle(tenantContext(USER_A, ORG_1), {
@@ -944,7 +967,7 @@ describe("concurrencia: la fila bloqueada serializa los pedidos", () => {
     expect((await row(id))!.vehicleId).toBe(hilux);
   });
 
-  it("ganar y vincular a la vez: ninguno pisa al otro", async () => {
+  it("ganar y vincular a la vez: ninguno pisa al otro y nunca hay una venta sin unidad", async () => {
     const hilux = await vehicle(ORG_1);
     const id = await opportunity(ORG_1);
     const [won, linked] = await whileRowIsHeld(
@@ -952,10 +975,15 @@ describe("concurrencia: la fila bloqueada serializa los pedidos", () => {
       async () => {},
       () =>
         Promise.all([
-          transitionOpportunityStage(tenantContext(USER_A, ORG_1), {
+          closeOpportunityWithMetadata(tenantContext(USER_A, ORG_1), {
             opportunityId: id,
-            to: "won",
-            lossReason: null,
+            closure: {
+              outcome: "won",
+              salePrice: { amount: "47500.00", currency: "USD" },
+              paymentMethod: "cash",
+              deliveryStatus: "delivered",
+              deliveryDate: "2026-10-01",
+            },
           }),
           setOpportunityVehicle(tenantContext(USER_C, ORG_1), {
             opportunityId: id,
@@ -964,8 +992,15 @@ describe("concurrencia: la fila bloqueada serializa los pedidos", () => {
         ]),
       2,
     );
-    expect(won).toMatchObject({ outcome: "changed", to: "won" });
+    // Vincular siempre llega: o antes del cierre, o después de un cierre que
+    // no pudo ser (sin unidad, vehicle_required).
     expect(linked).toMatchObject({ outcome: "linked", vehicleId: hilux });
-    expect(await row(id)).toMatchObject({ stage: "won", vehicleId: hilux });
+    const final = (await row(id))!;
+    if (won.outcome === "closed") {
+      expect(final).toMatchObject({ stage: "won", vehicleId: hilux });
+    } else {
+      expect(won).toEqual({ outcome: "vehicle_required", opportunityId: id });
+      expect(final).toMatchObject({ stage: "negotiating", vehicleId: hilux });
+    }
   });
 });

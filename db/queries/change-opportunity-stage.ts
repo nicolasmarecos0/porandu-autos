@@ -2,11 +2,7 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 
-import {
-  planStageChange,
-  type LossReason,
-  type Stage,
-} from "@/domains/opportunities/stages";
+import { planStageChange, type Stage } from "@/domains/opportunities/stages";
 
 import { opportunities } from "../schema";
 import { withTenant, type TenantContext } from "../tenant";
@@ -22,18 +18,20 @@ import { stageFromDb } from "./opportunities";
  *   planStageChange() (dominio) → UPDATE … AND stage = <la leída> → RLS +
  *   trigger de transiciones → COMMIT
  *
- * - El cliente solo identifica la oportunidad y pide una etapa de destino
- *   (y un motivo si es `lost`). La etapa de origen la lee este módulo de la
- *   fila bloqueada y `organization_id` sale del contexto (defensa en
- *   profundidad: la policy de UPDATE exige además una organización con
- *   membership activa).
+ * - El cliente solo identifica la oportunidad y pide una etapa de destino.
+ *   La etapa de origen la lee este módulo de la fila bloqueada y
+ *   `organization_id` sale del contexto (defensa en profundidad: la policy
+ *   de UPDATE exige además una organización con membership activa).
+ * - Solo avances que no cierran (DEC-034 §1): un pase válido a `won` o
+ *   `lost` es `closure_required` y no se escribe. Cerrar lleva sus metadatos
+ *   y tiene su propia puerta (db/queries/close-opportunity.ts); la base
+ *   rechaza un cierre sin ellos (CHECKs de cierre).
  * - La regla la decide el dominio sobre la fila bloqueada, y la base la
  *   vuelve a exigir con un trigger que valida el par etapa anterior → etapa
  *   nueva: si este módulo tuviera un bug, la base igual rechaza la
  *   transición (23514, `opportunities_stage_transition`).
- * - Solo cambian `stage`, `loss_reason` y `updated_at` (el trigger lo fija
- *   con el reloj de la base): son las únicas columnas con UPDATE para
- *   authenticated. No toca `last_activity_at`, que es la recencia de la
+ * - Solo cambian `stage` y `updated_at` (el trigger lo fija con el reloj de
+ *   la base). No toca `last_activity_at`, que es la recencia de la
  *   interacción con el cliente y no del trabajo del vendedor (DEC-032 §7),
  *   ni la demanda ni el stock.
  * - Concurrencia: el FOR UPDATE serializa los cambios de una misma
@@ -48,8 +46,6 @@ import { stageFromDb } from "./opportunities";
 export type StageChangeRequest = Readonly<{
   opportunityId: string;
   to: Stage;
-  /** Obligatorio con `lost`; con cualquier otra etapa se ignora. */
-  lossReason: LossReason | null;
 }>;
 
 export type StageChangeOutcome =
@@ -59,7 +55,6 @@ export type StageChangeOutcome =
       opportunityId: string;
       from: Stage;
       to: Stage;
-      lossReason: LossReason | null;
     }>
   /** Ya estaba en la etapa pedida: no se escribió nada. */
   | Readonly<{ outcome: "unchanged"; opportunityId: string; stage: Stage }>
@@ -69,9 +64,9 @@ export type StageChangeOutcome =
       opportunityId: string;
       current: Stage;
     }>
-  /** Pasar a `lost` sin motivo. */
+  /** El pase cierra la oportunidad: va por closeOpportunity(). */
   | Readonly<{
-      outcome: "loss_reason_required";
+      outcome: "closure_required";
       opportunityId: string;
       current: Stage;
     }>
@@ -105,12 +100,8 @@ export async function transitionOpportunityStage(
         return { outcome: "unchanged", opportunityId, stage: plan.stage };
       case "invalid_transition":
         return { outcome: "invalid_transition", opportunityId, current: from };
-      case "loss_reason_required":
-        return {
-          outcome: "loss_reason_required",
-          opportunityId,
-          current: from,
-        };
+      case "closure_required":
+        return { outcome: "closure_required", opportunityId, current: from };
       case "change":
         break;
     }
@@ -119,7 +110,7 @@ export async function transitionOpportunityStage(
     // cambiado; la condición es una barrera más contra un bug de este módulo.
     const updated = await tx
       .update(opportunities)
-      .set({ stage: plan.to, lossReason: plan.lossReason })
+      .set({ stage: plan.to })
       .where(and(opportunity, eq(opportunities.stage, current.stage)))
       .returning({ id: opportunities.id });
     if (updated.length !== 1) {
@@ -132,7 +123,6 @@ export async function transitionOpportunityStage(
       opportunityId,
       from: plan.from,
       to: plan.to,
-      lossReason: plan.lossReason,
     };
   });
 }

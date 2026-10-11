@@ -27,11 +27,11 @@ import { selectVehicleById } from "./vehicles";
  * - El cliente solo identifica la oportunidad y la unidad (null para quitar
  *   el vínculo). La etapa y la unidad actual las lee este módulo de la fila
  *   bloqueada, y `organization_id` sale del contexto.
- * - La regla la decide el dominio: etapa `negotiating` o `won`, unidad de la
+ * - La regla la decide el dominio: etapa `negotiating`, unidad de la
  *   organización activa, `available` y match de la demanda vigente (Match
  *   v0), calculado acá de nuevo, sin confiar en lo que mostró la tarjeta. La
  *   base la vuelve a exigir: la FK compuesta (misma organización), el CHECK
- *   de etapa y el trigger (solo cambia en `negotiating` o `won`, y nunca
+ *   de etapa y el trigger (solo cambia en `negotiating`, y nunca
  *   junto con un pase de etapa).
  * - Solo cambian `vehicle_id` y `updated_at` (lo fija el trigger). No toca
  *   el estado de la unidad (vincular no la reserva ni la vende), la etapa,

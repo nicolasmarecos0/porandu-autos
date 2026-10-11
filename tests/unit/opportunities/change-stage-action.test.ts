@@ -55,7 +55,6 @@ beforeEach(() => {
       opportunityId: ID,
       from: "new",
       to: "qualifying",
-      lossReason: null,
     };
   });
   mocks.revalidatePath.mockReset();
@@ -86,7 +85,6 @@ describe("changeOpportunityStage()", () => {
     expect(mocks.transition).toHaveBeenCalledWith(CTX, {
       opportunityId: ID,
       to: "qualifying",
-      lossReason: null,
     });
     expect(mocks.revalidatePath.mock.calls).toEqual([
       ["/opportunities"],
@@ -100,29 +98,27 @@ describe("changeOpportunityStage()", () => {
     });
   });
 
-  it("perder lleva el motivo a la escritura", async () => {
+  it("un cierre no se escribe acá: closure_required, sin revalidar (DEC-034 §1)", async () => {
     mocks.transition.mockImplementation(async () => ({
-      outcome: "changed",
+      outcome: "closure_required",
       opportunityId: ID,
-      from: "negotiating",
-      to: "lost",
-      lossReason: "price",
+      current: "negotiating",
     }));
     const state = await changeOpportunityStage(
       null,
       form({ opportunityId: ID, stage: "lost", lossReason: "price" }),
     );
+    // El motivo no viaja: no tiene adónde ir.
     expect(mocks.transition).toHaveBeenCalledWith(CTX, {
       opportunityId: ID,
       to: "lost",
-      lossReason: "price",
     });
     expect(state).toEqual({
-      status: "changed",
+      status: "closure_required",
       opportunityId: ID,
-      from: "negotiating",
-      to: "lost",
+      current: "negotiating",
     });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
   it("sin tenant (redirect) no lee el pedido ni escribe", async () => {
@@ -147,6 +143,7 @@ describe("changeOpportunityStage()", () => {
         from: "negotiating",
         updated_at: "2020-01-01",
         userId: "x",
+        lossReason: "price",
       }),
     );
     expect(mocks.transition).toHaveBeenCalledTimes(1);
@@ -155,13 +152,9 @@ describe("changeOpportunityStage()", () => {
       Record<string, unknown>,
     ];
     expect(ctx).toBe(CTX);
-    expect(Object.keys(request).sort()).toEqual([
-      "lossReason",
-      "opportunityId",
-      "to",
-    ]);
+    expect(Object.keys(request).sort()).toEqual(["opportunityId", "to"]);
     expect(JSON.stringify(request)).not.toMatch(
-      /000000000002|negotiating|2020/,
+      /000000000002|negotiating|2020|price/,
     );
   });
 
@@ -230,20 +223,6 @@ describe("changeOpportunityStage()", () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/opportunities/${ID}`);
   });
 
-  it("perder sin motivo pide el motivo y no revalida", async () => {
-    mocks.transition.mockImplementation(async () => ({
-      outcome: "loss_reason_required",
-      opportunityId: ID,
-      current: "new",
-    }));
-    const state = await changeOpportunityStage(
-      null,
-      form({ opportunityId: ID, stage: "lost" }),
-    );
-    expect(state).toEqual({ status: "loss_reason_required" });
-    expect(mocks.revalidatePath).not.toHaveBeenCalled();
-  });
-
   it("una oportunidad inexistente o ajena es not_found", async () => {
     mocks.transition.mockImplementation(async () => ({ outcome: "not_found" }));
     expect(
@@ -278,7 +257,7 @@ describe("changeOpportunityStage()", () => {
     try {
       const state = await changeOpportunityStage(
         null,
-        form({ opportunityId: ID, stage: "lost", lossReason: "price" }),
+        form({ opportunityId: ID, stage: "negotiating" }),
       );
       expect(state).toEqual({ status: "failed" });
       expect(mocks.revalidatePath).not.toHaveBeenCalled();

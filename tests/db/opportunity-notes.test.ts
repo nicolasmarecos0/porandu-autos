@@ -15,6 +15,7 @@ import type { AddNoteState } from "@/lib/opportunities/note";
 import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
 
 import { cookieJar, type CookieJar } from "../unit/support/cookie-jar";
+import { closureColumns } from "./support/closures";
 import {
   runMigrations,
   startTestServer,
@@ -134,6 +135,7 @@ let sequence = 0;
 /**
  * Una oportunidad propia del caso, en `stage`, creada (y actualizada por
  * última vez) hace un día: así se ve que una nota no toca la oportunidad.
+ * Cerrada, trae metadatos de cierre válidos, y `won`, su unidad (DEC-034).
  */
 async function opportunity(
   organizationId: string,
@@ -142,16 +144,33 @@ async function opportunity(
   sequence += 1;
   const contactId = randomUUID();
   const id = randomUUID();
+  let vehicleId: string | null = null;
+  if (stage === "won") {
+    vehicleId = randomUUID();
+    await db.admin`
+      INSERT INTO public.vehicles (id, organization_id, brand, model, year,
+        status)
+      VALUES (${vehicleId}, ${organizationId}, 'Toyota', 'Hilux', 2025,
+        'available')
+    `;
+  }
   await db.admin`
     INSERT INTO public.contacts (id, organization_id, name)
     VALUES (${contactId}, ${organizationId}, ${`Prueba notas ${sequence}`})
   `;
   await db.admin`
-    INSERT INTO public.opportunities (id, organization_id, contact_id, stage,
-      loss_reason, source, last_activity_at, created_at, updated_at)
-    VALUES (${id}, ${organizationId}, ${contactId}, ${stage},
-      ${stage === "lost" ? "other" : null}, 'web', now() - interval '1 day',
-      now() - interval '1 day', now() - interval '1 day')
+    INSERT INTO public.opportunities ${db.admin({
+      id,
+      organization_id: organizationId,
+      contact_id: contactId,
+      stage,
+      vehicle_id: vehicleId,
+      source: "web",
+      ...closureColumns(stage),
+      last_activity_at: new Date(Date.now() - 86_400_000),
+      created_at: new Date(Date.now() - 86_400_000),
+      updated_at: new Date(Date.now() - 86_400_000),
+    })}
   `;
   return id;
 }
