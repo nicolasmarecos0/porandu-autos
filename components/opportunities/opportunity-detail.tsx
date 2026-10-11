@@ -14,10 +14,11 @@ import {
 } from "@/domains/demand/presentation";
 import type { CurrentStatus } from "@/domains/demand/resolver";
 import type { MatchRail } from "@/domains/match/presentation";
-import { stageLabel } from "@/domains/opportunities/labels";
-import type { Stage } from "@/domains/opportunities/types";
+import type { LossReason, Stage } from "@/domains/opportunities/stages";
 
 import { OpportunityDemandEdit } from "./opportunity-demand-edit";
+import { OpportunityStagePanel } from "./opportunity-stage-panel";
+import { StageBadge } from "./stage-badge";
 
 /*
  * /opportunities/[id] (H1.4, DEC-030 §10, dentro de DEC-017): responde, para
@@ -34,7 +35,8 @@ import { OpportunityDemandEdit } from "./opportunity-demand-edit";
  * Server Component: el historial, las notas y los autores ("Vos" u "Otro
  * miembro") se arman en el servidor y nunca llegan ids de usuario. Los
  * matches llegan calculados por el loader. Al navegador solo viajan el drawer
- * "Editar", con el mismo resumen que la card "Busca", y los tooltips del
+ * "Editar", con el mismo resumen que la card "Busca", el panel de etapa
+ * (H1.6, DEC-032: etapa actual y acciones permitidas) y los tooltips del
  * puntaje. Sin cola, scores, Why Now ni NBA (DEC-017).
  */
 
@@ -115,6 +117,8 @@ type OpportunityDetailViewProps = Readonly<{
   id: string;
   contactName: string;
   stage: Stage;
+  /** Motivo de la pérdida (H1.6): solo existe con `lost`. */
+  lossReason: LossReason | null;
   demand: DemandDetail;
   /** Lo que necesita el drawer "Editar": el mismo resumen de la card. */
   summary: DemandSummary;
@@ -126,6 +130,7 @@ export function OpportunityDetailView({
   id,
   contactName,
   stage,
+  lossReason,
   demand,
   summary,
   matches,
@@ -135,7 +140,7 @@ export function OpportunityDetailView({
       header={
         <PageHeader
           title={contactName}
-          status={<Badge tone="brand">{stageLabel(stage)}</Badge>}
+          status={<StageBadge stage={stage} />}
           actions={
             <>
               <Link href="/opportunities" className={backLinkClassName}>
@@ -148,6 +153,11 @@ export function OpportunityDetailView({
       }
       aside={<OpportunityMatches rail={matches} />}
     >
+      <OpportunityStagePanel
+        opportunityId={id}
+        stage={stage}
+        lossReason={lossReason}
+      />
       <section aria-labelledby="demand-heading" className="max-w-3xl">
         <Panel>
           <PanelHeader>
