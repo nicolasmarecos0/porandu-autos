@@ -7,6 +7,7 @@ Porandú conecta inventario, conversaciones, intención de compra y operación c
 > **H1.3C completado (DEC-028):** transición controlada `in_preparation → available`, migración `0006_vehicle_availability` con su RLS y privilegios (policy `vehicles_update_mark_available` y UPDATE por columna), aplicada en staging con Runtime Acceptance 12/12 y Auth → Tenant Acceptance 11/11.
 > Alcance vigente: [`docs/03_BUILD_BASELINE_B1.md`](docs/03_BUILD_BASELINE_B1.md)
 > **H1.4 — Demand Contract / Current Truth (DEC-029, DEC-030):** lo que busca cada cliente como 6 facts tipados en el ledger append-only `opportunity_demand_facts` (`0007_opportunity_demand_facts`), con Current Truth derivado, la card "Busca" con edición y el detalle `/opportunities/[id]` (ver "Demand Contract y Current Truth (H1.4)"). `0007` se aplica a staging después del merge.
+> **H1.6 — Opportunity Stages (DEC-032):** etapas comerciales `new → qualifying → negotiating → won`, con `lost` (y su motivo) desde cualquier etapa abierta. La máquina de estados vive en el dominio y la exige la base con un trigger (`0008_opportunity_stages`); el panel "Etapa" de `/opportunities/[id]` ofrece solo los pases permitidos (ver "Opportunity Stages (H1.6)"). `0008` se aplica a staging después del merge.
 
 ---
 
@@ -112,8 +113,8 @@ Antes de abrir un PR deben pasar: `pnpm typecheck && pnpm lint && pnpm format:ch
 
 - El schema de Drizzle vive en `db/schema/` y las migraciones en `db/migrations/` (única fuente). `db:generate` y `db:migrate` leen `MIGRATION_DATABASE_URL` del entorno o de `.env.local`; la variable del entorno prevalece.
 - Las migraciones apuntan a Supabase: dependen de `auth.users`, `auth.uid()` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
-- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `0003_contact_identity_opportunity_create` repite esas y agrega las de las primeras escrituras: toda policy de escritura tiene `WITH CHECK` y `authenticated` no tiene UPDATE, DELETE ni TRUNCATE sobre ninguna tabla. `0004_vehicles_stock_persistence` repite las de `0003` y agrega que `authenticated` solo da de alta en `contacts` y `opportunities` (`vehicles` es de solo lectura en H1.3A). `0005_vehicle_quick_create` repite las de `0004`, con `vehicles` entre las altas aprobadas. `0006_vehicle_availability` repite las de `0005`, extiende la cobertura por policy a los privilegios por columna, exige `USING` en toda policy de UPDATE y admite como única edición `vehicles.status` y `vehicles.updated_at`. `0007_opportunity_demand_facts` repite las de `0006`, con `opportunity_demand_facts` entre las altas aprobadas, y agrega que esa tabla es append-only: sin policies de UPDATE, DELETE ni ALL, sin UPDATE de `authenticated` y sin UPDATE, DELETE ni TRUNCATE de `service_role`. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
-- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), los loaders de Opportunities y de Stock (`requireTenant()` → `withTenant()` → RLS), el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) el alta rápida de unidades (Server Action, admin y seller, estado forzado, organización no inyectable, validaciones y RLS de escritura) y la disponibilidad de unidades (Server Action, admin y seller, membership inactiva, cross-tenant, destino fijo, solo desde `in_preparation`, columnas y DELETE prohibidos, RLS de transición, carreras concurrentes y la Stock List después) y la demanda (H1.4: append-only para todos los roles, RLS de lectura y alta, el SQL de Drizzle contra los grants, cadena humana, compare-and-set, carreras y un deadlock reales, el alta con demanda en una transacción y el detalle `/opportunities/[id]`) y Match v0 (H1.5: solo unidades `available` de la organización activa, aislamiento entre organizaciones y contexto falsificado, Top Match y alternativa reales, los tres "sin dato" y ninguna escritura) contra la base real, y que `0006` se aplica sobre una base en H1.3B y `0007` sobre una en H1.3C (como staging hoy) sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
+- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `0003_contact_identity_opportunity_create` repite esas y agrega las de las primeras escrituras: toda policy de escritura tiene `WITH CHECK` y `authenticated` no tiene UPDATE, DELETE ni TRUNCATE sobre ninguna tabla. `0004_vehicles_stock_persistence` repite las de `0003` y agrega que `authenticated` solo da de alta en `contacts` y `opportunities` (`vehicles` es de solo lectura en H1.3A). `0005_vehicle_quick_create` repite las de `0004`, con `vehicles` entre las altas aprobadas. `0006_vehicle_availability` repite las de `0005`, extiende la cobertura por policy a los privilegios por columna, exige `USING` en toda policy de UPDATE y admite como única edición `vehicles.status` y `vehicles.updated_at`. `0007_opportunity_demand_facts` repite las de `0006`, con `opportunity_demand_facts` entre las altas aprobadas, y agrega que esa tabla es append-only: sin policies de UPDATE, DELETE ni ALL, sin UPDATE de `authenticated` y sin UPDATE, DELETE ni TRUNCATE de `service_role`. `0008_opportunity_stages` se detiene si hay oportunidades en una etapa que no es `new` (no las reinterpreta), repite las de `0007` con `opportunities.stage`, `loss_reason` y `updated_at` entre las ediciones aprobadas, y exige que el trigger de transiciones `opportunities_stage_transition` exista, esté habilitado y sea `BEFORE UPDATE FOR EACH ROW`. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
+- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), los loaders de Opportunities y de Stock (`requireTenant()` → `withTenant()` → RLS), el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) el alta rápida de unidades (Server Action, admin y seller, estado forzado, organización no inyectable, validaciones y RLS de escritura) y la disponibilidad de unidades (Server Action, admin y seller, membership inactiva, cross-tenant, destino fijo, solo desde `in_preparation`, columnas y DELETE prohibidos, RLS de transición, carreras concurrentes y la Stock List después) y la demanda (H1.4: append-only para todos los roles, RLS de lectura y alta, el SQL de Drizzle contra los grants, cadena humana, compare-and-set, carreras y un deadlock reales, el alta con demanda en una transacción y el detalle `/opportunities/[id]`) y Match v0 (H1.5: solo unidades `available` de la organización activa, aislamiento entre organizaciones y contexto falsificado, Top Match y alternativa reales, los tres "sin dato" y ninguna escritura) y las etapas (H1.6: Server Action con admin y seller, membership inactiva, cross-tenant, motivo de pérdida obligatorio, los 25 pares del trigger cruzados con el dominio, columnas y DELETE prohibidos, `updated_at` con el reloj de la base, `last_activity_at` intacto y carreras reales sobre la fila bloqueada) contra la base real, y que `0006` se aplica sobre una base en H1.3B, `0007` sobre una en H1.3C y `0008` sobre una en H1.4 sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
 
 ```bash
 docker run -d --rm --name porandu-pg17 -p 127.0.0.1:55432:5432 \
@@ -164,7 +165,7 @@ Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@pora
 **Runbook de una migración**
 
 1. `preflight`: revisar el estado y las migraciones pendientes.
-2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`; H1.3A: `0004_vehicles_stock_persistence`; H1.3B: `0005_vehicle_quick_create`; H1.3C: `0006_vehicle_availability`; H1.4: `0007_opportunity_demand_facts`). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
+2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`; H1.3A: `0004_vehicles_stock_persistence`; H1.3B: `0005_vehicle_quick_create`; H1.3C: `0006_vehicle_availability`; H1.4: `0007_opportunity_demand_facts`; H1.6: `0008_opportunity_stages`, o `0007_opportunity_demand_facts,0008_opportunity_stages` si `0007` todavía no se aplicó). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
 3. Primer rollout o rotación: `provision-runtime`.
 4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution o el aislamiento.
 
@@ -270,7 +271,7 @@ oportunidad → RLS (WITH CHECK) → revalidar /opportunities
 ```
 
 - **Una sola puerta:** `createOpportunity()` (`lib/opportunities/actions.ts`). ESLint impide importar la escritura (`db/queries/create-opportunity.ts`) desde cualquier otro módulo, y la UI no conoce Drizzle, el schema ni el boundary.
-- **Qué acepta el servidor:** `name`, `phone`, `city`, `source` y, desde H1.4, los campos de "Lo que busca" (ver "Demand Contract y Current Truth (H1.4)"), que reemplazan a `interestModel` e `interestVersion`. Cualquier otro campo del payload se ignora. La organización sale del `TenantContext`; la etapa es siempre `new`, fijada por el código y exigida por el `WITH CHECK` de la policy de INSERT (el CHECK de `stage` sigue admitiendo todas las etapas: las transiciones serán policies de UPDATE); timestamps y recencia los pone la base (`last_activity_at = now()` es una regla temporal del alta manual). Nombre, teléfono y origen son obligatorios; los textos tienen largo máximo y se normalizan (NFC, sin caracteres de control).
+- **Qué acepta el servidor:** `name`, `phone`, `city`, `source` y, desde H1.4, los campos de "Lo que busca" (ver "Demand Contract y Current Truth (H1.4)"), que reemplazan a `interestModel` e `interestVersion`. Cualquier otro campo del payload se ignora. La organización sale del `TenantContext`; la etapa es siempre `new`, fijada por el código y exigida por el `WITH CHECK` de la policy de INSERT (el CHECK de `stage` admite todas las etapas; los pases los gobierna H1.6, ver "Opportunity Stages (H1.6)"); timestamps y recencia los pone la base (`last_activity_at = now()` es una regla temporal del alta manual). Nombre, teléfono y origen son obligatorios; los textos tienen largo máximo y se normalizan (NFC, sin caracteres de control).
 - **Origen:** `whatsapp`, `meta_ads`, `web`, `showroom` o `referral` (el CHECK de la base). La carga manual no es un origen comercial.
 - **Teléfono:** se guarda tal como se cargó (`phone`) y en E.164 (`phone_normalized`), normalizado con `libphonenumber-js` (metadata completa) en `lib/contacts/phone.ts`, que es server-only. Sin prefijo internacional se interpreta como de Paraguay; con `+<código>` conserva su país. Un número inválido se rechaza antes de escribir. La librería no llega al bundle del navegador.
 - **Identidad del contacto:** índice único parcial `(organization_id, phone_normalized)`: el mismo teléfono es un solo contacto por organización, y puede repetirse en otra. El alta inserta el contacto con `ON CONFLICT DO NOTHING` sobre ese índice y, si ya existía, lo reutiliza sin modificar su nombre ni su ciudad. Dos altas concurrentes con el mismo teléfono terminan en un contacto: la unicidad de la base es la autoridad. Un mismo contacto puede tener varias oportunidades.
@@ -413,6 +414,55 @@ Qué unidad del stock ofrecerle a cada cliente, determinista y explicable (DEC-0
 - **Aislamiento:** `selectMatchCandidates()` (`db/queries/vehicles.ts`) corre en la transacción del detalle con filtro explícito por organización y `status = 'available'` sobre RLS. El motor falla cerrado si recibe unidades de más de una organización.
 - **Solo lectura:** calcular matches no modifica `last_activity_at`, el ledger ni el stock.
 - **Fuera de H1.5:** persistir matches (`stock_matches`), matches en la cola de `/opportunities` y en Stock, recalcular ante `became_available` (DEC-028 §7) y notificaciones.
+
+## Opportunity Stages (H1.6)
+
+Las etapas del ciclo comercial de una oportunidad y sus pases (DEC-032). No es el Lifecycle de posventa.
+
+```text
+new ──► qualifying ──► negotiating ──► won
+ │          │               │
+ └──────────┴───────────────┴────────► lost (con motivo)
+```
+
+| Etapa | Copy | Terminal |
+|---|---|---|
+| `new` | Nueva: consulta sin calificar | No |
+| `qualifying` | En calificación: relevando qué busca | No |
+| `negotiating` | En negociación: propuesta activa | No |
+| `won` | Ganada: venta concretada | Sí |
+| `lost` | Perdida, con motivo obligatorio | Sí |
+
+```text
+changeOpportunityStage() → requireTenant() → leer el pedido → withTenant():
+SELECT … FOR UPDATE → planStageChange() → UPDATE … AND stage = <la leída>
+→ RLS (opportunities_update_stage) + trigger de transiciones → revalidar
+```
+
+- **Dominio puro** en `domains/opportunities/stages.ts`: etapas, matriz de pases (`canTransition()`, `nextStages()`), motivos de pérdida y `planStageChange()`. Sin saltos, sin vuelta atrás, sin salida de una etapa terminal. Pedir la etapa actual es `unchanged`, sin escribir.
+- **Motivo de pérdida:** obligatorio al pasar a `lost`. Lista cerrada: `price`, `vehicle_not_available`, `bought_elsewhere`, `no_response`, `unqualified`, `other`. Existe si y solo si la etapa es `lost` (CHECK) y no se reescribe.
+- **Puerta única:** la Server Action `changeOpportunityStage()` (`lib/opportunities/actions.ts`). El pedido trae solo `opportunityId`, `stage` y `lossReason`; la etapa de origen la lee el servidor de la fila bloqueada. ESLint impide importar `db/queries/change-opportunity-stage.ts` desde otro módulo.
+- **Respuestas:**
+  - `changed`.
+  - `unchanged`: ya estaba en esa etapa.
+  - `invalid_transition`: el pase no existe; devuelve la etapa real.
+  - `loss_reason_required`.
+  - `invalid`: la etapa no existe.
+  - `not_found`: inexistente o de otra organización, sin distinguir.
+  - `failed`: sin detalles de la base.
+- **Base (`0008_opportunity_stages`):**
+  - El CHECK de etapas, `loss_reason` con su CHECK de valores y el de coherencia con `lost`.
+  - Una sola policy de UPDATE tenant-scoped.
+  - El trigger `BEFORE UPDATE` `opportunities_stage_transition`, que llama a `private.enforce_opportunity_stage_transition()`: valida el par anterior → nuevo con la matriz del dominio y fija `updated_at = now()`. Rechaza con `23514`.
+  - `authenticated` recibe UPDATE solo sobre `stage`, `loss_reason` y `updated_at`. Toda UPDATE de `opportunities` tiene que ser un pase válido, también la del rol dueño.
+- **Concurrencia:** el `FOR UPDATE` serializa los pedidos sobre una misma oportunidad. El segundo ve la etapa ya confirmada: nunca dos pases iguales, nunca ganada y perdida a la vez.
+- **Recencia:** cambiar de etapa no toca `last_activity_at` (es la interacción con el cliente) ni el orden de la cola.
+- **UI:**
+  - Panel "Etapa" en `/opportunities/[id]`: un stepper con la etapa actual y solo los pases permitidos. Avanzar es un click; ganar y perder piden confirmación, y perder pide además el motivo.
+  - Una oportunidad cerrada no ofrece acciones; una perdida muestra su motivo.
+  - El encabezado y la card de la cola muestran la etapa con su color.
+- **Fuera de H1.6:** la venta como entidad (`won` no crea una venta ni marca una unidad `sold`), el historial de etapas, reabrir o retroceder una oportunidad, filtrar u ocultar las cerradas en la cola y las métricas de conversión.
+- `0008` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0008_opportunity_stages` (o `0007_opportunity_demand_facts,0008_opportunity_stages` si `0007` todavía no se aplicó).
 
 ## Convenciones
 
