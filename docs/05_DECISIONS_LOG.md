@@ -44,6 +44,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-028 | Disponibilidad de unidades (H1.3C) | Aceptada | 2026-10-04 |
 | DEC-029 | Roadmap Checkpoint H1 y contrato de demanda | Aceptada | 2026-10-06 |
 | DEC-030 | Demand Contract y Current Truth (H1.4) | Aceptada | 2026-10-06 |
+| DEC-031 | Match v0 Engine y Consumo en Opportunity Workspace (H1.5) | Aceptada | 2026-10-11 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -479,6 +480,28 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 - **Consecuencias:**
   - `0007_opportunity_demand_facts` se aplica a staging después del merge con `preflight → migrate → verify` (`expected_migrations = 0007_opportunity_demand_facts`).
   - C-13: el commit documental `9da9cc1` (cierre de H1.3C) tiene que estar en `main` antes de dar H1.4 por cerrado.
+
+## DEC-031 — Match v0 Engine y Consumo en Opportunity Workspace (H1.5)
+- **Estado:** Aceptada · 2026-10-11. Formaliza las reglas de Match v0 aprobadas por el fundador para H1.5.
+- **Contexto:** H1.4 entregó un `DemandSnapshot` determinista sobre el ledger append-only (DEC-030 §11). H1.5 requiere cruzar la demanda con el stock `available` sin introducir colas ni IA (DEC-029 §7).
+- **Decisión:**
+  1. **Motor.** Determinista, síncrono y puro en `domains/match`: consume el `DemandSnapshot` de `domains/demand` y una interfaz pura `MatchableVehicle` (`id`, `organizationId`, `status`, `brand`, `model`, `year`, `price` con su moneda). No conoce la base, React, Next ni proveedores. API: `evaluateMatch(demand, vehicle)` devuelve el match o `null`; `findMatchesForDemand(demand, vehicles)` devuelve los matches del mayor puntaje al menor.
+  2. **Elegibilidad.** Solo participan unidades `available`; cualquier otro estado descalifica. Una marca distinta descalifica.
+  3. **Scoring (0 a 100).** Umbral de match: **40 pts**; por debajo no hay match.
+     - Vehículo: marca + modelo 45 pts; solo modelo 35 pts; solo marca 35 pts. Marca y modelo se comparan normalizados (sin espacios en los bordes ni mayúsculas). Misma marca con otro modelo, cuando la demanda define los dos, no suma ni descalifica y se explica como modelo alternativo.
+     - Año en rango 25 pts: extremos incluidos y el ausente abierto. Fuera de rango, 0 sin descalificar.
+     - Precio ≤ presupuesto 30 pts; exceso menor al 10 % 10 pts; exceso del 10 % o más, 0 sin descalificar. Los montos se comparan exactos, nunca como float.
+     - Monedas dispares: sin FX, no suman ni descalifican y no generan razón de precio (DEC-025 §5, DEC-030 §7).
+     - Un fact Unknown suma 0 y no descalifica (DEC-005). v0 evalúa el valor vigente de cada fact sin ponderar su estado; en H1.4 no hay detecciones.
+  4. **Explicabilidad obligatoria.** Todo match lleva `reasons` legibles para el vendedor (es-PY) y el puntaje por dimensión.
+  5. **Consumo en Opportunity Workspace.** `/opportunities/[id]` calcula los matches en memoria, en cada lectura, mediante el loader tenant-scoped del detalle: `requireTenant()` → `withTenant()` → unidades de la organización activa con `status = 'available'` (filtro explícito sobre RLS) → `findMatchesForDemand()`. El Vehicle Rail muestra el Top Match y el Alternative Match reales con sus razones. Sin demanda evaluable, sin unidades disponibles o sin matches de 40 pts o más, muestra un estado "sin dato" honesto, nunca fixtures.
+  6. **Aislamiento.** Unidades de más de una organización en un mismo lote son un error del llamador y el motor falla cerrado.
+  7. **Sin escrituras.** Ni tablas, ni migraciones, ni jobs. Calcular matches no modifica `last_activity_at` ni ningún dato.
+- **Aclara / supersede:** DEC-005 (adelanta una fórmula provisoria solo para v0, como prevé DEC-029 §7), DEC-030 §11 (fórmula, peso de `detected` y monedas distintas) y DEC-017 y DEC-030 §10 (`/opportunities/[id]` incorpora el Top Match y la alternativa reales, como matches del detalle). La card "Busca" y el Vehicle Rail de `/opportunities` no cambian en H1.5. Prevalece según DEC-002.
+- **Consecuencias:**
+  - Cero drift de base de datos en v0: no hay `stock_matches` ni conteo de matches persistido (DEC-025 §10).
+  - Explicabilidad inmediata para el vendedor: cada match dice por qué.
+  - Los matches quedan desacoplados de una persistencia prematura. Persistirlos, notificarlos o recalcularlos ante `became_available` (DEC-028 §7) requiere una decisión nueva.
 
 ---
 

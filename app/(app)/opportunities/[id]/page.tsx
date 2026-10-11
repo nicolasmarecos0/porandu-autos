@@ -10,9 +10,10 @@ export const metadata: Metadata = { title: label };
 
 /*
  * Detalle de una oportunidad (H1.4, DEC-030 §10): lo que busca el cliente y
- * por qué Porandú lo cree. Loader tenant-scoped: requireTenant() →
- * withTenant() → RLS. Un id inválido, de otra organización o inexistente da
- * notFound(), sin distinguir cuál.
+ * por qué Porandú lo cree, y sus matches en el stock disponible (H1.5,
+ * DEC-031 §5). Loader tenant-scoped: requireTenant() → withTenant() → RLS.
+ * Un id inválido, de otra organización o inexistente da notFound(), sin
+ * distinguir cuál.
  */
 export default async function OpportunityDetailPage({
   params,
