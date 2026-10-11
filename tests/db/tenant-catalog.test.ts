@@ -15,7 +15,8 @@ import {
  * Roles, grants, función y policies que dejan 0001_tenant_isolation,
  * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
  * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
- * 0006_vehicle_availability y 0007_opportunity_demand_facts, leídos del
+ * 0006_vehicle_availability, 0007_opportunity_demand_facts,
+ * 0008_opportunity_stages y 0009_opportunity_notes_vehicle_link, leídos del
  * catálogo de PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2, C3 y C9).
  * El acceso a datos se prueba en tenant-isolation.test.ts,
  * opportunities.test.ts, vehicles.test.ts, demand-facts.test.ts y los tests
@@ -27,6 +28,7 @@ const TABLES = [
   "memberships",
   "opportunities",
   "opportunity_demand_facts",
+  "opportunity_notes",
   "organizations",
   "profiles",
   "vehicles",
@@ -168,7 +170,7 @@ describe("rol de runtime app_runtime (ADR-001 §2)", () => {
 });
 
 describe("policies (ADR-001 §4)", () => {
-  it("lectura para authenticated, alta de contacts, opportunities, vehicles y opportunity_demand_facts con WITH CHECK y disponibilidad de vehicles con USING y WITH CHECK, con la forma de referencia", async () => {
+  it("lectura para authenticated, alta de contacts, opportunities, vehicles, opportunity_demand_facts y opportunity_notes con WITH CHECK, y las ediciones de vehicles y opportunities con USING y WITH CHECK, con la forma de referencia", async () => {
     expect(await policies(db.admin)).toEqual([
       {
         table: "contacts",
@@ -252,6 +254,26 @@ describe("policies (ADR-001 §4)", () => {
         withCheck: null,
       },
       {
+        table: "opportunity_notes",
+        name: "opportunity_notes_insert_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "INSERT",
+        using: null,
+        withCheck:
+          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (recorded_by = ( SELECT auth.uid() AS uid)) AND (recorded_at = now()))",
+      },
+      {
+        table: "opportunity_notes",
+        name: "opportunity_notes_select_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
+      },
+      {
         table: "organizations",
         name: "organizations_select_member",
         permissive: "PERMISSIVE",
@@ -314,11 +336,12 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles y opportunity_demand_facts, y UPDATE solo sobre opportunities y vehicles", async () => {
+  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles, opportunity_demand_facts y opportunity_notes, y UPDATE solo sobre opportunities y vehicles", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
       "authenticated INSERT contacts",
       "authenticated INSERT opportunities",
       "authenticated INSERT opportunity_demand_facts",
+      "authenticated INSERT opportunity_notes",
       "authenticated INSERT vehicles",
       ...TABLES.map((table) => `authenticated SELECT ${table}`),
       "authenticated UPDATE opportunities",
@@ -326,7 +349,7 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
   });
 
-  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason y updated_at (H1.6) y vehicles.status y updated_at (H1.3C), por columna, nunca la tabla", async () => {
+  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id y updated_at (H1.6, Hito 2) y vehicles.status y updated_at (H1.3C), por columna, nunca la tabla", async () => {
     const writes = (await tablePrivileges(db.admin, ["authenticated"])).filter(
       (grant) => !/^authenticated (SELECT|INSERT) /.test(grant),
     );
@@ -353,6 +376,7 @@ describe("grants (ADR-001 §3.6)", () => {
       "opportunities.loss_reason",
       "opportunities.stage",
       "opportunities.updated_at",
+      "opportunities.vehicle_id",
       "vehicles.status",
       "vehicles.updated_at",
     ]);
@@ -367,6 +391,7 @@ describe("grants (ADR-001 §3.6)", () => {
       "opportunities_insert_member",
       "opportunities_update_stage",
       "opportunity_demand_facts_insert_member",
+      "opportunity_notes_insert_member",
       "vehicles_insert_member",
       "vehicles_update_mark_available",
     ]);
@@ -511,6 +536,67 @@ describe("grants (ADR-001 §3.6)", () => {
       "opportunity_demand_facts_insert_member INSERT",
       "opportunity_demand_facts_select_member SELECT",
     ]);
+  });
+
+  it("opportunity_notes (Hito 2): append-only. SELECT e INSERT de tabla para authenticated (diseño A), policies de lectura y alta; sin UPDATE ni DELETE para nadie de la app, tampoco service_role", async () => {
+    expect(
+      (
+        await tablePrivileges(db.admin, [
+          "anon",
+          "authenticated",
+          "app_runtime",
+          "service_role",
+        ])
+      ).filter((grant) => grant.endsWith(" opportunity_notes")),
+    ).toEqual([
+      "authenticated INSERT opportunity_notes",
+      "authenticated SELECT opportunity_notes",
+      "service_role INSERT opportunity_notes",
+      "service_role MAINTAIN opportunity_notes",
+      "service_role REFERENCES opportunity_notes",
+      "service_role SELECT opportunity_notes",
+      "service_role TRIGGER opportunity_notes",
+    ]);
+    const [insert] = await db.admin<{ table: boolean }[]>`
+      SELECT has_table_privilege('authenticated', 'public.opportunity_notes', 'INSERT') AS table
+    `;
+    expect(insert?.table).toBe(true);
+    expect(
+      (await policies(db.admin))
+        .filter((policy) => policy.table === "opportunity_notes")
+        .map((policy) => `${policy.name} ${policy.command}`),
+    ).toEqual([
+      "opportunity_notes_insert_member INSERT",
+      "opportunity_notes_select_member SELECT",
+    ]);
+  });
+
+  it("opportunities (Hito 2): la unidad vinculada es de la misma organización (FK compuesta a vehicles), solo existe desde la negociación (CHECK) y la valida el mismo trigger", async () => {
+    const constraints = await db.admin<{ definition: string }[]>`
+      SELECT conname || ' ' || pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint
+      WHERE conrelid = 'public.opportunities'::regclass
+        AND conname IN ('opportunities_vehicle_fk', 'opportunities_vehicle_stage_check')
+      ORDER BY conname
+    `;
+    expect(constraints.map((c) => c.definition)).toEqual([
+      "opportunities_vehicle_fk FOREIGN KEY (organization_id, vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
+      "opportunities_vehicle_stage_check CHECK (((vehicle_id IS NULL) OR (stage = ANY (ARRAY['negotiating'::text, 'won'::text, 'lost'::text]))))",
+    ]);
+    const [unique] = await db.admin<{ definition: string }[]>`
+      SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+      WHERE conrelid = 'public.vehicles'::regclass
+        AND conname = 'vehicles_organization_id_id_key'
+    `;
+    expect(unique?.definition).toBe("UNIQUE (organization_id, id)");
+    // La función sigue siendo la del trigger de 0008, ahora con la regla de
+    // la unidad (DEC-033 §3).
+    const [fn] = await db.admin<{ source: string }[]>`
+      SELECT prosrc AS source FROM pg_proc
+      WHERE oid = 'private.enforce_opportunity_stage_transition()'::regprocedure
+    `;
+    expect(fn?.source).toContain("opportunities_vehicle_link");
+    expect(fn?.source).toContain("opportunities_stage_transition");
   });
 
   /*

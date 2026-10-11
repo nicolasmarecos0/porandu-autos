@@ -17,6 +17,7 @@ import { timestamps } from "./columns";
 import { contacts } from "./contacts";
 import { organizations } from "./organizations";
 import { userOrgIds } from "./policies";
+import { vehicles } from "./vehicles";
 
 /*
  * Etapas comerciales de la oportunidad (H1.6, DEC-032 §1): `won` y `lost`
@@ -48,6 +49,14 @@ export const opportunityLossReasons = [
 ] as const;
 
 /*
+ * Etapas en las que puede existir una unidad vinculada (Hito 2, DEC-033 §2):
+ * se elige o cambia en `negotiating` y `won`, y `lost` conserva la que se
+ * negociaba. Espeja VEHICLE_HOLDING_STAGES de
+ * domains/opportunities/vehicle-link.ts (un test vigila que coincidan).
+ */
+export const opportunityVehicleStages = ["negotiating", "won", "lost"] as const;
+
+/*
  * Origen de la oportunidad (TB §7 "source / channel"). Mismo criterio: los
  * canales de hoy, con un CHECK reemplazable cuando se sumen otros.
  */
@@ -72,6 +81,12 @@ export const opportunitySources = [
  * - `loss_reason` (H1.6): el motivo de la pérdida. Existe si y solo si la
  *   etapa es `lost` (CHECK) y es inmutable: de una etapa terminal no se
  *   sale.
+ * - `vehicle_id` (Hito 2, DEC-033): la unidad del stock que se negocia,
+ *   opcional. FK compuesta (organization_id, vehicle_id) → vehicles: la
+ *   unidad es siempre de la misma organización. RESTRICT. Solo existe en
+ *   `negotiating`, `won` y `lost` (CHECK); en qué etapas cambia lo decide el
+ *   trigger. Vincular no cambia el estado de la unidad. Índice parcial
+ *   (organization_id, vehicle_id) para la FK.
  * - `interest_model` / `interest_version`: legado de H1.1/H1.2, congelado y
  *   de solo lectura (DEC-030 §10). La demanda estructurada vive en
  *   `opportunity_demand_facts` (H1.4): estas columnas ya no se escriben, no
@@ -93,15 +108,17 @@ export const opportunitySources = [
  * el código (nunca el cliente) y la exige el WITH CHECK de la policy de
  * INSERT. El CHECK de `stage` admite todas las etapas.
  *
- * Cambio de etapa (H1.6, DEC-032): la única edición. `authenticated` recibe
- * UPDATE solo sobre `stage`, `loss_reason` y `updated_at` (grant por
- * columna, en la migración), y una única policy de UPDATE tenant-scoped
+ * Cambio de etapa (H1.6, DEC-032) y de unidad vinculada (Hito 2, DEC-033):
+ * las únicas ediciones. `authenticated` recibe UPDATE solo sobre `stage`,
+ * `loss_reason`, `vehicle_id` y `updated_at` (grant por columna, en las
+ * migraciones), y una única policy de UPDATE tenant-scoped
  * (`opportunities_update_stage`: organización con membership activa, antes y
- * después). El par etapa anterior → etapa nueva lo valida un trigger BEFORE
- * UPDATE (migración, drizzle-kit no modela triggers): como las policies
- * permisivas de un mismo comando se combinan con OR (DEC-028 §5), la
- * máquina de estados vive en el trigger y no en policies por transición.
- * Sin DELETE (default deny).
+ * después). Qué UPDATE es válida la decide un trigger BEFORE UPDATE
+ * (migración, drizzle-kit no modela triggers): un pase de etapa de la
+ * máquina que no toca la unidad, o un cambio de unidad en `negotiating` o
+ * `won` sin pase. Como las policies permisivas de un mismo comando se
+ * combinan con OR (DEC-028 §5), esas reglas viven en el trigger y no en
+ * policies por transición. Sin DELETE (default deny).
  */
 export const opportunities = pgTable(
   "opportunities",
@@ -114,6 +131,7 @@ export const opportunities = pgTable(
     stage: text("stage", { enum: opportunityStages }).notNull(),
     source: text("source", { enum: opportunitySources }).notNull(),
     lossReason: text("loss_reason", { enum: opportunityLossReasons }),
+    vehicleId: uuid("vehicle_id"),
     interestModel: text("interest_model"),
     interestVersion: text("interest_version"),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true })
@@ -127,6 +145,12 @@ export const opportunities = pgTable(
       columns: [t.organizationId, t.contactId],
       foreignColumns: [contacts.organizationId, contacts.id],
     }).onDelete("restrict"),
+    // La unidad vinculada es de la misma organización (Hito 2, DEC-033).
+    foreignKey({
+      name: "opportunities_vehicle_fk",
+      columns: [t.organizationId, t.vehicleId],
+      foreignColumns: [vehicles.organizationId, vehicles.id],
+    }).onDelete("restrict"),
     // Mismo orden que la query (DESC, que en Postgres es NULLS FIRST).
     index("opportunities_organization_id_last_activity_at_idx").on(
       t.organizationId,
@@ -137,6 +161,10 @@ export const opportunities = pgTable(
       t.organizationId,
       t.contactId,
     ),
+    // Las oportunidades que negocian una unidad (y la FK compuesta).
+    index("opportunities_organization_id_vehicle_id_idx")
+      .on(t.organizationId, t.vehicleId)
+      .where(sql`${t.vehicleId} IS NOT NULL`),
     unique("opportunities_organization_id_id_key").on(t.organizationId, t.id),
     check("opportunities_stage_check", oneOf(t.stage, opportunityStages)),
     check("opportunities_source_check", oneOf(t.source, opportunitySources)),
@@ -150,6 +178,11 @@ export const opportunities = pgTable(
       "opportunities_loss_reason_stage_check",
       sql`(${t.stage} = 'lost' AND ${t.lossReason} IS NOT NULL) OR (${t.stage} <> 'lost' AND ${t.lossReason} IS NULL)`,
     ),
+    // Una unidad vinculada solo existe desde la negociación (DEC-033 §2).
+    check(
+      "opportunities_vehicle_stage_check",
+      sql`${t.vehicleId} IS NULL OR ${oneOf(t.stage, opportunityVehicleStages)}`,
+    ),
     pgPolicy("opportunities_select_member", {
       for: "select",
       to: authenticatedRole,
@@ -162,9 +195,10 @@ export const opportunities = pgTable(
       to: authenticatedRole,
       withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.stage} = 'new'`,
     }),
-    // Cambio de etapa (H1.6): organización con membership activa, antes y
-    // después. Qué transición es válida lo decide el trigger de la
-    // migración 0008 (DEC-032 §4), no esta policy.
+    // Cambio de etapa (H1.6) y de unidad vinculada (Hito 2): organización
+    // con membership activa, antes y después. Qué UPDATE es válida lo decide
+    // el trigger de las migraciones 0008 y 0009 (DEC-032 §4, DEC-033 §3), no
+    // esta policy.
     pgPolicy("opportunities_update_stage", {
       for: "update",
       to: authenticatedRole,

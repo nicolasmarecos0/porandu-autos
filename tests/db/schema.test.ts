@@ -257,8 +257,10 @@ describe("opportunities (H1.1)", () => {
         default: "now()",
       },
       ...TIMESTAMPS,
-      // H1.6 (0008): agregada con ALTER TABLE, así que es la última.
+      // H1.6 (0008) y Hito 2 (0009): agregadas con ALTER TABLE, así que
+      // son las últimas.
       { name: "loss_reason", type: "text", notNull: false, default: null },
+      { name: "vehicle_id", type: "uuid", notNull: false, default: null },
     ]);
   });
 
@@ -280,6 +282,12 @@ describe("opportunities (H1.1)", () => {
         "CHECK ((((stage = 'lost'::text) AND (loss_reason IS NOT NULL)) OR ((stage <> 'lost'::text) AND (loss_reason IS NULL))))",
       // H1.4: destino de la FK compuesta de opportunity_demand_facts.
       opportunities_organization_id_id_key: "UNIQUE (organization_id, id)",
+      // Hito 2: la unidad vinculada es de la misma organización y solo existe
+      // desde la negociación.
+      opportunities_vehicle_fk:
+        "FOREIGN KEY (organization_id, vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
+      opportunities_vehicle_stage_check:
+        "CHECK (((vehicle_id IS NULL) OR (stage = ANY (ARRAY['negotiating'::text, 'won'::text, 'lost'::text]))))",
     });
   });
 
@@ -293,6 +301,8 @@ describe("opportunities (H1.1)", () => {
         "CREATE INDEX opportunities_organization_id_contact_id_idx ON public.opportunities USING btree (organization_id, contact_id)",
       opportunities_organization_id_id_key:
         "CREATE UNIQUE INDEX opportunities_organization_id_id_key ON public.opportunities USING btree (organization_id, id)",
+      opportunities_organization_id_vehicle_id_idx:
+        "CREATE INDEX opportunities_organization_id_vehicle_id_idx ON public.opportunities USING btree (organization_id, vehicle_id) WHERE (vehicle_id IS NOT NULL)",
     });
   });
 });
@@ -333,6 +343,8 @@ describe("vehicles (H1.3A)", () => {
         "CHECK ((((price IS NULL) = (currency IS NULL)) AND ((price IS NULL) OR ((price > (0)::numeric) AND ((currency <> 'PYG'::text) OR (price = trunc(price)))))))",
       vehicles_year_check: "CHECK (((year >= 1900) AND (year <= 2100)))",
       vehicles_km_check: "CHECK (((km IS NULL) OR (km >= 0)))",
+      // Hito 2: destino de la FK compuesta de opportunities.vehicle_id.
+      vehicles_organization_id_id_key: "UNIQUE (organization_id, id)",
     });
   });
 
@@ -342,6 +354,8 @@ describe("vehicles (H1.3A)", () => {
         "CREATE UNIQUE INDEX vehicles_pkey ON public.vehicles USING btree (id)",
       vehicles_organization_id_created_at_idx:
         "CREATE INDEX vehicles_organization_id_created_at_idx ON public.vehicles USING btree (organization_id, created_at DESC)",
+      vehicles_organization_id_id_key:
+        "CREATE UNIQUE INDEX vehicles_organization_id_id_key ON public.vehicles USING btree (organization_id, id)",
     });
   });
 });
@@ -454,6 +468,52 @@ END)`,
         "CREATE UNIQUE INDEX opportunity_demand_facts_member_root_key ON public.opportunity_demand_facts USING btree (organization_id, opportunity_id, fact) WHERE ((source_kind = 'member'::text) AND (previous_member_fact_id IS NULL))",
       opportunity_demand_facts_member_next_key:
         "CREATE UNIQUE INDEX opportunity_demand_facts_member_next_key ON public.opportunity_demand_facts USING btree (organization_id, opportunity_id, fact, previous_member_fact_id) WHERE ((source_kind = 'member'::text) AND (previous_member_fact_id IS NOT NULL))",
+    });
+  });
+});
+
+describe("opportunity_notes (Hito 2)", () => {
+  it("columnas: bitácora append-only con la oportunidad, el texto, el autor y el reloj de la base", async () => {
+    expect(await columns(db.admin, "opportunity_notes")).toEqual([
+      {
+        name: "id",
+        type: "uuid",
+        notNull: true,
+        default: "gen_random_uuid()",
+      },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "opportunity_id", type: "uuid", notNull: true, default: null },
+      { name: "body", type: "text", notNull: true, default: null },
+      { name: "recorded_by", type: "uuid", notNull: true, default: null },
+      {
+        name: "recorded_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+    ]);
+  });
+
+  it("PK, FKs RESTRICT (organización, oportunidad de la misma organización, autor) y CHECK del texto", async () => {
+    expect(await constraints(db.admin, "opportunity_notes")).toEqual({
+      opportunity_notes_pkey: "PRIMARY KEY (id)",
+      opportunity_notes_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      opportunity_notes_opportunity_fk:
+        "FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+      opportunity_notes_recorded_by_profiles_id_fk:
+        "FOREIGN KEY (recorded_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+      opportunity_notes_body_check:
+        "CHECK ((((char_length(body) >= 1) AND (char_length(body) <= 1000)) AND (body = btrim(body, (' '::text || chr(10)))) AND (translate(body, chr(10), ''::text) !~ '[[:cntrl:]]'::text)))",
+    });
+  });
+
+  it("índices: la bitácora por organización, oportunidad y fecha", async () => {
+    expect(await indexes(db.admin, "opportunity_notes")).toEqual({
+      opportunity_notes_pkey:
+        "CREATE UNIQUE INDEX opportunity_notes_pkey ON public.opportunity_notes USING btree (id)",
+      opportunity_notes_organization_id_opportunity_id_idx:
+        "CREATE INDEX opportunity_notes_organization_id_opportunity_id_idx ON public.opportunity_notes USING btree (organization_id, opportunity_id, recorded_at DESC)",
     });
   });
 });
@@ -836,6 +896,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
       "memberships",
       "opportunities",
       "opportunity_demand_facts",
+      "opportunity_notes",
       "vehicles",
     ]);
     for (const table of tenantScoped) {

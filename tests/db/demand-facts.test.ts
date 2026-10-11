@@ -47,11 +47,11 @@ vi.mock("server-only", () => ({}));
 /*
  * Las postcondiciones del ledger append-only (0007) viajan en cada migración
  * posterior junto con las de toda la base: se corren las de la última
- * (0008_opportunity_stages, H1.6), que son las que describen el catálogo
- * real de hoy.
+ * (0009_opportunity_notes_vehicle_link, Hito 2), que son las que describen
+ * el catálogo real de hoy.
  */
 const MIGRATION = new URL(
-  "../../db/migrations/0008_opportunity_stages.sql",
+  "../../db/migrations/0009_opportunity_notes_vehicle_link.sql",
   import.meta.url,
 );
 
@@ -727,7 +727,7 @@ describe("autores (C-9): RESTRICT hacia profiles", () => {
   });
 });
 
-describe("postcondiciones del ledger (0007, vigentes en 0008) sobre catálogos mutados (DB5)", () => {
+describe("postcondiciones del ledger (0007, vigentes en 0009) sobre catálogos mutados (DB5)", () => {
   let postconditions: string;
 
   beforeAll(async () => {
@@ -762,7 +762,7 @@ describe("postcondiciones del ledger (0007, vigentes en 0008) sobre catálogos m
        CREATE POLICY probe ON public.opportunity_demand_facts FOR UPDATE TO authenticated
          USING (organization_id IN (SELECT private.user_org_ids()))
          WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
-      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\) and opportunities\.stage, opportunities\.loss_reason, opportunities\.updated_at \(H1\.6\)/,
+      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\) and opportunities\.stage, loss_reason, vehicle_id, updated_at \(H1\.6, Hito 2\)/,
     ],
     [
       "UPDATE de service_role",
@@ -794,7 +794,7 @@ describe("postcondiciones del ledger (0007, vigentes en 0008) sobre catálogos m
       `GRANT INSERT ON public.memberships TO authenticated;
        CREATE POLICY probe ON public.memberships FOR INSERT TO authenticated
          WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
-      /may only insert into contacts, opportunities, vehicles and opportunity_demand_facts/,
+      /may only insert into contacts, opportunities, vehicles, opportunity_demand_facts \(H1\.4\) and opportunity_notes \(Hito 2\)/,
     ],
     [
       "privilegios de app_runtime sobre la tabla",

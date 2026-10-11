@@ -129,6 +129,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0006_vehicle_availability",
       "0007_opportunity_demand_facts",
       "0008_opportunity_stages",
+      "0009_opportunity_notes_vehicle_link",
     ]);
   });
 
@@ -293,7 +294,7 @@ describe("comandos del workflow (scripts/staging/commands.mts)", () => {
     const output = lines.join("\n");
     expect(output).toContain("✗ postgres.database");
     expect(output).toContain(
-      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create, 0004_vehicles_stock_persistence, 0005_vehicle_quick_create, 0006_vehicle_availability, 0007_opportunity_demand_facts, 0008_opportunity_stages",
+      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create, 0004_vehicles_stock_persistence, 0005_vehicle_quick_create, 0006_vehicle_availability, 0007_opportunity_demand_facts, 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link",
     );
     expect(output).not.toContain(ctx.secrets[0]!);
     expect(output).not.toMatch(/postgres(ql)?:\/\//);
@@ -350,6 +351,7 @@ describe("migración oficial y verificación post-migración", () => {
         "rls.policies",
         "schema.demand-facts-chain",
         "schema.opportunity-stages",
+        "schema.opportunity-notes",
         "private.schema",
         "private.user_org_ids",
         "app_runtime.attributes",
@@ -361,6 +363,7 @@ describe("migración oficial y verificación post-migración", () => {
         "privileges.authenticated-update-columns",
         "privileges.policy-coverage",
         "privileges.service_role-demand-facts",
+        "privileges.service_role-opportunity-notes",
         "privileges.create",
         "public.security-definer",
         "privileges.default-acl",
@@ -557,6 +560,71 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta una unidad vinculada sin CHECK de etapa, una bitácora sin CHECK del texto y un service_role que puede borrar notas (Hito 2)", async () => {
+    await migrated.admin.unsafe(`
+      ALTER TABLE public.opportunities DROP CONSTRAINT opportunities_vehicle_stage_check;
+      ALTER TABLE public.opportunity_notes DROP CONSTRAINT opportunity_notes_body_check;
+      GRANT DELETE ON public.opportunity_notes TO service_role;
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "schema.opportunity-stages",
+        "schema.opportunity-notes",
+        "privileges.service_role-opportunity-notes",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(`
+        ALTER TABLE public.opportunities ADD CONSTRAINT opportunities_vehicle_stage_check
+          CHECK (vehicle_id IS NULL OR stage IN ('negotiating', 'won', 'lost'));
+        ALTER TABLE public.opportunity_notes ADD CONSTRAINT opportunity_notes_body_check
+          CHECK (char_length(body) BETWEEN 1 AND 1000 AND body = btrim(body, ' ' || chr(10)) AND translate(body, chr(10), '') !~ '[[:cntrl:]]');
+        REVOKE DELETE ON public.opportunity_notes FROM service_role;
+      `);
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it("la verificación detecta la función de transiciones de 0008 sin la regla de la unidad (Hito 2)", async () => {
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef('private.enforce_opportunity_stage_transition()'::regprocedure) AS definition
+    `;
+    await migrated.admin.unsafe(`
+      CREATE OR REPLACE FUNCTION private.enforce_opportunity_stage_transition()
+      RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $$
+      BEGIN
+        NEW.updated_at := now();
+        RETURN NEW;
+      END
+      $$;
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "schema.opportunity-stages",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(current!.definition);
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -567,27 +635,40 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-032): 0008 después del merge, con
- * preflight → migrate → verify. Staging está en H1.3C (0000 a 0006,
- * DEC-028) si 0007 todavía no se aplicó, o en H1.4 (0000 a 0007) si ya se
- * aplicó: expected_migrations declara exactamente lo pendiente en cada caso.
- * Esta rama no aplica nada a staging.
+ * El próximo rollout real (DEC-033): 0009 después del merge, con
+ * preflight → migrate → verify. Staging está en H1.6 (0000 a 0008) si 0008
+ * ya se aplicó; si no, en H1.4 (0000 a 0007) o todavía en H1.3C (0000 a
+ * 0006, DEC-028): expected_migrations declara exactamente lo pendiente en
+ * cada caso. Esta rama no aplica nada a staging.
  */
 describe.each([
   {
     stagingAt: "0006_vehicle_availability",
     label: "H1.3C",
     applied: 7,
-    expected: ["0007_opportunity_demand_facts", "0008_opportunity_stages"],
+    expected: [
+      "0007_opportunity_demand_facts",
+      "0008_opportunity_stages",
+      "0009_opportunity_notes_vehicle_link",
+    ],
   },
   {
     stagingAt: "0007_opportunity_demand_facts",
     label: "H1.4",
     applied: 8,
-    expected: ["0008_opportunity_stages"],
+    expected: [
+      "0008_opportunity_stages",
+      "0009_opportunity_notes_vehicle_link",
+    ],
+  },
+  {
+    stagingAt: "0008_opportunity_stages",
+    label: "H1.6",
+    applied: 9,
+    expected: ["0009_opportunity_notes_vehicle_link"],
   },
 ])(
-  "staging en $label: rollout hasta 0008",
+  "staging en $label: rollout hasta 0009",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

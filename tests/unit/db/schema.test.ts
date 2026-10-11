@@ -17,10 +17,12 @@ import {
   IMPLEMENTED_SOURCE_KINDS,
 } from "@/domains/demand/resolver";
 import { CURRENCIES } from "@/domains/money";
+import { NOTE_MAX_LENGTH } from "@/domains/opportunities/notes";
 import {
   LOSS_REASONS,
   OPPORTUNITY_STAGES,
 } from "@/domains/opportunities/stages";
+import { VEHICLE_HOLDING_STAGES } from "@/domains/opportunities/vehicle-link";
 
 /*
  * Schema de Drizzle (db/schema), sin base de datos. El catálogo real que
@@ -58,12 +60,13 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles) y la de H1.4 (opportunity_demand_facts)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts) y la del Hito 2 (opportunity_notes)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "memberships",
       "opportunities",
       "opportunity_demand_facts",
+      "opportunity_notes",
       "organizations",
       "profiles",
       "vehicles",
@@ -147,7 +150,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles y opportunity_demand_facts, la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles, opportunity_demand_facts y opportunity_notes, la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -244,6 +247,25 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using:
           '"opportunity_demand_facts"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "opportunity_notes",
+        name: "opportunity_notes_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck: `"opportunity_notes"."organization_id" IN (SELECT private.user_org_ids()) AND "opportunity_notes"."recorded_by" = (select auth.uid()) AND "opportunity_notes"."recorded_at" = now()`,
+      },
+      {
+        table: "opportunity_notes",
+        name: "opportunity_notes_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"opportunity_notes"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
       },
       {
@@ -367,6 +389,7 @@ describe("db/schema", () => {
       ["stage", true, false],
       ["source", true, false],
       ["loss_reason", false, false],
+      ["vehicle_id", false, false],
       ["interest_model", false, false],
       ["interest_version", false, false],
       ["last_activity_at", true, true],
@@ -376,6 +399,7 @@ describe("db/schema", () => {
     expect(foreignKeys("opportunities")).toEqual([
       "organization_id -> public.organizations(id) ON DELETE restrict",
       "organization_id,contact_id -> public.contacts(organization_id,id) ON DELETE restrict",
+      "organization_id,vehicle_id -> public.vehicles(organization_id,id) ON DELETE restrict",
     ]);
     const dialect = new PgDialect();
     expect(
@@ -400,6 +424,10 @@ describe("db/schema", () => {
         name: "opportunities_loss_reason_stage_check",
         sql: `("opportunities"."stage" = 'lost' AND "opportunities"."loss_reason" IS NOT NULL) OR ("opportunities"."stage" <> 'lost' AND "opportunities"."loss_reason" IS NULL)`,
       },
+      {
+        name: "opportunities_vehicle_stage_check",
+        sql: `"opportunities"."vehicle_id" IS NULL OR "opportunities"."stage" IN ('negotiating', 'won', 'lost')`,
+      },
     ]);
     expect(schema.opportunityStages).toEqual([
       "new",
@@ -419,6 +447,11 @@ describe("db/schema", () => {
     // El schema y el dominio (H1.6) hablan de las mismas etapas y motivos.
     expect(schema.opportunityStages).toEqual([...OPPORTUNITY_STAGES]);
     expect(schema.opportunityLossReasons).toEqual([...LOSS_REASONS]);
+    // Hito 2: la unidad vinculada existe en las mismas etapas en la base y
+    // en el dominio.
+    expect(schema.opportunityVehicleStages).toEqual([
+      ...VEHICLE_HOLDING_STAGES,
+    ]);
     expect(
       table("opportunities").indexes.map((i) => ({
         name: i.config.name,
@@ -432,6 +465,10 @@ describe("db/schema", () => {
       {
         name: "opportunities_organization_id_contact_id_idx",
         columns: ["organization_id", "contact_id"],
+      },
+      {
+        name: "opportunities_organization_id_vehicle_id_idx",
+        columns: ["organization_id", "vehicle_id"],
       },
     ]);
     // H1.1: scores, urgencia, NBA, señales, matches, trade-in y responsable
@@ -524,6 +561,18 @@ describe("db/schema", () => {
       {
         name: "vehicles_organization_id_created_at_idx",
         columns: ["organization_id", "created_at"],
+      },
+    ]);
+    // Hito 2: destino de la FK compuesta de la unidad vinculada.
+    expect(
+      table("vehicles").uniqueConstraints.map((u) => ({
+        name: u.getName(),
+        columns: u.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "vehicles_organization_id_id_key",
+        columns: ["organization_id", "id"],
       },
     ]);
     // H1.3A y H1.3B: fotos, sucursal, matches, interesados, trade-in,
@@ -651,6 +700,61 @@ describe("db/schema", () => {
     }
   });
 
+  it("opportunity_notes: bitácora append-only, de la oportunidad y el autor, con el texto acotado (Hito 2)", () => {
+    expect(
+      table("opportunity_notes").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", "PgUUID", true, true],
+      ["organization_id", "PgUUID", true, false],
+      ["opportunity_id", "PgUUID", true, false],
+      ["body", "PgText", true, false],
+      ["recorded_by", "PgUUID", true, false],
+      ["recorded_at", "PgTimestamp", true, true],
+    ]);
+    // Reloj de la base, nunca de la aplicación.
+    const recordedAt = column("opportunity_notes", "recorded_at");
+    expect(recordedAt.defaultFn).toBeUndefined();
+    expect(foreignKeys("opportunity_notes")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,opportunity_id -> public.opportunities(organization_id,id) ON DELETE restrict",
+      "recorded_by -> public.profiles(id) ON DELETE restrict",
+    ]);
+    const dialect = new PgDialect();
+    expect(
+      table("opportunity_notes").checks.map((c) => ({
+        name: c.name,
+        sql: dialect.sqlToQuery(c.value).sql,
+      })),
+    ).toEqual([
+      {
+        name: "opportunity_notes_body_check",
+        sql: `char_length("opportunity_notes"."body") BETWEEN 1 AND 1000 AND "opportunity_notes"."body" = btrim("opportunity_notes"."body", ' ' || chr(10)) AND translate("opportunity_notes"."body", chr(10), '') !~ '[[:cntrl:]]'`,
+      },
+    ]);
+    // El largo máximo de la base es el del dominio.
+    expect(schema.opportunityNoteMaxLength).toBe(NOTE_MAX_LENGTH);
+    expect(
+      table("opportunity_notes").indexes.map((i) => ({
+        name: i.config.name,
+        columns: i.config.columns.map((c) => ("name" in c ? c.name : c)),
+      })),
+    ).toEqual([
+      {
+        name: "opportunity_notes_organization_id_opportunity_id_idx",
+        columns: ["organization_id", "opportunity_id", "recorded_at"],
+      },
+    ]);
+    // Append-only: no hay updated_at ni nada que se edite.
+    expect(table("opportunity_notes").columns.map((c) => c.name)).not.toContain(
+      "updated_at",
+    );
+  });
+
   it("opportunities: unique (organization_id, id), destino de la FK de la demanda (H1.4)", () => {
     expect(
       table("opportunities").uniqueConstraints.map((u) => ({
@@ -674,6 +778,7 @@ describe("db/schema", () => {
       "memberships",
       "opportunities",
       "opportunity_demand_facts",
+      "opportunity_notes",
       "vehicles",
     ]);
 
