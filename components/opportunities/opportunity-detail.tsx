@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/shell/page-header";
 import { WorkspaceLayout } from "@/components/shell/workspace-layout";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRightIcon } from "@/components/ui/icons";
+import { CheckIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { OpportunityMatches } from "@/components/vehicle-rail/vehicle-rail";
 import {
@@ -13,31 +13,41 @@ import {
   type DemandSummary,
 } from "@/domains/demand/presentation";
 import type { CurrentStatus } from "@/domains/demand/resolver";
-import type { MatchRail } from "@/domains/match/presentation";
+import type { MatchCard, MatchRail } from "@/domains/match/presentation";
+import type { NoteEntry } from "@/domains/opportunities/notes";
 import type { LossReason, Stage } from "@/domains/opportunities/stages";
+import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
 
+import { LinkedVehicle } from "./linked-vehicle";
 import { OpportunityDemandEdit } from "./opportunity-demand-edit";
+import { OpportunityNotes } from "./opportunity-notes";
 import { OpportunityStagePanel } from "./opportunity-stage-panel";
 import { StageBadge } from "./stage-badge";
+import { VehicleLinkButton, VehicleLinkProvider } from "./vehicle-link";
 
 /*
  * /opportunities/[id] (H1.4, DEC-030 §10, dentro de DEC-017): responde, para
- * cada fact, "¿Por qué Porandú cree que este cliente busca esto?", y qué
- * unidad del stock ofrecerle (Match v0, H1.5, DEC-031 §5).
+ * cada fact, "¿Por qué Porandú cree que este cliente busca esto?", qué
+ * unidad del stock ofrecerle (Match v0, H1.5, DEC-031 §5) y, desde Hito 2
+ * (DEC-033), qué pasó en la negociación y qué unidad se negocia.
  *
  *   ┌ contacto · etapa ──────────────────────────── Volver · Editar ┐
- *   │ Lo que busca                          │ Matches en stock       │
- *   │  Vehículo   Toyota Hilux [Confirmado] │  Top Match        (100)│
- *   │             Cargado al crear…         │  Alternativa       (70)│
- *   │             ▸ Historial (2)           │                        │
+ *   │ Etapa                                 │ Unidad en negociación  │
+ *   │ Notas  [Nueva nota…] [Agregar nota]   │  Toyota Hilux  [Quitar]│
+ *   │        Vos · 11 oct 2026 14:32 …      │ Matches en stock       │
+ *   │ Lo que busca                          │  Top Match        (100)│
+ *   │  Vehículo   Toyota Hilux [Confirmado] │   [Vinculada]          │
+ *   │             ▸ Historial (2)           │  Alternativa       (70)│
+ *   │                                       │   [Vincular a la neg.] │
  *   └───────────────────────────────────────┴────────────────────────┘
  *
  * Server Component: el historial, las notas y los autores ("Vos" u "Otro
  * miembro") se arman en el servidor y nunca llegan ids de usuario. Los
  * matches llegan calculados por el loader. Al navegador solo viajan el drawer
  * "Editar", con el mismo resumen que la card "Busca", el panel de etapa
- * (H1.6, DEC-032: etapa actual y acciones permitidas) y los tooltips del
- * puntaje. Sin cola, scores, Why Now ni NBA (DEC-017).
+ * (H1.6, DEC-032: etapa actual y acciones permitidas), el formulario de
+ * notas, los botones de vinculación (solo En negociación y Ganada) y los
+ * tooltips del puntaje. Sin cola, scores, Why Now ni NBA (DEC-017).
  */
 
 const STATUS_TONE: Readonly<
@@ -124,7 +134,62 @@ type OpportunityDetailViewProps = Readonly<{
   summary: DemandSummary;
   /** Top Match y alternativa del stock disponible, o por qué no hay. */
   matches: MatchRail;
+  /** Unidad vinculada a la negociación (Hito 2) y si se puede cambiar. */
+  vehicleLink: Readonly<{
+    canChange: boolean;
+    linked: LinkedVehicleCard | null;
+  }>;
+  /** Bitácora comercial, de la nota más reciente a la más vieja. */
+  notes: readonly NoteEntry[];
 }>;
+
+/** Copy de la marca de la tarjeta de match que ya es la unidad vinculada. */
+const LINKED_MARK = "Vinculada a la negociación";
+
+/**
+ * Rail derecho: la unidad vinculada arriba y los matches, cuyas tarjetas
+ * ofrecen vincularse solo si la etapa lo admite (DEC-033 §2).
+ */
+function VehicleColumn({
+  id,
+  stage,
+  matches,
+  vehicleLink,
+}: Pick<
+  OpportunityDetailViewProps,
+  "id" | "stage" | "matches" | "vehicleLink"
+>) {
+  const { canChange, linked } = vehicleLink;
+  const cardFooter = (card: MatchCard) => {
+    if (card.vehicleId === linked?.vehicleId) {
+      return (
+        <Badge tone="brand">
+          <CheckIcon className="size-3" strokeWidth={2.25} />
+          {LINKED_MARK}
+        </Badge>
+      );
+    }
+    return canChange ? (
+      <VehicleLinkButton vehicleId={card.vehicleId} vehicleName={card.name} />
+    ) : null;
+  };
+  const hint =
+    stage === "new" || stage === "qualifying"
+      ? "Vas a poder vincular una de estas unidades cuando la oportunidad esté En negociación."
+      : undefined;
+
+  const column = (
+    <>
+      <LinkedVehicle stage={stage} linked={linked} canChange={canChange} />
+      <OpportunityMatches rail={matches} cardFooter={cardFooter} hint={hint} />
+    </>
+  );
+  return canChange ? (
+    <VehicleLinkProvider opportunityId={id}>{column}</VehicleLinkProvider>
+  ) : (
+    column
+  );
+}
 
 export function OpportunityDetailView({
   id,
@@ -134,6 +199,8 @@ export function OpportunityDetailView({
   demand,
   summary,
   matches,
+  vehicleLink,
+  notes,
 }: OpportunityDetailViewProps) {
   return (
     <WorkspaceLayout
@@ -151,13 +218,21 @@ export function OpportunityDetailView({
           }
         />
       }
-      aside={<OpportunityMatches rail={matches} />}
+      aside={
+        <VehicleColumn
+          id={id}
+          stage={stage}
+          matches={matches}
+          vehicleLink={vehicleLink}
+        />
+      }
     >
       <OpportunityStagePanel
         opportunityId={id}
         stage={stage}
         lossReason={lossReason}
       />
+      <OpportunityNotes opportunityId={id} notes={notes} />
       <section aria-labelledby="demand-heading" className="max-w-3xl">
         <Panel>
           <PanelHeader>

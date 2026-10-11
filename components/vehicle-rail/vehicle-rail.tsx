@@ -22,7 +22,9 @@ import { VehicleVisual } from "./vehicle-visual";
  * - `OpportunityMatches` muestra los matches reales de Match v0 (H1.5,
  *   DEC-031) en /opportunities/[id]: Top Match y alternativa con las razones
  *   del motor, o un "sin dato" honesto. Sin silueta: el inventario no tiene
- *   carrocería y no se inventa una.
+ *   carrocería y no se inventa una. Desde Hito 2 (DEC-033) cada tarjeta
+ *   puede llevar un pie: la acción de vincularla a la negociación, o la
+ *   marca de que ya es la unidad vinculada.
  */
 
 function Pill({
@@ -213,7 +215,13 @@ function MatchReasons({
   );
 }
 
-function TopMatchCard({ match }: { match: MatchCard }) {
+function TopMatchCard({
+  match,
+  footer,
+}: {
+  match: MatchCard;
+  footer?: ReactNode;
+}) {
   return (
     <section
       aria-label="Top Match"
@@ -247,11 +255,18 @@ function TopMatchCard({ match }: { match: MatchCard }) {
         reasons={match.reasons}
         className="mt-3 border-t border-brand-border pt-2.5"
       />
+      {footer ? <div className="mt-3">{footer}</div> : null}
     </section>
   );
 }
 
-function AlternativeMatchCard({ match }: { match: MatchCard }) {
+function AlternativeMatchCard({
+  match,
+  footer,
+}: {
+  match: MatchCard;
+  footer?: ReactNode;
+}) {
   return (
     <section
       aria-label="Alternativa"
@@ -271,6 +286,7 @@ function AlternativeMatchCard({ match }: { match: MatchCard }) {
         <KeyValues rows={[["Precio", match.price ?? "Sin precio"]]} />
       </div>
       <MatchReasons reasons={match.reasons} className="mt-2" />
+      {footer ? <div className="mt-3">{footer}</div> : null}
     </section>
   );
 }
@@ -278,8 +294,20 @@ function AlternativeMatchCard({ match }: { match: MatchCard }) {
 /**
  * Matches del stock para una oportunidad: Top Match y alternativa con sus
  * razones, o por qué no hay ("sin dato" honesto, nunca un fixture).
+ *
+ * - `cardFooter`: el pie de cada tarjeta (p. ej. vincularla a la
+ *   negociación, Hito 2); sin él, las tarjetas no ofrecen acciones.
+ * - `hint`: un aviso bajo el título, cuando hay matches.
  */
-export function OpportunityMatches({ rail }: { rail: MatchRail }) {
+export function OpportunityMatches({
+  rail,
+  cardFooter,
+  hint,
+}: {
+  rail: MatchRail;
+  cardFooter?: (card: MatchCard) => ReactNode;
+  hint?: ReactNode;
+}) {
   return (
     <TooltipProvider delayDuration={350}>
       <section
@@ -295,9 +323,15 @@ export function OpportunityMatches({ rail }: { rail: MatchRail }) {
           </p>
         ) : (
           <>
-            <TopMatchCard match={rail.top} />
+            {hint ? (
+              <p className="text-caption text-text-secondary">{hint}</p>
+            ) : null}
+            <TopMatchCard match={rail.top} footer={cardFooter?.(rail.top)} />
             {rail.alternative ? (
-              <AlternativeMatchCard match={rail.alternative} />
+              <AlternativeMatchCard
+                match={rail.alternative}
+                footer={cardFooter?.(rail.alternative)}
+              />
             ) : null}
           </>
         )}
