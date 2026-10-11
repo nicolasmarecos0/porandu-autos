@@ -57,6 +57,13 @@
       "when": 1791311079466,
       "tag": "0007_opportunity_demand_facts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791738229959,
+      "tag": "0008_opportunity_stages",
+      "breakpoints": true
     }
   ]
 }

@@ -337,9 +337,10 @@ describe("toOpportunity: contrato visual de B1", () => {
     );
     expect(Object.values(stageFromDb)).toEqual([
       "new",
-      "qualified",
-      "testDrive",
-      "negotiation",
+      "qualifying",
+      "negotiating",
+      "won",
+      "lost",
     ]);
     expect(Object.values(channelFromDb)).toEqual([
       "WhatsApp",

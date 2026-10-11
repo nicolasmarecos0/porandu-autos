@@ -12,6 +12,9 @@ import { describe, expect, it } from "vitest";
  *   createVehicle() (lib/vehicles/actions.ts);
  * - la disponibilidad de una unidad (db/queries/mark-vehicle-available),
  *   también: la Server Action markVehicleAvailable() (lib/vehicles/actions.ts);
+ * - el cambio de etapa de una oportunidad (H1.6)
+ *   (db/queries/change-opportunity-stage), también: la Server Action
+ *   changeOpportunityStage() (lib/opportunities/actions.ts);
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -183,6 +186,58 @@ describe(
         await restrictedBy(
           "lib/vehicles/availability.ts",
           `import type { AvailabilityTransition } from "@/db/queries/mark-vehicle-available";\nexport type T = AvailabilityTransition;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importStageWrite = `import { transitionOpportunityStage } from "@/db/queries/change-opportunity-stage";\nexport const use = transitionOpportunityStage;\n`;
+
+describe(
+  "una sola puerta para el cambio de etapa de una oportunidad (H1.6)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/opportunities/page.tsx",
+      "app/(app)/opportunities/[id]/page.tsx",
+      "components/opportunities/opportunity-stage-panel.tsx",
+      "components/opportunities/stage-close-dialog.tsx",
+      "lib/opportunities/stage-change.ts",
+      "lib/vehicles/actions.ts",
+      "lib/tenant/session.ts",
+      "db/queries/opportunities.ts",
+      "db/queries/opportunity-detail.ts",
+      "db/queries/create-opportunity.ts",
+      "db/queries/demand-facts.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importStageWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/opportunity-detail.ts",
+          `import { transitionOpportunityStage } from "./change-opportunity-stage";\nexport const use = transitionOpportunityStage;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en la Server Action", async () => {
+      expect(
+        await restrictedBy("lib/opportunities/actions.ts", importStageWrite),
+      ).toEqual([]);
+    });
+
+    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/opportunities/stage-change.ts",
+          `import type { StageChangeOutcome } from "@/db/queries/change-opportunity-stage";\nexport type T = StageChangeOutcome;\n`,
         ),
       ).toEqual([]);
     });

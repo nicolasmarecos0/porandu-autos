@@ -221,6 +221,17 @@ describe("policies (ADR-001 §4)", () => {
         withCheck: null,
       },
       {
+        table: "opportunities",
+        name: "opportunities_update_stage",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "UPDATE",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+      },
+      {
         table: "opportunity_demand_facts",
         name: "opportunity_demand_facts_insert_member",
         permissive: "PERMISSIVE",
@@ -303,27 +314,33 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles y opportunity_demand_facts, y UPDATE solo sobre vehicles", async () => {
+  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles y opportunity_demand_facts, y UPDATE solo sobre opportunities y vehicles", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
       "authenticated INSERT contacts",
       "authenticated INSERT opportunities",
       "authenticated INSERT opportunity_demand_facts",
       "authenticated INSERT vehicles",
       ...TABLES.map((table) => `authenticated SELECT ${table}`),
+      "authenticated UPDATE opportunities",
       "authenticated UPDATE vehicles",
     ]);
   });
 
-  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza vehicles.status y vehicles.updated_at (por columna, nunca la tabla)", async () => {
+  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason y updated_at (H1.6) y vehicles.status y updated_at (H1.3C), por columna, nunca la tabla", async () => {
     const writes = (await tablePrivileges(db.admin, ["authenticated"])).filter(
       (grant) => !/^authenticated (SELECT|INSERT) /.test(grant),
     );
-    expect(writes).toEqual(["authenticated UPDATE vehicles"]);
+    expect(writes).toEqual([
+      "authenticated UPDATE opportunities",
+      "authenticated UPDATE vehicles",
+    ]);
 
-    const [table] = await db.admin<{ update: boolean }[]>`
-      SELECT has_table_privilege('authenticated', 'public.vehicles', 'UPDATE') AS update
-    `;
-    expect(table?.update).toBe(false);
+    for (const name of ["opportunities", "vehicles"]) {
+      const [table] = await db.admin<{ update: boolean }[]>`
+        SELECT has_table_privilege('authenticated', ${`public.${name}`}, 'UPDATE') AS update
+      `;
+      expect(table?.update, name).toBe(false);
+    }
     const columns = await db.admin<{ column: string }[]>`
       SELECT c.relname || '.' || a.attname AS column
       FROM pg_class c
@@ -333,6 +350,9 @@ describe("grants (ADR-001 §3.6)", () => {
       ORDER BY 1
     `;
     expect(columns.map((row) => row.column)).toEqual([
+      "opportunities.loss_reason",
+      "opportunities.stage",
+      "opportunities.updated_at",
       "vehicles.status",
       "vehicles.updated_at",
     ]);
@@ -345,6 +365,7 @@ describe("grants (ADR-001 §3.6)", () => {
     expect(writePolicies.map((policy) => policy.name)).toEqual([
       "contacts_insert_member",
       "opportunities_insert_member",
+      "opportunities_update_stage",
       "opportunity_demand_facts_insert_member",
       "vehicles_insert_member",
       "vehicles_update_mark_available",
@@ -384,6 +405,78 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
   });
 
+  it("opportunities (H1.6): SELECT, INSERT y UPDATE por columna para authenticated; policies de lectura, alta y cambio de etapa; sin DELETE", async () => {
+    expect(
+      (
+        await tablePrivileges(db.admin, [
+          "anon",
+          "authenticated",
+          "app_runtime",
+        ])
+      ).filter((grant) => grant.endsWith(" opportunities")),
+    ).toEqual([
+      "authenticated INSERT opportunities",
+      "authenticated SELECT opportunities",
+      "authenticated UPDATE opportunities",
+    ]);
+    expect(
+      (await policies(db.admin))
+        .filter((policy) => policy.table === "opportunities")
+        .map((policy) => `${policy.name} ${policy.command}`),
+    ).toEqual([
+      "opportunities_insert_member INSERT",
+      "opportunities_select_member SELECT",
+      "opportunities_update_stage UPDATE",
+    ]);
+  });
+
+  it("opportunities (H1.6, DEC-032 §4): el par etapa anterior → etapa nueva lo valida un trigger BEFORE UPDATE de fila, habilitado, invoker y con search_path vacío", async () => {
+    const triggers = await db.admin<
+      { name: string; definition: string; enabled: string }[]
+    >`
+      SELECT t.tgname AS name, pg_get_triggerdef(t.oid) AS definition,
+        t.tgenabled::text AS enabled
+      FROM pg_trigger t
+      WHERE t.tgrelid = 'public.opportunities'::regclass AND NOT t.tgisinternal
+    `;
+    expect(triggers).toEqual([
+      {
+        name: "opportunities_stage_transition",
+        definition:
+          "CREATE TRIGGER opportunities_stage_transition BEFORE UPDATE ON public.opportunities FOR EACH ROW EXECUTE FUNCTION private.enforce_opportunity_stage_transition()",
+        enabled: "O",
+      },
+    ]);
+    const [fn] = await db.admin<
+      {
+        securityDefiner: boolean;
+        config: string[] | null;
+        owner: string;
+        returns: string;
+        authenticatedExecute: boolean;
+        publicExecute: boolean;
+      }[]
+    >`
+      SELECT p.prosecdef AS "securityDefiner", p.proconfig AS config,
+        p.proowner::regrole::text AS owner, p.prorettype::regtype::text AS returns,
+        has_function_privilege('authenticated', p.oid, 'EXECUTE') AS "authenticatedExecute",
+        EXISTS (
+          SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+          WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+        ) AS "publicExecute"
+      FROM pg_proc p
+      WHERE p.oid = to_regprocedure('private.enforce_opportunity_stage_transition()')
+    `;
+    expect(fn).toEqual({
+      securityDefiner: false,
+      config: ['search_path=""'],
+      owner: "postgres",
+      returns: "trigger",
+      authenticatedExecute: false,
+      publicExecute: false,
+    });
+  });
+
   it("opportunity_demand_facts (H1.4): append-only. SELECT e INSERT de tabla para authenticated (diseño A), policies de lectura y alta; sin UPDATE ni DELETE para nadie de la app, tampoco service_role (C-11)", async () => {
     expect(
       (
@@ -421,18 +514,27 @@ describe("grants (ADR-001 §3.6)", () => {
   });
 
   /*
-   * PostgreSQL combina las policies permisivas de un mismo comando con OR,
-   * por separado para USING y para WITH CHECK: con dos policies de UPDATE,
-   * el origen de una y el destino de la otra quedarían permitidos juntos. Con
-   * una sola, el par in_preparation → available es exacto. Una segunda
-   * transición necesita decidir otro mecanismo, no sumar una policy.
+   * PostgreSQL combina las policies permisivas de un mismo comando de una
+   * misma tabla con OR, por separado para USING y para WITH CHECK: con dos
+   * policies de UPDATE sobre una tabla, el origen de una y el destino de la
+   * otra quedarían permitidos juntos. Por eso cada tabla con edición tiene
+   * una sola policy de UPDATE: vehicles, el par exacto in_preparation →
+   * available (DEC-028); opportunities, solo la organización, porque el par
+   * etapa anterior → etapa nueva lo valida un trigger (DEC-032 §4, el
+   * mecanismo que DEC-028 §6 pedía antes de una segunda transición). Otra
+   * transición no suma una policy: pasa por el trigger de su tabla.
    */
-  it("hay una sola policy de UPDATE en public: el par origen → destino de la transición es exacto", async () => {
-    expect(
-      (await policies(db.admin))
-        .filter((policy) => ["UPDATE", "ALL"].includes(policy.command))
-        .map((policy) => `${policy.table}.${policy.name}`),
-    ).toEqual(["vehicles.vehicles_update_mark_available"]);
+  it("cada tabla con edición tiene una sola policy de UPDATE: el par origen → destino no se cruza por OR", async () => {
+    const updates = (await policies(db.admin)).filter((policy) =>
+      ["UPDATE", "ALL"].includes(policy.command),
+    );
+    expect(updates.map((policy) => `${policy.table}.${policy.name}`)).toEqual([
+      "opportunities.opportunities_update_stage",
+      "vehicles.vehicles_update_mark_available",
+    ]);
+    expect(new Set(updates.map((policy) => policy.table)).size).toBe(
+      updates.length,
+    );
   });
 
   it("anon y app_runtime no tienen privilegios sobre las tablas de public", async () => {

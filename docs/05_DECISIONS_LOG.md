@@ -45,6 +45,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-029 | Roadmap Checkpoint H1 y contrato de demanda | Aceptada | 2026-10-06 |
 | DEC-030 | Demand Contract y Current Truth (H1.4) | Aceptada | 2026-10-06 |
 | DEC-031 | Match v0 Engine y Consumo en Opportunity Workspace (H1.5) | Aceptada | 2026-10-11 |
+| DEC-032 | Opportunity Stages: etapas comerciales y transiciones (H1.6) | Aceptada en principio | 2026-10-11 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -502,6 +503,52 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Cero drift de base de datos en v0: no hay `stock_matches` ni conteo de matches persistido (DEC-025 §10).
   - Explicabilidad inmediata para el vendedor: cada match dice por qué.
   - Los matches quedan desacoplados de una persistencia prematura. Persistirlos, notificarlos o recalcularlos ante `became_available` (DEC-028 §7) requiere una decisión nueva.
+
+## DEC-032 — Opportunity Stages: etapas comerciales y transiciones (H1.6)
+- **Estado:** Aceptada en principio · 2026-10-11. Formaliza la especificación de H1.6 del fundador (secuencia de DEC-029): etapas, máquina de estados, motivo de pérdida y UI. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de esa especificación y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** hasta H1.5 toda oportunidad nacía en `new` (DEC-024 §5) y no podía avanzar: no había UPDATE sobre `opportunities`. H1.6 son las etapas del ciclo comercial de la oportunidad, no el Lifecycle Engine de posventa, que sigue fuera de alcance (DEC-029, CLAUDE.md §2).
+- **Decisión:**
+  1. **Etapas.** `new` (Nueva: consulta sin calificar), `qualifying` (En calificación: relevando la demanda), `negotiating` (En negociación: propuesta activa), `won` (Ganada: venta concretada) y `lost` (Perdida: descartada). `won` y `lost` son terminales. Reemplazan las etapas de B1 (`qualified`, `test_drive`, `negotiation`): el test drive deja de ser una etapa.
+  2. **Máquina de estados** (pura, en `domains/opportunities/stages.ts`):
+     - `new → qualifying | lost` · `qualifying → negotiating | lost` · `negotiating → won | lost`.
+     - Sin saltos (`new → negotiating` no existe), sin vuelta atrás y sin salida de una etapa terminal, ni entre `won` y `lost`.
+     - Pedir la etapa actual es idempotente: `unchanged`, sin escribir.
+  3. **Motivo de pérdida.** Pasar a `lost` exige un motivo estructurado de una lista cerrada: `price`, `vehicle_not_available`, `bought_elsewhere`, `no_response`, `unqualified`, `other`. Sin texto libre; `other` es la salida. El motivo existe si y solo si la etapa es `lost` (CHECK) y no se reescribe. *Propuesta de implementación:* la especificación admitía motivo opcional u obligatorio; se eligió obligatorio para que toda pérdida sea analizable.
+  4. **Validación en la base (resuelve DEC-028 §6).** *Propuesta de implementación.* La máquina se exige también en PostgreSQL, para que un bug de la aplicación no pueda escribir un pase inválido:
+     - Una sola policy de UPDATE tenant-scoped, `opportunities_update_stage` (organización con membership activa en `USING` y `WITH CHECK`). No hay una policy por transición: las policies permisivas de un mismo comando se combinan con OR y cruzarían orígenes y destinos (DEC-028 §5).
+     - Un trigger `BEFORE UPDATE FOR EACH ROW`, `opportunities_stage_transition`, que llama a `private.enforce_opportunity_stage_transition()` (invoker, `search_path` vacío, sin EXECUTE para nadie). Valida el par etapa anterior → etapa nueva con la misma matriz del dominio y fija `updated_at = now()`. Rechaza con `23514` y constraint `opportunities_stage_transition`.
+     - Toda UPDATE de `opportunities` tiene que ser un pase válido, también la del rol dueño. Un mantenimiento que necesite otra cosa deshabilita el trigger de forma explícita, en una migración revisada.
+     - `authenticated` recibe UPDATE solo sobre `stage`, `loss_reason` y `updated_at` (grant por columna). DELETE sigue prohibido.
+  5. **Puerta única.** `changeOpportunityStage()` (Server Action): `requireTenant()` → lectura del pedido → `transitionOpportunityStage()` (`withTenant()`, `SELECT … FOR UPDATE`, `planStageChange()` del dominio, `UPDATE … AND stage = <la leída>`) → revalidar `/opportunities` y `/opportunities/[id]`.
+     - El cliente solo envía la oportunidad, la etapa de destino y, con `lost`, el motivo. La etapa de origen la lee el servidor de la fila bloqueada; organización, usuario y reloj no salen del pedido.
+     - Resultados: `changed`, `unchanged`, `invalid_transition` (con la etapa real), `loss_reason_required`, `invalid`, `not_found` (inexistente o de otra organización, sin distinguir) y `failed`.
+     - ESLint impide importar `db/queries/change-opportunity-stage.ts` desde cualquier otro módulo.
+     - El bloqueo de la fila serializa pedidos simultáneos: nunca dos pases iguales, nunca una oportunidad ganada y perdida.
+  6. **Autorización.** La de DEC-027 §4: membership activa AND role IN (`admin`, `seller`). Cualquier miembro mueve la oportunidad de otro (DEC-023: sin responsable asignado).
+  7. **Recencia.** *Propuesta de implementación.* Cambiar de etapa actualiza `stage` y `updated_at`, pero no `last_activity_at`, que mide la interacción con el cliente y no el trabajo del vendedor (como la demanda en DEC-030 §10 y los matches en DEC-031 §7). El orden de la cola no cambia por un cambio de etapa.
+  8. **UI.**
+     - `/opportunities/[id]` suma el panel "Etapa": un stepper (Nueva › En calificación › En negociación › Ganada) con la etapa actual marcada (`aria-current="step"`) y solo las acciones que la máquina permite desde ella.
+     - Avanzar es un click. Ganar y perder abren una confirmación (alertdialog de Radix, DEC-028 §8), porque de una etapa terminal no se vuelve, y perder pide el motivo.
+     - Una oportunidad cerrada no ofrece acciones; una perdida muestra su motivo.
+     - El encabezado y la card de la cola muestran la etapa con su color: Nueva neutral, En calificación marca, En negociación advertencia, Ganada éxito y Perdida peligro.
+     - `Button` suma la variante `danger`, que usa el token `danger`.
+  9. **Migración `0008_opportunity_stages`.**
+     - Reemplaza el CHECK de `stage`, agrega `loss_reason` con sus dos CHECK, la policy, el trigger, su función y el grant por columna.
+     - Precondición: si existe una oportunidad en una etapa que no es `new` (solo un superusuario pudo escribirla), se detiene en vez de reinterpretarla.
+     - Postcondiciones: las de `0007`, con las ediciones aprobadas ampliadas a `opportunities.stage`, `loss_reason` y `updated_at`, y la exigencia de que el trigger exista, esté habilitado y sea `BEFORE UPDATE FOR EACH ROW`.
+  10. **Fuera de H1.6:**
+      - La venta como entidad (DEC-001; TB §6, Flujo C): `won` no crea una venta ni marca una unidad `sold`, porque la oportunidad no tiene una unidad asociada.
+      - El historial de etapas (quién y cuándo), reabrir o retroceder una oportunidad, `closed_at`, filtros u ocultamiento de cerradas en la cola, métricas de conversión y el Lifecycle de posventa.
+- **Aclara / supersede:**
+  - DEC-024 §5: las transiciones no son "policies de UPDATE específicas", sino una policy y un trigger.
+  - DEC-028 §6: este es el mecanismo de validación del par anterior → nuevo en la base para `opportunities`.
+  - MC §5 (Pipeline) y TB §10 (Estados de lead / pipeline): etapas nuevas, sin Cita/Test Drive como etapa.
+  - DEC-017 y DEC-030 §10: `/opportunities/[id]` incorpora el panel de etapa.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: ADR-001 alcanza.
+- **Consecuencias:**
+  - `0008_opportunity_stages` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0008_opportunity_stages` si staging ya tiene `0007`, o `0007_opportunity_demand_facts,0008_opportunity_stages` si no.
+  - La verificación de staging suma `schema.opportunity-stages`.
+  - Una transición nueva se agrega en la matriz del dominio y en el trigger, con una migración, y el test cruzado de los 25 pares la cubre. Nunca con una segunda policy de UPDATE.
 
 ---
 

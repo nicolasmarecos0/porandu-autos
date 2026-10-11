@@ -991,7 +991,7 @@ describe("la policy de alta exige la etapa inicial (WITH CHECK stage = 'new')", 
   /** INSERT directo por el boundary, en una organización con membership activa. */
   function insertWithStage(
     ctx: TenantContext,
-    stage: "new" | "qualified" | "test_drive" | "negotiation",
+    stage: "new" | "qualifying" | "negotiating" | "won" | "lost",
   ) {
     return withTenant(ctx, async (tx) => {
       const phone = freshPhone();
@@ -1024,7 +1024,7 @@ describe("la policy de alta exige la etapa inicial (WITH CHECK stage = 'new')", 
     });
   });
 
-  it.each(["qualified", "test_drive", "negotiation"] as const)(
+  it.each(["qualifying", "negotiating", "won", "lost"] as const)(
     "un INSERT directo con stage = '%s' falla por la policy, aunque el usuario pertenezca a la organización",
     async (stage) => {
       const before = await db.admin<{ count: number }[]>`
@@ -1044,13 +1044,13 @@ describe("la policy de alta exige la etapa inicial (WITH CHECK stage = 'new')", 
     },
   );
 
-  it("el CHECK general de stage no cambió: la base (sin RLS) sigue aceptando todas las etapas", async () => {
+  it("el CHECK general de stage admite todas las etapas aprobadas (H1.6): la base (sin RLS) las acepta", async () => {
     const [row] = await db.admin<{ definition: string }[]>`
       SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
       WHERE conname = 'opportunities_stage_check'
     `;
     expect(row?.definition).toBe(
-      "CHECK ((stage = ANY (ARRAY['new'::text, 'qualified'::text, 'test_drive'::text, 'negotiation'::text])))",
+      "CHECK ((stage = ANY (ARRAY['new'::text, 'qualifying'::text, 'negotiating'::text, 'won'::text, 'lost'::text])))",
     );
   });
 
@@ -1067,7 +1067,7 @@ describe("la policy de alta exige la etapa inicial (WITH CHECK stage = 'new')", 
     );
   });
 
-  it("mutación: sin stage = 'new' en el WITH CHECK, un alta en `qualified` pasaría; el catálogo también lo marca", async () => {
+  it("mutación: sin stage = 'new' en el WITH CHECK, un alta en `qualifying` pasaría; el catálogo también lo marca", async () => {
     const policy = async () => {
       const [row] = await db.admin<{ withCheck: string }[]>`
         SELECT with_check AS "withCheck" FROM pg_policies
@@ -1081,10 +1081,10 @@ describe("la policy de alta exige la etapa inicial (WITH CHECK stage = 'new')", 
       WITH CHECK (organization_id IN (SELECT private.user_org_ids()))
     `);
     try {
-      // Los tests de arriba lo detectan: el INSERT en `qualified` ya no falla.
+      // Los tests de arriba lo detectan: el INSERT en `qualifying` ya no falla.
       expect(
-        await insertWithStage(tenantContext(USER_A, ORG_1), "qualified"),
-      ).toMatchObject({ stage: "qualified" });
+        await insertWithStage(tenantContext(USER_A, ORG_1), "qualifying"),
+      ).toMatchObject({ stage: "qualifying" });
       expect(await policy()).not.toContain("stage");
     } finally {
       await db.admin.unsafe(`
@@ -1094,7 +1094,7 @@ describe("la policy de alta exige la etapa inicial (WITH CHECK stage = 'new')", 
     }
     expect(await policy()).toBe(original);
     await expectSqlError(
-      insertWithStage(tenantContext(USER_A, ORG_1), "qualified"),
+      insertWithStage(tenantContext(USER_A, ORG_1), "qualifying"),
       "42501",
     );
   });
@@ -1130,7 +1130,7 @@ describe("sin withTenant() o sin privilegios, la escritura falla cerrado", () =>
     ).rejects.toMatchObject({ code: "42501" });
   });
 
-  it("UPDATE y DELETE siguen prohibidos por withTenant(), también en la organización propia", async () => {
+  it("UPDATE (salvo el cambio de etapa) y DELETE siguen prohibidos por withTenant(), también en la organización propia", async () => {
     const ctx = tenantContext(USER_A, ORG_1);
     const own = OPPORTUNITIES[0]!;
     await expectSqlError(
@@ -1152,7 +1152,8 @@ describe("sin withTenant() o sin privilegios, la escritura falla cerrado", () =>
       withTenant(ctx, (tx) =>
         tx
           .update(opportunities)
-          .set({ stage: "negotiation" })
+          // Fuera del grant de 0008 (stage, loss_reason, updated_at).
+          .set({ source: "web" })
           .where(eq(opportunities.id, own.id)),
       ),
       "42501",

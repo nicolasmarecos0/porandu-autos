@@ -228,7 +228,7 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
         deal: null,
       },
       lastActivity: { minutes: 2 },
-      stage: "qualified",
+      stage: "qualifying",
       bucket: "now",
       drivers: [],
     });
@@ -398,7 +398,7 @@ describe("detalle /opportunities/[id] (H1.4): por qué Porandú cree esto", () =
     expect(detail).toMatchObject({
       id: RAMON,
       contactName: "Ramón Benítez",
-      stage: "qualified",
+      stage: "qualifying",
       demand: { empty: false, legacy: null },
     });
     const facts = new Map(detail.demand.facts.map((f) => [f.fact, f]));
@@ -563,7 +563,7 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
     );
   });
 
-  it("por withTenant() nadie modifica ni borra, ni da de alta en otra organización", async () => {
+  it("por withTenant() nadie modifica fuera del cambio de etapa ni borra, ni da de alta en otra organización", async () => {
     // El alta en la organización propia (H1.2) se prueba en
     // create-opportunity.test.ts; acá la cola de ORG_1 no cambia.
     const ctx = tenantContext(USER_A, ORG_1);
@@ -588,9 +588,12 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
     );
     await expectSqlError(
       withTenant(ctx, (tx) =>
+        // Solo stage, loss_reason y updated_at tienen UPDATE (H1.6, 0008):
+        // el resto de las columnas sigue sin él. El cambio de etapa se
+        // prueba en opportunity-stages.test.ts.
         tx
           .update(opportunities)
-          .set({ stage: "negotiation" })
+          .set({ source: "web" })
           .where(eq(opportunities.id, own.id)),
       ),
       "42501",

@@ -159,6 +159,20 @@ const markVehicleAvailableImport = {
   message: MARK_VEHICLE_AVAILABLE_MESSAGE,
 };
 
+// H1.6 (DEC-032): el cambio de etapa de una oportunidad tiene una sola
+// puerta, la Server Action changeOpportunityStage()
+// (lib/opportunities/actions.ts), que obtiene el contexto con
+// requireTenant() y valida el pedido antes de escribir.
+const CHANGE_OPPORTUNITY_STAGE_MESSAGE =
+  "Opportunity stages change only through the changeOpportunityStage() Server Action (lib/opportunities/actions.ts): requireTenant(), server-side validation, then withTenant().";
+const changeOpportunityStageImport = {
+  regex:
+    "(^|/)db/queries/change-opportunity-stage$|^\\.{1,2}/change-opportunity-stage$",
+  // Los tipos del resultado (StageChangeOutcome) no escriben nada.
+  allowTypeImports: true,
+  message: CHANGE_OPPORTUNITY_STAGE_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -200,6 +214,7 @@ const basePatterns = [
   createOpportunityImport,
   createVehicleImport,
   markVehicleAvailableImport,
+  changeOpportunityStageImport,
   demandFactsImport,
   phoneLibraryImport,
 ];
@@ -351,6 +366,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeOpportunityStageImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -372,6 +388,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeOpportunityStageImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -414,6 +431,7 @@ const eslintConfig = defineConfig([
             resolveTenantImport,
             opportunitiesMockImport,
             createOpportunityImport,
+            changeOpportunityStageImport,
             demandFactsImport,
             phoneLibraryImport,
             stockMockImport,
@@ -437,6 +455,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeOpportunityStageImport,
             demandFactsImport,
           ],
         },
@@ -458,6 +477,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeOpportunityStageImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
