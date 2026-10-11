@@ -20,8 +20,9 @@ import type { Stage } from "./stages";
  * servidor (planVehicleLink() sobre la fila bloqueada) y la base (CHECK de
  * etapa y el trigger de la oportunidad, que espejan estas listas).
  *
- * - Solo se elige, cambia o quita en `negotiating` o `won`.
- * - En `lost` se conserva la que había y ya no cambia; en `new` y
+ * - Solo se elige, cambia o quita en `negotiating`.
+ * - En `won` queda fija: es la unidad vendida, parte del cierre (DEC-034
+ *   §4). En `lost` se conserva la que había y ya no cambia. En `new` y
  *   `qualifying` no existe.
  * - La unidad tiene que estar disponible y ser un match de la demanda
  *   vigente (Match v0, DEC-031) en el momento de vincularla.
@@ -29,19 +30,22 @@ import type { Stage } from "./stages";
  *   marca `sold` (DEC-032 §10).
  */
 
-/** Etapas en las que se elige, cambia o quita la unidad vinculada. */
+/**
+ * Etapas en las que se elige, cambia o quita la unidad vinculada (DEC-034
+ * §4: ya no en `won`).
+ */
 export const VEHICLE_LINK_STAGES = [
   "negotiating",
-  "won",
 ] as const satisfies readonly Stage[];
 
 /**
- * Etapas en las que puede existir una unidad vinculada: las de vinculación
- * más `lost`, que conserva la que se negociaba (CHECK
- * `opportunities_vehicle_stage_check`).
+ * Etapas en las que puede existir una unidad vinculada: la de vinculación,
+ * `won`, que la exige (es la vendida), y `lost`, que conserva la que se
+ * negociaba (CHECK `opportunities_vehicle_stage_check`).
  */
 export const VEHICLE_HOLDING_STAGES = [
   ...VEHICLE_LINK_STAGES,
+  "won",
   "lost",
 ] as const satisfies readonly Stage[];
 

@@ -17,11 +17,15 @@ import {
   IMPLEMENTED_SOURCE_KINDS,
 } from "@/domains/demand/resolver";
 import { CURRENCIES } from "@/domains/money";
-import { NOTE_MAX_LENGTH } from "@/domains/opportunities/notes";
 import {
+  DELIVERY_DATE_RANGE,
+  DELIVERY_STATUSES,
+  LOSS_NOTES_MAX_LENGTH,
   LOSS_REASONS,
-  OPPORTUNITY_STAGES,
-} from "@/domains/opportunities/stages";
+  PAYMENT_METHODS,
+} from "@/domains/opportunities/closure";
+import { NOTE_MAX_LENGTH } from "@/domains/opportunities/notes";
+import { OPPORTUNITY_STAGES } from "@/domains/opportunities/stages";
 import { VEHICLE_HOLDING_STAGES } from "@/domains/opportunities/vehicle-link";
 
 /*
@@ -390,6 +394,12 @@ describe("db/schema", () => {
       ["source", true, false],
       ["loss_reason", false, false],
       ["vehicle_id", false, false],
+      ["loss_notes", false, false],
+      ["sale_price", false, false],
+      ["sale_currency", false, false],
+      ["payment_method", false, false],
+      ["delivery_status", false, false],
+      ["delivery_date", false, false],
       ["interest_model", false, false],
       ["interest_version", false, false],
       ["last_activity_at", true, true],
@@ -418,7 +428,7 @@ describe("db/schema", () => {
       },
       {
         name: "opportunities_loss_reason_check",
-        sql: `"opportunities"."loss_reason" IN ('price', 'vehicle_not_available', 'bought_elsewhere', 'no_response', 'unqualified', 'other')`,
+        sql: `"opportunities"."loss_reason" IN ('price', 'vehicle_unavailable', 'competitor', 'financing_rejected', 'ghosted', 'other')`,
       },
       {
         name: "opportunities_loss_reason_stage_check",
@@ -427,6 +437,38 @@ describe("db/schema", () => {
       {
         name: "opportunities_vehicle_stage_check",
         sql: `"opportunities"."vehicle_id" IS NULL OR "opportunities"."stage" IN ('negotiating', 'won', 'lost')`,
+      },
+      {
+        name: "opportunities_loss_notes_check",
+        sql: `char_length("opportunities"."loss_notes") BETWEEN 1 AND 500 AND "opportunities"."loss_notes" = btrim("opportunities"."loss_notes", ' ' || chr(10)) AND translate("opportunities"."loss_notes", chr(10), '') !~ '[[:cntrl:]]'`,
+      },
+      {
+        name: "opportunities_loss_notes_stage_check",
+        sql: `"opportunities"."loss_notes" IS NULL OR "opportunities"."stage" = 'lost'`,
+      },
+      {
+        name: "opportunities_sale_currency_check",
+        sql: `"opportunities"."sale_currency" IN ('PYG', 'USD')`,
+      },
+      {
+        name: "opportunities_sale_price_check",
+        sql: `("opportunities"."sale_price" IS NULL) = ("opportunities"."sale_currency" IS NULL) AND ("opportunities"."sale_price" IS NULL OR ("opportunities"."sale_price" > 0 AND ("opportunities"."sale_currency" <> 'PYG' OR "opportunities"."sale_price" = trunc("opportunities"."sale_price"))))`,
+      },
+      {
+        name: "opportunities_payment_method_check",
+        sql: `"opportunities"."payment_method" IN ('cash', 'financing', 'trade_in', 'mixed')`,
+      },
+      {
+        name: "opportunities_delivery_status_check",
+        sql: `"opportunities"."delivery_status" IN ('scheduled', 'delivered')`,
+      },
+      {
+        name: "opportunities_delivery_date_check",
+        sql: `"opportunities"."delivery_date" BETWEEN '2000-01-01' AND '2100-12-31'`,
+      },
+      {
+        name: "opportunities_won_closure_check",
+        sql: `("opportunities"."stage" = 'won' AND "opportunities"."vehicle_id" IS NOT NULL AND "opportunities"."sale_price" IS NOT NULL AND "opportunities"."sale_currency" IS NOT NULL AND "opportunities"."payment_method" IS NOT NULL AND "opportunities"."delivery_status" IS NOT NULL AND "opportunities"."delivery_date" IS NOT NULL) OR ("opportunities"."stage" <> 'won' AND "opportunities"."sale_price" IS NULL AND "opportunities"."sale_currency" IS NULL AND "opportunities"."payment_method" IS NULL AND "opportunities"."delivery_status" IS NULL AND "opportunities"."delivery_date" IS NULL)`,
       },
     ]);
     expect(schema.opportunityStages).toEqual([
@@ -438,15 +480,22 @@ describe("db/schema", () => {
     ]);
     expect(schema.opportunityLossReasons).toEqual([
       "price",
-      "vehicle_not_available",
-      "bought_elsewhere",
-      "no_response",
-      "unqualified",
+      "vehicle_unavailable",
+      "competitor",
+      "financing_rejected",
+      "ghosted",
       "other",
     ]);
-    // El schema y el dominio (H1.6) hablan de las mismas etapas y motivos.
+    // El schema y el dominio (H1.6, DEC-034) hablan de las mismas etapas,
+    // motivos, formas de pago, estados de entrega, monedas y fechas.
     expect(schema.opportunityStages).toEqual([...OPPORTUNITY_STAGES]);
     expect(schema.opportunityLossReasons).toEqual([...LOSS_REASONS]);
+    expect(schema.opportunityPaymentMethods).toEqual([...PAYMENT_METHODS]);
+    expect(schema.opportunityDeliveryStatuses).toEqual([...DELIVERY_STATUSES]);
+    expect(schema.opportunitySaleCurrencies).toEqual([...CURRENCIES]);
+    expect(schema.opportunityDeliveryDateRange).toEqual(DELIVERY_DATE_RANGE);
+    // El CHECK de las notas usa el mismo largo máximo que el dominio.
+    expect(LOSS_NOTES_MAX_LENGTH).toBe(500);
     // Hito 2: la unidad vinculada existe en las mismas etapas en la base y
     // en el dominio.
     expect(schema.opportunityVehicleStages).toEqual([

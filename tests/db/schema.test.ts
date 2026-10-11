@@ -257,10 +257,21 @@ describe("opportunities (H1.1)", () => {
         default: "now()",
       },
       ...TIMESTAMPS,
-      // H1.6 (0008) y Hito 2 (0009): agregadas con ALTER TABLE, así que
-      // son las últimas.
+      // H1.6 (0008), Hito 2 (0009) y el cierre (0010, DEC-034): agregadas
+      // con ALTER TABLE, así que son las últimas.
       { name: "loss_reason", type: "text", notNull: false, default: null },
       { name: "vehicle_id", type: "uuid", notNull: false, default: null },
+      { name: "loss_notes", type: "text", notNull: false, default: null },
+      {
+        name: "sale_price",
+        type: "numeric(14,2)",
+        notNull: false,
+        default: null,
+      },
+      { name: "sale_currency", type: "text", notNull: false, default: null },
+      { name: "payment_method", type: "text", notNull: false, default: null },
+      { name: "delivery_status", type: "text", notNull: false, default: null },
+      { name: "delivery_date", type: "date", notNull: false, default: null },
     ]);
   });
 
@@ -275,9 +286,10 @@ describe("opportunities (H1.1)", () => {
         "CHECK ((stage = ANY (ARRAY['new'::text, 'qualifying'::text, 'negotiating'::text, 'won'::text, 'lost'::text])))",
       opportunities_source_check:
         "CHECK ((source = ANY (ARRAY['whatsapp'::text, 'meta_ads'::text, 'web'::text, 'showroom'::text, 'referral'::text])))",
-      // H1.6: motivo de pérdida estructurado, si y solo si la etapa es lost.
+      // H1.6: motivo de pérdida estructurado, si y solo si la etapa es lost
+      // (lista de DEC-034 §2).
       opportunities_loss_reason_check:
-        "CHECK ((loss_reason = ANY (ARRAY['price'::text, 'vehicle_not_available'::text, 'bought_elsewhere'::text, 'no_response'::text, 'unqualified'::text, 'other'::text])))",
+        "CHECK ((loss_reason = ANY (ARRAY['price'::text, 'vehicle_unavailable'::text, 'competitor'::text, 'financing_rejected'::text, 'ghosted'::text, 'other'::text])))",
       opportunities_loss_reason_stage_check:
         "CHECK ((((stage = 'lost'::text) AND (loss_reason IS NOT NULL)) OR ((stage <> 'lost'::text) AND (loss_reason IS NULL))))",
       // H1.4: destino de la FK compuesta de opportunity_demand_facts.
@@ -288,6 +300,24 @@ describe("opportunities (H1.1)", () => {
         "FOREIGN KEY (organization_id, vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
       opportunities_vehicle_stage_check:
         "CHECK (((vehicle_id IS NULL) OR (stage = ANY (ARRAY['negotiating'::text, 'won'::text, 'lost'::text]))))",
+      // DEC-034: notas solo con lost; la venta completa, con su unidad, si y
+      // solo si won; y los valores de cada metadato.
+      opportunities_loss_notes_check:
+        "CHECK ((((char_length(loss_notes) >= 1) AND (char_length(loss_notes) <= 500)) AND (loss_notes = btrim(loss_notes, (' '::text || chr(10)))) AND (translate(loss_notes, chr(10), ''::text) !~ '[[:cntrl:]]'::text)))",
+      opportunities_loss_notes_stage_check:
+        "CHECK (((loss_notes IS NULL) OR (stage = 'lost'::text)))",
+      opportunities_sale_currency_check:
+        "CHECK ((sale_currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
+      opportunities_sale_price_check:
+        "CHECK ((((sale_price IS NULL) = (sale_currency IS NULL)) AND ((sale_price IS NULL) OR ((sale_price > (0)::numeric) AND ((sale_currency <> 'PYG'::text) OR (sale_price = trunc(sale_price)))))))",
+      opportunities_payment_method_check:
+        "CHECK ((payment_method = ANY (ARRAY['cash'::text, 'financing'::text, 'trade_in'::text, 'mixed'::text])))",
+      opportunities_delivery_status_check:
+        "CHECK ((delivery_status = ANY (ARRAY['scheduled'::text, 'delivered'::text])))",
+      opportunities_delivery_date_check:
+        "CHECK (((delivery_date >= '2000-01-01'::date) AND (delivery_date <= '2100-12-31'::date)))",
+      opportunities_won_closure_check:
+        "CHECK ((((stage = 'won'::text) AND (vehicle_id IS NOT NULL) AND (sale_price IS NOT NULL) AND (sale_currency IS NOT NULL) AND (payment_method IS NOT NULL) AND (delivery_status IS NOT NULL) AND (delivery_date IS NOT NULL)) OR ((stage <> 'won'::text) AND (sale_price IS NULL) AND (sale_currency IS NULL) AND (payment_method IS NULL) AND (delivery_status IS NULL) AND (delivery_date IS NULL))))",
     });
   });
 

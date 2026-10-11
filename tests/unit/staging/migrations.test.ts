@@ -41,6 +41,7 @@ describe("readRepoMigrations", () => {
       [7, "0007_opportunity_demand_facts"],
       [8, "0008_opportunity_stages"],
       [9, "0009_opportunity_notes_vehicle_link"],
+      [10, "0010_opportunity_closure_metadata"],
     ]);
   });
 
@@ -69,19 +70,25 @@ describe("compareHistory", () => {
       applied: [REPO[0]],
       pending: REPO.slice(1),
     });
-    // Staging con H1.4/H1.5: 0008 y 0009 pendientes.
+    // Staging con H1.4/H1.5: 0008, 0009 y 0010 pendientes.
     expect(compareHistory(REPO, applied(8))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 8),
-      pending: [REPO[8], REPO[9]],
+      pending: [REPO[8], REPO[9], REPO[10]],
     });
-    // Staging con H1.6: solo 0009 pendiente.
+    // Staging con H1.6: 0009 y 0010 pendientes.
     expect(compareHistory(REPO, applied(9))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 9),
-      pending: [REPO[9]],
+      pending: [REPO[9], REPO[10]],
     });
-    expect(compareHistory(REPO, [...applied(10)].reverse())).toMatchObject({
+    // Staging con el Hito 2: solo 0010 pendiente (DEC-034).
+    expect(compareHistory(REPO, applied(10))).toEqual({
+      kind: "consistent",
+      applied: REPO.slice(0, 10),
+      pending: [REPO[10]],
+    });
+    expect(compareHistory(REPO, [...applied(11)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -101,8 +108,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(10), { id: 11, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 10",
+      [...applied(11), { id: 12, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 11",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -141,7 +148,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0009: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0010: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -249,7 +256,7 @@ describe("expectedFootprint", () => {
     };
     expect(expectedFootprint(REPO.slice(0, 9))).toEqual(h16);
     // 0009 suma la bitácora, con sus policies de lectura y alta (Hito 2).
-    expect(expectedFootprint(REPO)).toEqual({
+    const hito2 = {
       ...h16,
       tables: [...h16.tables, "opportunity_notes"].sort(),
       policies: [
@@ -257,6 +264,10 @@ describe("expectedFootprint", () => {
         "opportunity_notes.opportunity_notes_insert_member",
         "opportunity_notes.opportunity_notes_select_member",
       ].sort(),
-    });
+    };
+    expect(expectedFootprint(REPO.slice(0, 10))).toEqual(hito2);
+    // 0010 no crea tablas ni policies: columnas, CHECKs y el trigger
+    // ampliado sobre opportunities (DEC-034).
+    expect(expectedFootprint(REPO)).toEqual(hito2);
   });
 });

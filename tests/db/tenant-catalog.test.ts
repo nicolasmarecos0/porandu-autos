@@ -16,7 +16,8 @@ import {
  * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
  * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
- * 0008_opportunity_stages y 0009_opportunity_notes_vehicle_link, leídos del
+ * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link y
+ * 0010_opportunity_closure_metadata, leídos del
  * catálogo de PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2, C3 y C9).
  * El acceso a datos se prueba en tenant-isolation.test.ts,
  * opportunities.test.ts, vehicles.test.ts, demand-facts.test.ts y los tests
@@ -349,7 +350,7 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
   });
 
-  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id y updated_at (H1.6, Hito 2) y vehicles.status y updated_at (H1.3C), por columna, nunca la tabla", async () => {
+  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id, updated_at y los metadatos del cierre (H1.6, Hito 2, DEC-034) y vehicles.status y updated_at (H1.3C), por columna, nunca la tabla", async () => {
     const writes = (await tablePrivileges(db.admin, ["authenticated"])).filter(
       (grant) => !/^authenticated (SELECT|INSERT) /.test(grant),
     );
@@ -373,7 +374,13 @@ describe("grants (ADR-001 §3.6)", () => {
       ORDER BY 1
     `;
     expect(columns.map((row) => row.column)).toEqual([
+      "opportunities.delivery_date",
+      "opportunities.delivery_status",
+      "opportunities.loss_notes",
       "opportunities.loss_reason",
+      "opportunities.payment_method",
+      "opportunities.sale_currency",
+      "opportunities.sale_price",
       "opportunities.stage",
       "opportunities.updated_at",
       "opportunities.vehicle_id",

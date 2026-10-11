@@ -14,7 +14,8 @@
  * vehicles.status, por columna; 0007: alta append-only de
  * opportunity_demand_facts; 0008: UPDATE de la etapa de opportunities, por
  * columna; 0009: UPDATE de opportunities.vehicle_id, por columna, y alta
- * append-only de opportunity_notes).
+ * append-only de opportunity_notes; 0010: UPDATE de los metadatos del cierre
+ * de opportunities, por columna).
  */
 export * from "./organizations";
 export * from "./profiles";

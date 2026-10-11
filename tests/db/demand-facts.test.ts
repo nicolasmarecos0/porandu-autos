@@ -47,11 +47,11 @@ vi.mock("server-only", () => ({}));
 /*
  * Las postcondiciones del ledger append-only (0007) viajan en cada migración
  * posterior junto con las de toda la base: se corren las de la última
- * (0009_opportunity_notes_vehicle_link, Hito 2), que son las que describen
+ * (0010_opportunity_closure_metadata, DEC-034), que son las que describen
  * el catálogo real de hoy.
  */
 const MIGRATION = new URL(
-  "../../db/migrations/0009_opportunity_notes_vehicle_link.sql",
+  "../../db/migrations/0010_opportunity_closure_metadata.sql",
   import.meta.url,
 );
 
@@ -727,7 +727,7 @@ describe("autores (C-9): RESTRICT hacia profiles", () => {
   });
 });
 
-describe("postcondiciones del ledger (0007, vigentes en 0009) sobre catálogos mutados (DB5)", () => {
+describe("postcondiciones del ledger (0007, vigentes en 0010) sobre catálogos mutados (DB5)", () => {
   let postconditions: string;
 
   beforeAll(async () => {
@@ -762,7 +762,7 @@ describe("postcondiciones del ledger (0007, vigentes en 0009) sobre catálogos m
        CREATE POLICY probe ON public.opportunity_demand_facts FOR UPDATE TO authenticated
          USING (organization_id IN (SELECT private.user_org_ids()))
          WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
-      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\) and opportunities\.stage, loss_reason, vehicle_id, updated_at \(H1\.6, Hito 2\)/,
+      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\) and opportunities\.stage, loss_reason, vehicle_id, updated_at and the closure metadata \(H1\.6, Hito 2, DEC-034\)/,
     ],
     [
       "UPDATE de service_role",

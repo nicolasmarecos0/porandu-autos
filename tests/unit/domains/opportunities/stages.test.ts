@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  LOSS_REASON_LABELS,
-  LOSS_REASON_OPTIONS,
   STAGE_ACTION_LABELS,
   STAGES,
   stageLabel,
@@ -10,16 +8,14 @@ import {
 import {
   canTransition,
   INITIAL_STAGE,
-  isLossReason,
   isStage,
   isTerminalStage,
-  LOSS_REASONS,
   nextStages,
   OPPORTUNITY_STAGES,
   planStageChange,
   sourceStagesOf,
+  STAGE_CHANGE_FIELDS,
   TERMINAL_STAGES,
-  type LossReason,
   type Stage,
 } from "@/domains/opportunities/stages";
 
@@ -130,119 +126,88 @@ describe("transiciones", () => {
   });
 });
 
-describe("motivos de pérdida", () => {
-  it("son los seis de DEC-032 §3", () => {
-    expect(LOSS_REASONS).toEqual([
-      "price",
-      "vehicle_not_available",
-      "bought_elsewhere",
-      "no_response",
-      "unqualified",
-      "other",
-    ]);
-    for (const reason of LOSS_REASONS) expect(isLossReason(reason)).toBe(true);
-    for (const value of ["Price", "", "cost", null, undefined, 3]) {
-      expect(isLossReason(value)).toBe(false);
-    }
-  });
-});
-
 describe("planStageChange()", () => {
-  it("un pase válido escribe; el motivo solo viaja con lost", () => {
-    expect(
-      planStageChange("new", { to: "qualifying", lossReason: null }),
-    ).toEqual({
+  it("un avance válido escribe", () => {
+    expect(planStageChange("new", { to: "qualifying" })).toEqual({
       kind: "change",
       from: "new",
       to: "qualifying",
-      lossReason: null,
     });
-    expect(
-      planStageChange("negotiating", { to: "won", lossReason: null }),
-    ).toEqual({
-      kind: "change",
-      from: "negotiating",
-      to: "won",
-      lossReason: null,
-    });
-    // Un motivo con una etapa que no es lost se descarta: no hay dónde ir.
-    expect(
-      planStageChange("qualifying", { to: "negotiating", lossReason: "price" }),
-    ).toMatchObject({ kind: "change", lossReason: null });
-    expect(
-      planStageChange("qualifying", { to: "lost", lossReason: "price" }),
-    ).toEqual({
+    expect(planStageChange("qualifying", { to: "negotiating" })).toEqual({
       kind: "change",
       from: "qualifying",
-      to: "lost",
-      lossReason: "price",
+      to: "negotiating",
     });
   });
 
-  it("perder sin motivo se rechaza", () => {
+  it("un cierre válido no se escribe acá: closure_required (DEC-034 §1)", () => {
     for (const from of ["new", "qualifying", "negotiating"] as const) {
-      expect(planStageChange(from, { to: "lost", lossReason: null })).toEqual({
-        kind: "loss_reason_required",
+      expect(planStageChange(from, { to: "lost" })).toEqual({
+        kind: "closure_required",
         from,
+        to: "lost",
       });
     }
+    expect(planStageChange("negotiating", { to: "won" })).toEqual({
+      kind: "closure_required",
+      from: "negotiating",
+      to: "won",
+    });
   });
 
-  it("un par que la máquina no permite es invalid_transition, con o sin motivo", () => {
-    expect(
-      planStageChange("new", { to: "negotiating", lossReason: null }),
-    ).toEqual({ kind: "invalid_transition", from: "new", to: "negotiating" });
-    expect(planStageChange("won", { to: "lost", lossReason: "other" })).toEqual(
-      {
-        kind: "invalid_transition",
-        from: "won",
-        to: "lost",
-      },
-    );
-    expect(planStageChange("lost", { to: "won", lossReason: null })).toEqual({
+  it("un par que la máquina no permite es invalid_transition", () => {
+    expect(planStageChange("new", { to: "negotiating" })).toEqual({
+      kind: "invalid_transition",
+      from: "new",
+      to: "negotiating",
+    });
+    expect(planStageChange("won", { to: "lost" })).toEqual({
+      kind: "invalid_transition",
+      from: "won",
+      to: "lost",
+    });
+    expect(planStageChange("lost", { to: "won" })).toEqual({
       kind: "invalid_transition",
       from: "lost",
       to: "won",
     });
-    expect(
-      planStageChange("qualifying", { to: "new", lossReason: null }),
-    ).toMatchObject({ kind: "invalid_transition" });
+    expect(planStageChange("qualifying", { to: "won" })).toMatchObject({
+      kind: "invalid_transition",
+    });
   });
 
   it("pedir la etapa actual es idempotente (unchanged), también en una terminal", () => {
     for (const stage of OPPORTUNITY_STAGES) {
-      expect(planStageChange(stage, { to: stage, lossReason: null })).toEqual({
+      expect(planStageChange(stage, { to: stage })).toEqual({
         kind: "unchanged",
         stage,
       });
     }
-    // Aunque el motivo sea otro: una oportunidad perdida no se reescribe.
-    expect(
-      planStageChange("lost", { to: "lost", lossReason: "price" }),
-    ).toEqual({
-      kind: "unchanged",
-      stage: "lost",
-    });
   });
 
-  it("los 25 pares × con y sin motivo: change solo si está en la matriz y, con lost, hay motivo", () => {
-    const reasons: ReadonlyArray<LossReason | null> = [null, "other"];
+  it("los 25 pares: change solo para un avance de la matriz que no cierra", () => {
     for (const from of OPPORTUNITY_STAGES) {
       for (const to of OPPORTUNITY_STAGES) {
-        for (const lossReason of reasons) {
-          const plan = planStageChange(from, { to, lossReason });
-          const expected =
-            from === to
-              ? "unchanged"
-              : !canTransition(from, to)
-                ? "invalid_transition"
-                : to === "lost" && lossReason === null
-                  ? "loss_reason_required"
-                  : "change";
-          expect(plan.kind, `${from} → ${to} (${lossReason})`).toBe(expected);
-        }
+        const expected =
+          from === to
+            ? "unchanged"
+            : !canTransition(from, to)
+              ? "invalid_transition"
+              : isTerminalStage(to)
+                ? "closure_required"
+                : "change";
+        expect(planStageChange(from, { to }).kind, `${from} → ${to}`).toBe(
+          expected,
+        );
       }
     }
+  });
+
+  it("el pedido solo lleva la oportunidad y la etapa: el motivo viaja con el cierre", () => {
+    expect(STAGE_CHANGE_FIELDS).toEqual({
+      opportunityId: "opportunityId",
+      stage: "stage",
+    });
   });
 });
 
@@ -259,16 +224,12 @@ describe("copy es-PY", () => {
     for (const stage of STAGES) expect(stage.hint.length).toBeGreaterThan(0);
   });
 
-  it("cada etapa de destino tiene su acción y cada motivo su etiqueta", () => {
+  it("cada etapa de destino tiene su acción", () => {
     expect(Object.keys(STAGE_ACTION_LABELS)).toEqual([
       "qualifying",
       "negotiating",
       "won",
       "lost",
     ]);
-    expect(Object.keys(LOSS_REASON_LABELS).sort()).toEqual(
-      [...LOSS_REASONS].sort(),
-    );
-    expect(LOSS_REASON_OPTIONS.map((o) => o.id)).toEqual([...LOSS_REASONS]);
   });
 });

@@ -47,6 +47,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-031 | Match v0 Engine y Consumo en Opportunity Workspace (H1.5) | Aceptada | 2026-10-11 |
 | DEC-032 | Opportunity Stages: etapas comerciales y transiciones (H1.6) | Aceptada en principio | 2026-10-11 |
 | DEC-033 | Bitácora comercial y unidad vinculada a la negociación (Hito 2) | Aceptada en principio | 2026-10-11 |
+| DEC-034 | Formalización y metadatos de cierre comercial Won/Lost | Aceptada en principio | 2026-10-11 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -599,6 +600,56 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - `0009_opportunity_notes_vehicle_link` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0009_opportunity_notes_vehicle_link` si staging ya tiene `0008`, o `0008_opportunity_stages,0009_opportunity_notes_vehicle_link` si no.
   - La verificación de staging suma `schema.opportunity-notes` y amplía `schema.opportunity-stages` con la unidad vinculada.
   - Cuando se habiliten reservar o vender una unidad, ese flujo tiene que considerar las oportunidades que la tienen vinculada: hoy ninguna transición saca una unidad de `available`.
+
+## DEC-034 — Formalización y metadatos de cierre comercial Won/Lost
+- **Estado:** Aceptada en principio · 2026-10-11. Formaliza el pedido del fundador "Hito 2A: Registro y formalización del cierre comercial". Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** DEC-032 cierra una oportunidad como `won` o `lost` con un único dato, el motivo de pérdida. DEC-033 le asocia la unidad que se negocia. No queda registrado cómo se cerró una venta (precio final, forma de pago, entrega) ni el detalle de una pérdida. El fundador lo llama "Hito 2A"; no es el H2a de DEC-029 §9 (extracción asistida), que sigue pendiente con su alcance. Como DEC-033, es un bloque agregado antes de esa extracción.
+- **Decisión:**
+  1. **Cerrar es un solo acto.** Pasar a `won` o `lost` escribe la etapa y sus metadatos juntos, en una sola UPDATE y por una puerta dedicada, `closeOpportunity()`. `changeOpportunityStage()` queda para los avances que no cierran (`new → qualifying`, `qualifying → negotiating`) y a un pedido de cierre responde `closure_required`, sin escribir. La máquina de estados no cambia (DEC-032 §2).
+  2. **Perdida (`lost`).**
+     - `loss_reason`, obligatorio, de una lista cerrada que reemplaza la de DEC-032 §3: `price` (Precio), `vehicle_unavailable` (Unidad no disponible), `competitor` (Compró en la competencia), `financing_rejected` (Financiación rechazada), `ghosted` (Dejó de responder) y `other` (Otro motivo).
+     - `loss_notes`, opcional: texto libre de 1 a 500 caracteres, normalizado en el servidor como las notas (DEC-033 §1: NFC, `\r\n` → `\n`, espacios repetidos colapsados, a lo sumo una línea en blanco seguida y recortado). Vacío después de normalizar es "sin notas" (`NULL`).
+     - Los dos existen solo con `lost` (CHECK).
+  3. **Ganada (`won`).**
+     - Exige una unidad vinculada (`vehicle_id`, DEC-033 §2): es la unidad que se vendió.
+     - `sale_price` + `sale_currency`: monto final acordado. Mismo contrato de dinero que DEC-025 §5 y §6 y DEC-030 §7: `numeric(14,2)`, `PYG | USD`, PYG sin decimales, mayor que cero, sin FX. Se escribe en formato es-PY y se lee con `parseAmount()` de `domains/money.ts`. No tiene que coincidir con el precio publicado de la unidad, ni en monto ni en moneda: el publicado es una referencia y el de cierre es lo acordado.
+     - `payment_method`: `cash` (Contado), `financing` (Financiación), `trade_in` (Usado como parte de pago) o `mixed` (Mixto).
+     - `delivery_status` + `delivery_date`, los dos obligatorios. *Propuesta de implementación:* el pedido dice "fecha/estado de entrega"; se eligió `scheduled` (Entrega programada) o `delivered` (Entregada), siempre con una fecha de calendario (`date`, sin hora). Con `delivered`, la fecha no puede ser posterior a hoy; con `scheduled`, no puede ser anterior. "Hoy" es el día de Asunción. La base acota la fecha entre 2000-01-01 y 2100-12-31.
+     - Existen si y solo si la etapa es `won` (CHECK).
+  4. **Inmutables.** Una vez cerrada, ni la etapa (DEC-032 §2) ni sus metadatos cambian. El pedido admitía editarlos "solo bajo rol owner si está explícitamente permitido": no existe un rol `owner` (`membership_role` es `admin | seller`, DEC-018) y nada lo permite, así que no hay edición, ni siquiera para `admin`. La base la rechaza también para el rol dueño. Corregir un cierre o registrar la entrega efectiva de una venta programada requiere una decisión nueva.
+     - La unidad vinculada pasa a formar parte del cierre: se elige, cambia o quita solo en `negotiating`. En `won` queda fija (es la vendida) y en `lost` se conserva como hasta ahora.
+  5. **Validación en la base (amplía DEC-032 §4 y DEC-033 §3).** Defensa en profundidad: aunque la aplicación tuviera un bug, ninguna fila queda cerrada sin sus metadatos completos ni los cambia después.
+     - CHECKs con nombre y seguros frente a NULL: `opportunities_won_closure_check` (con `won`, unidad, precio, moneda, forma de pago, estado y fecha de entrega presentes; en otra etapa, ausentes los de la venta), `opportunities_loss_reason_stage_check` (sin cambios: motivo si y solo si `lost`), `opportunities_loss_notes_stage_check`, y los de valores: `opportunities_loss_reason_check` (lista nueva), `opportunities_loss_notes_check`, `opportunities_sale_price_check`, `opportunities_sale_currency_check`, `opportunities_payment_method_check`, `opportunities_delivery_status_check` y `opportunities_delivery_date_check`.
+     - El trigger `opportunities_stage_transition` (misma función, `private.enforce_opportunity_stage_transition()`) acepta exactamente tres clases de UPDATE: un pase de etapa válido que no toca la unidad, donde los metadatos de cierre solo pueden cambiar si el destino es `won` o `lost`; un cambio de unidad sin pase, solo en `negotiating`; y nada más. Rechaza con `23514`: `opportunities_stage_transition` (como hasta ahora), `opportunities_vehicle_link` (como hasta ahora, ahora también en `won`) y la nueva `opportunities_closure_immutable` (cambiar metadatos de cierre fuera del pase que cierra).
+     - Sigue habiendo una sola policy de UPDATE (`opportunities_update_stage`). `authenticated` suma UPDATE por columna sobre `loss_notes`, `sale_price`, `sale_currency`, `payment_method`, `delivery_status` y `delivery_date`.
+     - *Propuesta de implementación:* los metadatos son columnas de `opportunities` y no una tabla aparte. Solo así un CHECK de la misma fila garantiza que no hay cierre sin metadatos (con otra tabla, solo un trigger diferido podría), `loss_reason` ya vive ahí (DEC-032) y la venta como entidad sigue fuera de alcance (DEC-032 §10). No hay tabla nueva, así que no hay RLS ni policies nuevas: `opportunities` ya tiene RLS y su única policy de UPDATE, y la unidad de la venta ya es de la misma organización por la FK compuesta `(organization_id, vehicle_id)` → `vehicles` de 0009. Las postcondiciones de 0010 vuelven a exigir las tres cosas.
+  6. **Puerta única.** `closeOpportunity()` (Server Action en `lib/opportunities/actions.ts`) → `db/queries/close-opportunity.ts`: `requireTenant()` → leer y validar el pedido → `withTenant()` → `SELECT … FOR UPDATE` de la oportunidad (etapa y unidad) → `planOpportunityClosure()` (dominio) → `UPDATE … AND stage = <la leída> AND vehicle_id = <la leída>` → RLS + CHECKs + trigger → revalidar `/opportunities` y `/opportunities/[id]`.
+     - El cliente solo envía la oportunidad, el resultado (`won` o `lost`) y los campos de ese resultado. Etapa de origen, unidad, organización, usuario y reloj no salen del pedido. Los campos del otro resultado se ignoran.
+     - Resultados: `closed`, `unchanged` (ya estaba cerrada así: no reescribe los metadatos), `invalid_transition` (con la etapa real; incluye cerrar una ya cerrada con el otro resultado y ganar sin pasar por la negociación), `vehicle_required`, `invalid` (con los errores por campo y lo cargado), `not_found` (inexistente o de otra organización, sin distinguir) y `failed`.
+     - ESLint impide importar `db/queries/close-opportunity.ts` desde cualquier otro módulo. El bloqueo de la fila serializa los pedidos: nunca ganada y perdida, nunca dos cierres.
+  7. **Validación con Zod.** El pedido de cierre se valida en `domains/opportunities/closure.ts` con Zod (DEC-009), en el servidor siempre y también en el navegador para avisar antes de enviar. Es el primer uso de Zod en el repo: la excepción C-10 de DEC-030 (demanda sin Zod) no cambia. Se agrega la dependencia `zod` (4.6.5).
+  8. **Autorización.** La de DEC-027 §4: membership activa AND role IN (`admin`, `seller`). Cualquier miembro cierra la oportunidad de otro (DEC-023: sin responsable asignado).
+  9. **Recencia.** Cerrar actualiza `updated_at` (lo fija el trigger) y no `last_activity_at`, como cualquier cambio de etapa (DEC-032 §7).
+  10. **Migración `0010_opportunity_closure_metadata`.**
+      - Precondición: si existe una oportunidad `won` (no tiene metadatos que cumplan el CHECK) o una `lost` con un motivo que no está en la lista nueva, se detiene en vez de reinterpretarla (como 0008). `price` y `other` existen en las dos listas y pasan.
+      - Columnas nuevas, CHECKs, la función del trigger ampliada (`CREATE OR REPLACE`) y el grant por columna.
+      - Postcondiciones: las de 0009, con las seis columnas entre las ediciones aprobadas, y además que existan y estén validados los CHECKs de cierre, que la función del trigger contenga la regla de inmutabilidad y que la FK compuesta de la unidad exista.
+  11. **UI de `/opportunities/[id]`.**
+      - "Marcar como ganada" y "Marcar como perdida" siguen abriendo una confirmación (alertdialog de Radix, DEC-028 §8), ahora con un formulario. Ganada: la unidad que se vende (de solo lectura), precio final y moneda, forma de pago, estado y fecha de entrega; sin unidad vinculada, avisa que hay que vincularla y no ofrece confirmar. Perdida: motivo y notas opcionales, con contador. Los errores se muestran por campo, con lo cargado.
+      - Una oportunidad cerrada muestra una tarjeta "Cierre" con su resultado y sus metadatos.
+  12. **Fuera de este bloque:** la venta como entidad, marcar la unidad `sold` o reservarla (la unidad sigue `available`, DEC-032 §10 y DEC-033 §2), editar o corregir un cierre, registrar la entrega efectiva, reabrir, quién y cuándo cerró (más allá de `updated_at`), mostrar el cierre en la cola o en Stock, métricas de conversión, comisiones, documentos de la venta, Offer Builder y el Lifecycle de posventa.
+- **Aclara / supersede:**
+  - DEC-032 §3: nueva lista de motivos de pérdida; "sin texto libre" pasa a admitir `loss_notes` opcionales.
+  - DEC-032 §4 y §5: los cierres salen de `changeOpportunityStage()` y pasan por `closeOpportunity()`. El trigger también valida los metadatos de cierre.
+  - DEC-032 §8: la confirmación de un cierre captura sus metadatos y la oportunidad cerrada muestra su resumen.
+  - DEC-033 §2, §3 y §8: la unidad vinculada se elige, cambia o quita solo en `negotiating`; una oportunidad ganada ya no ofrece cambiarla ni quitarla.
+  - DEC-030 §8 (C-10): el cierre se valida con Zod; la demanda sigue sin Zod.
+  - DEC-029 §9: "Hito 2A" nombra este bloque, no la extracción asistida (H2a).
+  - Prevalece según DEC-002. No requiere un ADR nuevo: ADR-001 alcanza.
+- **Consecuencias:**
+  - `0010_opportunity_closure_metadata` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0010_opportunity_closure_metadata` si staging ya tiene `0009`, o la lista desde la primera pendiente si no.
+  - La verificación de staging amplía `schema.opportunity-stages` con los CHECKs de cierre y la regla de inmutabilidad, y la lista de columnas que `authenticated` puede actualizar.
+  - Cuando se habilite la venta como entidad o vender la unidad, nace de una oportunidad `won` y sus metadatos: no se vuelven a cargar.
 
 ---
 

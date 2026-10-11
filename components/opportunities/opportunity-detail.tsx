@@ -14,10 +14,12 @@ import {
 } from "@/domains/demand/presentation";
 import type { CurrentStatus } from "@/domains/demand/resolver";
 import type { MatchCard, MatchRail } from "@/domains/match/presentation";
+import type { ClosureSummary } from "@/domains/opportunities/closure";
 import type { NoteEntry } from "@/domains/opportunities/notes";
-import type { LossReason, Stage } from "@/domains/opportunities/stages";
+import type { Stage } from "@/domains/opportunities/stages";
 import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
 
+import { ClosureSummaryCard } from "./closure-summary";
 import { LinkedVehicle } from "./linked-vehicle";
 import { OpportunityDemandEdit } from "./opportunity-demand-edit";
 import { OpportunityNotes } from "./opportunity-notes";
@@ -29,10 +31,12 @@ import { VehicleLinkButton, VehicleLinkProvider } from "./vehicle-link";
  * /opportunities/[id] (H1.4, DEC-030 §10, dentro de DEC-017): responde, para
  * cada fact, "¿Por qué Porandú cree que este cliente busca esto?", qué
  * unidad del stock ofrecerle (Match v0, H1.5, DEC-031 §5) y, desde Hito 2
- * (DEC-033), qué pasó en la negociación y qué unidad se negocia.
+ * (DEC-033), qué pasó en la negociación y qué unidad se negocia, y cómo se
+ * cerró (DEC-034).
  *
  *   ┌ contacto · etapa ──────────────────────────── Volver · Editar ┐
  *   │ Etapa                                 │ Unidad en negociación  │
+ *   │ Cierre (solo Ganada o Perdida)        │                        │
  *   │ Notas  [Nueva nota…] [Agregar nota]   │  Toyota Hilux  [Quitar]│
  *   │        Vos · 11 oct 2026 14:32 …      │ Matches en stock       │
  *   │ Lo que busca                          │  Top Match        (100)│
@@ -45,9 +49,11 @@ import { VehicleLinkButton, VehicleLinkProvider } from "./vehicle-link";
  * miembro") se arman en el servidor y nunca llegan ids de usuario. Los
  * matches llegan calculados por el loader. Al navegador solo viajan el drawer
  * "Editar", con el mismo resumen que la card "Busca", el panel de etapa
- * (H1.6, DEC-032: etapa actual y acciones permitidas), el formulario de
- * notas, los botones de vinculación (solo En negociación y Ganada) y los
- * tooltips del puntaje. Sin cola, scores, Why Now ni NBA (DEC-017).
+ * (H1.6, DEC-032: etapa actual y acciones permitidas, con la confirmación
+ * del cierre y sus metadatos, DEC-034), el formulario de notas, los botones
+ * de vinculación (solo En negociación) y los tooltips del puntaje. La
+ * tarjeta "Cierre" es de solo lectura. Sin cola, scores, Why Now ni NBA
+ * (DEC-017).
  */
 
 const STATUS_TONE: Readonly<
@@ -127,8 +133,8 @@ type OpportunityDetailViewProps = Readonly<{
   id: string;
   contactName: string;
   stage: Stage;
-  /** Motivo de la pérdida (H1.6): solo existe con `lost`. */
-  lossReason: LossReason | null;
+  /** Resumen del cierre (DEC-034): solo con `won` o `lost`. */
+  closure: ClosureSummary | null;
   demand: DemandDetail;
   /** Lo que necesita el drawer "Editar": el mismo resumen de la card. */
   summary: DemandSummary;
@@ -148,7 +154,7 @@ const LINKED_MARK = "Vinculada a la negociación";
 
 /**
  * Rail derecho: la unidad vinculada arriba y los matches, cuyas tarjetas
- * ofrecen vincularse solo si la etapa lo admite (DEC-033 §2).
+ * ofrecen vincularse solo si la etapa lo admite (DEC-033 §2, DEC-034 §4).
  */
 function VehicleColumn({
   id,
@@ -195,13 +201,14 @@ export function OpportunityDetailView({
   id,
   contactName,
   stage,
-  lossReason,
+  closure,
   demand,
   summary,
   matches,
   vehicleLink,
   notes,
 }: OpportunityDetailViewProps) {
+  const { linked } = vehicleLink;
   return (
     <WorkspaceLayout
       header={
@@ -230,8 +237,16 @@ export function OpportunityDetailView({
       <OpportunityStagePanel
         opportunityId={id}
         stage={stage}
-        lossReason={lossReason}
+        saleVehicle={
+          linked ? { name: linked.name, detail: linked.detail } : null
+        }
       />
+      {closure ? (
+        <ClosureSummaryCard
+          closure={closure}
+          vehicleName={linked?.name ?? null}
+        />
+      ) : null}
       <OpportunityNotes opportunityId={id} notes={notes} />
       <section aria-labelledby="demand-heading" className="max-w-3xl">
         <Panel>

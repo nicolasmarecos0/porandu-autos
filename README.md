@@ -8,7 +8,8 @@ Porandú conecta inventario, conversaciones, intención de compra y operación c
 > Alcance vigente: [`docs/03_BUILD_BASELINE_B1.md`](docs/03_BUILD_BASELINE_B1.md)
 > **H1.4 — Demand Contract / Current Truth (DEC-029, DEC-030):** lo que busca cada cliente como 6 facts tipados en el ledger append-only `opportunity_demand_facts` (`0007_opportunity_demand_facts`), con Current Truth derivado, la card "Busca" con edición y el detalle `/opportunities/[id]` (ver "Demand Contract y Current Truth (H1.4)"). `0007` se aplica a staging después del merge.
 > **H1.6 — Opportunity Stages (DEC-032):** etapas comerciales `new → qualifying → negotiating → won`, con `lost` (y su motivo) desde cualquier etapa abierta. La máquina de estados vive en el dominio y la exige la base con un trigger (`0008_opportunity_stages`); el panel "Etapa" de `/opportunities/[id]` ofrece solo los pases permitidos (ver "Opportunity Stages (H1.6)"). `0008` se aplica a staging después del merge.
-> **Hito 2 — Bitácora comercial y unidad vinculada (DEC-033):** notas append-only por oportunidad (`opportunity_notes`) y la unidad del stock que se negocia (`opportunities.vehicle_id`), que se elige desde las tarjetas de match En negociación o Ganada sin cambiar el stock (`0009_opportunity_notes_vehicle_link`, ver "Bitácora y unidad vinculada (Hito 2)"). `0009` se aplica a staging después del merge.
+> **Hito 2 — Bitácora comercial y unidad vinculada (DEC-033):** notas append-only por oportunidad (`opportunity_notes`) y la unidad del stock que se negocia (`opportunities.vehicle_id`), que se elige desde las tarjetas de match En negociación sin cambiar el stock (`0009_opportunity_notes_vehicle_link`, ver "Bitácora y unidad vinculada (Hito 2)"). `0009` se aplica a staging después del merge.
+> **Hito 2A — Cierre comercial (DEC-034):** ganar o perder una oportunidad es un solo acto con sus metadatos: la venta (unidad vinculada, precio final con su moneda, forma de pago y entrega) o la pérdida (motivo estructurado y notas). Puerta `closeOpportunity()`, CHECKs y trigger en la base, inmutables una vez cerrada, y la tarjeta "Cierre" en `/opportunities/[id]` (`0010_opportunity_closure_metadata`, ver "Cierre comercial (DEC-034)"). `0010` se aplica a staging después del merge.
 
 ---
 
@@ -114,8 +115,8 @@ Antes de abrir un PR deben pasar: `pnpm typecheck && pnpm lint && pnpm format:ch
 
 - El schema de Drizzle vive en `db/schema/` y las migraciones en `db/migrations/` (única fuente). `db:generate` y `db:migrate` leen `MIGRATION_DATABASE_URL` del entorno o de `.env.local`; la variable del entorno prevalece.
 - Las migraciones apuntan a Supabase: dependen de `auth.users`, `auth.uid()` y de los roles `anon` y `authenticated`. No hay `db:studio`: la credencial `postgres` es exclusiva para aplicar migraciones (ADR-001).
-- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `0003_contact_identity_opportunity_create` repite esas y agrega las de las primeras escrituras: toda policy de escritura tiene `WITH CHECK` y `authenticated` no tiene UPDATE, DELETE ni TRUNCATE sobre ninguna tabla. `0004_vehicles_stock_persistence` repite las de `0003` y agrega que `authenticated` solo da de alta en `contacts` y `opportunities` (`vehicles` es de solo lectura en H1.3A). `0005_vehicle_quick_create` repite las de `0004`, con `vehicles` entre las altas aprobadas. `0006_vehicle_availability` repite las de `0005`, extiende la cobertura por policy a los privilegios por columna, exige `USING` en toda policy de UPDATE y admite como única edición `vehicles.status` y `vehicles.updated_at`. `0007_opportunity_demand_facts` repite las de `0006`, con `opportunity_demand_facts` entre las altas aprobadas, y agrega que esa tabla es append-only: sin policies de UPDATE, DELETE ni ALL, sin UPDATE de `authenticated` y sin UPDATE, DELETE ni TRUNCATE de `service_role`. `0008_opportunity_stages` se detiene si hay oportunidades en una etapa que no es `new` (no las reinterpreta), repite las de `0007` con `opportunities.stage`, `loss_reason` y `updated_at` entre las ediciones aprobadas, y exige que el trigger de transiciones `opportunities_stage_transition` exista, esté habilitado y sea `BEFORE UPDATE FOR EACH ROW`. `0009_opportunity_notes_vehicle_link` repite las de `0008` con `opportunities.vehicle_id` entre las ediciones aprobadas y `opportunity_notes` entre las altas aprobadas, y agrega las de un ledger append-only para `opportunity_notes`. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
-- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), los loaders de Opportunities y de Stock (`requireTenant()` → `withTenant()` → RLS), el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) el alta rápida de unidades (Server Action, admin y seller, estado forzado, organización no inyectable, validaciones y RLS de escritura) y la disponibilidad de unidades (Server Action, admin y seller, membership inactiva, cross-tenant, destino fijo, solo desde `in_preparation`, columnas y DELETE prohibidos, RLS de transición, carreras concurrentes y la Stock List después) y la demanda (H1.4: append-only para todos los roles, RLS de lectura y alta, el SQL de Drizzle contra los grants, cadena humana, compare-and-set, carreras y un deadlock reales, el alta con demanda en una transacción y el detalle `/opportunities/[id]`) y Match v0 (H1.5: solo unidades `available` de la organización activa, aislamiento entre organizaciones y contexto falsificado, Top Match y alternativa reales, los tres "sin dato" y ninguna escritura) y las etapas (H1.6: Server Action con admin y seller, membership inactiva, cross-tenant, motivo de pérdida obligatorio, los 25 pares del trigger cruzados con el dominio, columnas y DELETE prohibidos, `updated_at` con el reloj de la base, `last_activity_at` intacto y carreras reales sobre la fila bloqueada) y la bitácora y la unidad vinculada (Hito 2: Server Actions con admin y seller, membership inactiva, cross-tenant, autor y reloj de la base, append-only para todos los roles, CHECK del texto, unidad disponible y match vigente, FK compuesta, el CHECK y el trigger cruzados con el dominio, el stock intacto y carreras reales sobre la fila bloqueada) contra la base real, y que `0006` se aplica sobre una base en H1.3B, `0007` sobre una en H1.3C, `0008` sobre una en H1.4 y `0009` sobre una en H1.6 sin tocar sus datos. El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
+- `0001_tenant_isolation` verifica al final las invariantes de ADR-001 §3.6 sobre la base real (atributos y memberships de `app_runtime`, nadie más que `postgres` crea objetos) y, si alguna falla, no aplica nada. `0002_opportunities_persistence` hace lo mismo con las de tablas, sobre toda tabla de `public`: RLS habilitado, `organization_id` NOT NULL con FK e índice líder, ningún privilegio de `anon` ni `app_runtime`, y todo privilegio de `authenticated` cubierto por una policy. `0003_contact_identity_opportunity_create` repite esas y agrega las de las primeras escrituras: toda policy de escritura tiene `WITH CHECK` y `authenticated` no tiene UPDATE, DELETE ni TRUNCATE sobre ninguna tabla. `0004_vehicles_stock_persistence` repite las de `0003` y agrega que `authenticated` solo da de alta en `contacts` y `opportunities` (`vehicles` es de solo lectura en H1.3A). `0005_vehicle_quick_create` repite las de `0004`, con `vehicles` entre las altas aprobadas. `0006_vehicle_availability` repite las de `0005`, extiende la cobertura por policy a los privilegios por columna, exige `USING` en toda policy de UPDATE y admite como única edición `vehicles.status` y `vehicles.updated_at`. `0007_opportunity_demand_facts` repite las de `0006`, con `opportunity_demand_facts` entre las altas aprobadas, y agrega que esa tabla es append-only: sin policies de UPDATE, DELETE ni ALL, sin UPDATE de `authenticated` y sin UPDATE, DELETE ni TRUNCATE de `service_role`. `0008_opportunity_stages` se detiene si hay oportunidades en una etapa que no es `new` (no las reinterpreta), repite las de `0007` con `opportunities.stage`, `loss_reason` y `updated_at` entre las ediciones aprobadas, y exige que el trigger de transiciones `opportunities_stage_transition` exista, esté habilitado y sea `BEFORE UPDATE FOR EACH ROW`. `0009_opportunity_notes_vehicle_link` repite las de `0008` con `opportunities.vehicle_id` entre las ediciones aprobadas y `opportunity_notes` entre las altas aprobadas, y agrega las de un ledger append-only para `opportunity_notes`. `0010_opportunity_closure_metadata` se detiene si hay una oportunidad `won` (sin metadatos de venta) o `lost` con un motivo que ya no existe (no las reinterpreta), repite las de `0009` con los metadatos del cierre entre las ediciones aprobadas y exige que los CHECKs de cierre existan validados, que la función del trigger mantenga inmutable el cierre y que la FK compuesta de la unidad exista. `drizzle-kit migrate` sale con código 1 sin imprimir el error de Postgres: la causa queda en el log de la base.
+- `pnpm test:db` aplica las migraciones desde cero, con `pnpm db:migrate`, sobre un PostgreSQL 17 **local y desechable**, nunca sobre staging. El harness crea los roles y el mínimo de Supabase que la migración necesita (`tests/db/support/`), le fija a `app_runtime` una password aleatoria por corrida y prueba el aislamiento a través de `withUser()`/`withTenant()`: tenant A vs B, memberships inactivas, roles y grants de catálogo, y que rol y claims no dejan residuos entre transacciones. También prueba Tenant Resolution de punta a punta (`requireTenant()`, selector y revocación), los loaders de Opportunities y de Stock (`requireTenant()` → `withTenant()` → RLS), el alta de oportunidades (Server Action, deduplicación por teléfono, concurrencia, atomicidad y RLS de escritura) el alta rápida de unidades (Server Action, admin y seller, estado forzado, organización no inyectable, validaciones y RLS de escritura) y la disponibilidad de unidades (Server Action, admin y seller, membership inactiva, cross-tenant, destino fijo, solo desde `in_preparation`, columnas y DELETE prohibidos, RLS de transición, carreras concurrentes y la Stock List después) y la demanda (H1.4: append-only para todos los roles, RLS de lectura y alta, el SQL de Drizzle contra los grants, cadena humana, compare-and-set, carreras y un deadlock reales, el alta con demanda en una transacción y el detalle `/opportunities/[id]`) y Match v0 (H1.5: solo unidades `available` de la organización activa, aislamiento entre organizaciones y contexto falsificado, Top Match y alternativa reales, los tres "sin dato" y ninguna escritura) y las etapas (H1.6: Server Action con admin y seller, membership inactiva, cross-tenant, motivo de pérdida obligatorio, los 25 pares del trigger cruzados con el dominio, columnas y DELETE prohibidos, `updated_at` con el reloj de la base, `last_activity_at` intacto y carreras reales sobre la fila bloqueada) y la bitácora y la unidad vinculada (Hito 2: Server Actions con admin y seller, membership inactiva, cross-tenant, autor y reloj de la base, append-only para todos los roles, CHECK del texto, unidad disponible y match vigente, FK compuesta, el CHECK y el trigger cruzados con el dominio, el stock intacto y carreras reales sobre la fila bloqueada) y el cierre comercial (DEC-034: Server Action con admin y seller, membership inactiva, cross-tenant, los CHECKs de cierre y la inmutabilidad por el boundary y para el rol dueño y el superusuario, dinero exacto, columnas y RLS del UPDATE y carreras reales entre ganar, perder y desvincular) contra la base real, y que `0006` se aplica sobre una base en H1.3B, `0007` sobre una en H1.3C, `0008` sobre una en H1.4, `0009` sobre una en H1.6 y `0010` sobre una en el Hito 2 sin tocar sus datos (con su precondición, sus postcondiciones e idempotencia: volver a migrar no aplica nada y revertirla sola vuelve al catálogo del Hito 2). El superusuario del servidor no puede ser `postgres`, porque en Supabase `postgres` no es superuser:
 
 ```bash
 docker run -d --rm --name porandu-pg17 -p 127.0.0.1:55432:5432 \
@@ -166,7 +167,7 @@ Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@pora
 **Runbook de una migración**
 
 1. `preflight`: revisar el estado y las migraciones pendientes.
-2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`; H1.3A: `0004_vehicles_stock_persistence`; H1.3B: `0005_vehicle_quick_create`; H1.3C: `0006_vehicle_availability`; H1.4: `0007_opportunity_demand_facts`; H1.6: `0008_opportunity_stages`, o `0007_opportunity_demand_facts,0008_opportunity_stages` si `0007` todavía no se aplicó; Hito 2: `0009_opportunity_notes_vehicle_link`, o con las anteriores que falten, en orden). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
+2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`; H1.3A: `0004_vehicles_stock_persistence`; H1.3B: `0005_vehicle_quick_create`; H1.3C: `0006_vehicle_availability`; H1.4: `0007_opportunity_demand_facts`; H1.6: `0008_opportunity_stages`, o `0007_opportunity_demand_facts,0008_opportunity_stages` si `0007` todavía no se aplicó; Hito 2: `0009_opportunity_notes_vehicle_link`; Hito 2A: `0010_opportunity_closure_metadata`, o con las anteriores que falten, en orden). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
 3. Primer rollout o rotación: `provision-runtime`.
 4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution o el aislamiento.
 
@@ -421,9 +422,9 @@ Qué unidad del stock ofrecerle a cada cliente, determinista y explicable (DEC-0
 Las etapas del ciclo comercial de una oportunidad y sus pases (DEC-032). No es el Lifecycle de posventa.
 
 ```text
-new ──► qualifying ──► negotiating ──► won
+new ──► qualifying ──► negotiating ──► won  (con la venta, DEC-034)
  │          │               │
- └──────────┴───────────────┴────────► lost (con motivo)
+ └──────────┴───────────────┴────────► lost (con motivo y notas, DEC-034)
 ```
 
 | Etapa | Copy | Terminal |
@@ -434,20 +435,22 @@ new ──► qualifying ──► negotiating ──► won
 | `won` | Ganada: venta concretada | Sí |
 | `lost` | Perdida, con motivo obligatorio | Sí |
 
+Desde DEC-034, los pases a `won` y `lost` (cerrar) van por `closeOpportunity()` con sus metadatos: ver "Cierre comercial (DEC-034)". `changeOpportunityStage()` queda para los avances y a un cierre responde `closure_required`.
+
 ```text
 changeOpportunityStage() → requireTenant() → leer el pedido → withTenant():
 SELECT … FOR UPDATE → planStageChange() → UPDATE … AND stage = <la leída>
 → RLS (opportunities_update_stage) + trigger de transiciones → revalidar
 ```
 
-- **Dominio puro** en `domains/opportunities/stages.ts`: etapas, matriz de pases (`canTransition()`, `nextStages()`), motivos de pérdida y `planStageChange()`. Sin saltos, sin vuelta atrás, sin salida de una etapa terminal. Pedir la etapa actual es `unchanged`, sin escribir.
-- **Motivo de pérdida:** obligatorio al pasar a `lost`. Lista cerrada: `price`, `vehicle_not_available`, `bought_elsewhere`, `no_response`, `unqualified`, `other`. Existe si y solo si la etapa es `lost` (CHECK) y no se reescribe.
-- **Puerta única:** la Server Action `changeOpportunityStage()` (`lib/opportunities/actions.ts`). El pedido trae solo `opportunityId`, `stage` y `lossReason`; la etapa de origen la lee el servidor de la fila bloqueada. ESLint impide importar `db/queries/change-opportunity-stage.ts` desde otro módulo.
+- **Dominio puro** en `domains/opportunities/stages.ts`: etapas, matriz de pases (`canTransition()`, `nextStages()`) y `planStageChange()`. Sin saltos, sin vuelta atrás, sin salida de una etapa terminal. Pedir la etapa actual es `unchanged`, sin escribir.
+- **Motivo de pérdida:** obligatorio al pasar a `lost`, de una lista cerrada que desde DEC-034 es `price`, `vehicle_unavailable`, `competitor`, `financing_rejected`, `ghosted` y `other` (`domains/opportunities/closure.ts`). Existe si y solo si la etapa es `lost` (CHECK) y no se reescribe.
+- **Puerta de los avances:** la Server Action `changeOpportunityStage()` (`lib/opportunities/actions.ts`). El pedido trae solo `opportunityId` y `stage`; la etapa de origen la lee el servidor de la fila bloqueada. ESLint impide importar `db/queries/change-opportunity-stage.ts` desde otro módulo.
 - **Respuestas:**
   - `changed`.
   - `unchanged`: ya estaba en esa etapa.
   - `invalid_transition`: el pase no existe; devuelve la etapa real.
-  - `loss_reason_required`.
+  - `closure_required`: el pase cierra la oportunidad y va por `closeOpportunity()` (DEC-034).
   - `invalid`: la etapa no existe.
   - `not_found`: inexistente o de otra organización, sin distinguir.
   - `failed`: sin detalles de la base.
@@ -459,8 +462,8 @@ SELECT … FOR UPDATE → planStageChange() → UPDATE … AND stage = <la leíd
 - **Concurrencia:** el `FOR UPDATE` serializa los pedidos sobre una misma oportunidad. El segundo ve la etapa ya confirmada: nunca dos pases iguales, nunca ganada y perdida a la vez.
 - **Recencia:** cambiar de etapa no toca `last_activity_at` (es la interacción con el cliente) ni el orden de la cola.
 - **UI:**
-  - Panel "Etapa" en `/opportunities/[id]`: un stepper con la etapa actual y solo los pases permitidos. Avanzar es un click; ganar y perder piden confirmación, y perder pide además el motivo.
-  - Una oportunidad cerrada no ofrece acciones; una perdida muestra su motivo.
+  - Panel "Etapa" en `/opportunities/[id]`: un stepper con la etapa actual y solo los pases permitidos. Avanzar es un click; ganar y perder abren la confirmación con los datos del cierre (DEC-034).
+  - Una oportunidad cerrada no ofrece acciones; su cierre lo muestra la tarjeta "Cierre".
   - El encabezado y la card de la cola muestran la etapa con su color.
 - **Fuera de H1.6:** la venta como entidad (`won` no crea una venta ni marca una unidad `sold`), el historial de etapas, reabrir o retroceder una oportunidad, filtrar u ocultar las cerradas en la cola y las métricas de conversión.
 - `0008` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0008_opportunity_stages` (o `0007_opportunity_demand_facts,0008_opportunity_stages` si `0007` todavía no se aplicó).
@@ -481,10 +484,10 @@ SELECT … FOR UPDATE → unidad y demanda vigente → planVehicleLink() → UPD
 
 - **Dominio puro** en `domains/opportunities/`:
   - `notes.ts`: normalización (NFC, `\r\n` → `\n`, espacios repetidos, a lo sumo una línea en blanco seguida), validación (1 a 1000 caracteres, contados como `char_length`) y la bitácora para mostrar (autor "Vos" u "Otro miembro", fecha de Asunción).
-  - `vehicle-link.ts`: en qué etapas se cambia la unidad (`negotiating`, `won`) y en cuáles puede existir (más `lost`), y `planVehicleLink()`: `link`, `unlink`, `unchanged`, `stage_not_allowed`, `vehicle_not_found`, `vehicle_not_available` y `not_a_match`.
+  - `vehicle-link.ts`: en qué etapas se cambia la unidad (`negotiating`; desde DEC-034 ya no en `won`) y en cuáles puede existir (más `won` y `lost`), y `planVehicleLink()`: `link`, `unlink`, `unchanged`, `stage_not_allowed`, `vehicle_not_found`, `vehicle_not_available` y `not_a_match`.
 - **Bitácora (`opportunity_notes`):** una fila inmutable por nota, en cualquier etapa. Autor y fecha los fija la base (`recorded_by = auth.uid()`, `recorded_at = now()`). Nunca se edita ni se borra. No toca `last_activity_at` ni la cola.
 - **Unidad vinculada (`opportunities.vehicle_id`):**
-  - Se elige, cambia o quita solo En negociación o Ganada. Perdida conserva la que había, de solo lectura. Nueva y En calificación no tienen unidad.
+  - Se elige, cambia o quita solo En negociación. Ganada la exige y la deja fija (es la vendida, DEC-034 §4); Perdida conserva la que había. Las dos la muestran de solo lectura. Nueva y En calificación no tienen unidad.
   - Tiene que ser de la organización activa, estar disponible y ser un match de la demanda vigente (Match v0, al menos 40 puntos). El servidor lo recalcula.
   - Vincular no reserva ni vende la unidad: el stock no cambia, y Ganada sigue sin crear la venta.
   - Dos pedidos a la vez se serializan con el bloqueo de la fila: gana el último.
@@ -494,15 +497,59 @@ SELECT … FOR UPDATE → unidad y demanda vigente → planVehicleLink() → UPD
   - Unidad: `linked`, `unlinked`, `unchanged`, `stage_not_allowed` (con la etapa real), `vehicle_not_found` (inexistente o de otra organización, sin distinguir), `vehicle_not_available`, `not_a_match`, `invalid`, `not_found` y `failed`.
 - **Base (`0009_opportunity_notes_vehicle_link`):**
   - `vehicles` recibe `UNIQUE (organization_id, id)` y `opportunities` recibe `vehicle_id`, su FK compuesta RESTRICT, el CHECK `opportunities_vehicle_stage_check` y un índice parcial.
-  - La función del trigger `opportunities_stage_transition` acepta un pase de etapa válido que no toca la unidad, o un cambio de unidad En negociación o Ganada sin pase. Todo lo demás se rechaza con `23514` (`opportunities_stage_transition` u `opportunities_vehicle_link`), también para el rol dueño. Sigue habiendo una sola policy de UPDATE.
+  - La función del trigger `opportunities_stage_transition` acepta un pase de etapa válido que no toca la unidad, o un cambio de unidad En negociación o Ganada sin pase (desde `0010`, solo En negociación). Todo lo demás se rechaza con `23514` (`opportunities_stage_transition` u `opportunities_vehicle_link`), también para el rol dueño. Sigue habiendo una sola policy de UPDATE.
   - `authenticated` recibe UPDATE sobre `opportunities.vehicle_id` y SELECT e INSERT de tabla sobre `opportunity_notes` (diseño A). `service_role` pierde UPDATE, DELETE y TRUNCATE sobre las notas. `anon` y `app_runtime` no reciben nada.
 - **UI:**
   - Panel "Notas": formulario con contador y la bitácora, de la nota más reciente a la más vieja.
-  - Las tarjetas de match ofrecen "Vincular a la negociación" En negociación y Ganada; la vinculada se marca. La tarjeta "Unidad en negociación" (o "de la venta", o "que se negociaba") muestra la unidad y permite quitarla. Antes de negociar, el rail avisa desde cuándo se puede vincular.
+  - Las tarjetas de match ofrecen "Vincular a la negociación" En negociación; la vinculada se marca. La tarjeta "Unidad en negociación" muestra la unidad y permite quitarla; "Unidad de la venta" y "Unidad que se negociaba" son de solo lectura. Antes de negociar, el rail avisa desde cuándo se puede vincular.
   - Vincular es un click, sin confirmación: es reversible y no tiene efecto económico.
 - **Limitaciones conocidas:** las notas son inmutables y no tienen redacción, como la demanda (C-14): no deben incluir datos personales. Un autor con notas no se puede borrar de Auth: la baja es `active = false`. El vínculo no guarda quién ni cuándo lo cambió.
 - **Fuera de este bloque:** editar o borrar notas, adjuntos, menciones, tareas, el historial del vínculo, reservar o vender la unidad, la venta como entidad, mostrar notas o unidad en la cola y en Stock, y el Lifecycle de posventa.
 - `0009` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0009_opportunity_notes_vehicle_link` (o con `0008_opportunity_stages` delante si `0008` todavía no se aplicó).
+
+## Cierre comercial (DEC-034)
+
+Cómo se cerró una oportunidad: la venta o la pérdida, con sus datos, en `/opportunities/[id]`. Es el cierre del ciclo comercial, no la venta como entidad ni el Lifecycle de posventa.
+
+```text
+closeOpportunity() → requireTenant() → leer y validar el pedido (Zod) →
+withTenant(): SELECT … FOR UPDATE (etapa y unidad) → planOpportunityClosure()
+→ UPDATE … AND stage = <la leída> AND vehicle_id = <la leída>
+→ RLS (opportunities_update_stage) + CHECKs de cierre + trigger → revalidar
+```
+
+| Resultado | Datos | Obligatorios |
+|---|---|---|
+| `won` (Ganada) | unidad vinculada (la vendida), `sale_price` + `sale_currency`, `payment_method`, `delivery_status` + `delivery_date` | Todos |
+| `lost` (Perdida) | `loss_reason`, `loss_notes` | El motivo |
+
+- **Dominio puro** en `domains/opportunities/closure.ts`: las listas (motivos `price`, `vehicle_unavailable`, `competitor`, `financing_rejected`, `ghosted`, `other`; formas de pago `cash`, `financing`, `trade_in`, `mixed`; entrega `scheduled` o `delivered`), `parseClosure()` con Zod, `planOpportunityClosure()` y el resumen de la tarjeta.
+  - Precio en formato es-PY ("47.500", "32.990,50") con `parseAmount()` de `domains/money.ts`: decimal exacto, mayor que cero, `PYG` sin decimales, sin FX. No tiene que coincidir con el precio publicado.
+  - Entrega: con `delivered`, la fecha es hoy o antes; con `scheduled`, hoy o después ("hoy" en Asunción). La base la acota entre 2000-01-01 y 2100-12-31.
+  - Notas: de 1 a 500 caracteres, normalizadas como las de la bitácora. Vacías son `NULL`.
+- **Puerta única:** la Server Action `closeOpportunity()` (`lib/opportunities/actions.ts`). El pedido trae `opportunityId`, `outcome` y los campos de ese resultado; los del otro resultado se ignoran. Etapa de origen, unidad, organización, usuario y reloj los fija el servidor. ESLint impide importar `db/queries/close-opportunity.ts` desde otro módulo.
+- **Respuestas:**
+  - `closed`.
+  - `unchanged`: ya estaba cerrada así; los metadatos no se reescriben.
+  - `invalid_transition`: el cierre no existe desde la etapa real (p. ej. ya estaba cerrada con el otro resultado, o ganar sin negociar); devuelve la etapa real.
+  - `vehicle_required`: ganar sin unidad vinculada.
+  - `invalid`: errores por campo, con lo cargado (acotado).
+  - `invalid_outcome`, `not_found` (inexistente o de otra organización, sin distinguir) y `failed` (sin detalles de la base ni valores en los logs).
+- **Inmutable:** cerrada, ni la etapa ni sus metadatos cambian, para ningún rol (no existe un rol `owner` y nada habilita editarlos). La unidad vendida queda fija.
+- **Base (`0010_opportunity_closure_metadata`):**
+  - Columnas `loss_notes`, `sale_price` (`numeric(14,2)`), `sale_currency`, `payment_method`, `delivery_status` y `delivery_date` (`date`) en `opportunities`, nulas en toda fila existente. Sin tabla nueva: RLS, la única policy de UPDATE y la FK compuesta de la unidad ya cubren el cierre.
+  - CHECKs con nombre: `opportunities_won_closure_check` (la venta completa, con unidad, si y solo si `won`), `opportunities_loss_reason_stage_check`, `opportunities_loss_notes_stage_check` y los de valores de cada columna.
+  - La función del trigger `opportunities_stage_transition` solo deja escribir los metadatos en el pase que cierra; después rechaza con `23514` y constraint `opportunities_closure_immutable`. La unidad solo cambia En negociación (`opportunities_vehicle_link`). Vale también para el rol dueño y el superusuario.
+  - `authenticated` suma UPDATE por columna sobre los seis metadatos. DELETE sigue prohibido; `anon` y `app_runtime` no reciben nada.
+  - Precondición: si hay una oportunidad `won` o una `lost` con un motivo que ya no existe, se detiene (corregirla es un mantenimiento explícito, con el trigger deshabilitado en una transacción).
+- **Concurrencia:** el `FOR UPDATE` serializa los pedidos: nunca ganada y perdida, nunca dos cierres, nunca una venta sin unidad si alguien la desvincula a la vez.
+- **Recencia y stock:** cerrar actualiza `updated_at` (lo fija el trigger) y no `last_activity_at`. La unidad vendida sigue `available`: vender la unidad no forma parte de este bloque.
+- **UI:**
+  - "Marcar como ganada" y "Marcar como perdida" abren una confirmación (alertdialog de Radix) con su formulario: Ganada muestra la unidad vendida y pide precio y moneda, forma de pago, entrega y fecha (acotada según el estado); Perdida pide el motivo y notas opcionales con contador. Sin unidad vinculada, avisa que hay que vincularla y no ofrece confirmar.
+  - Valida en el navegador con la misma validación del dominio y marca cada campo con su error; el servidor la repite.
+  - La tarjeta "Cierre" muestra el resultado y sus datos, de solo lectura.
+- **Fuera de este bloque:** la venta como entidad, marcar la unidad `sold` o reservarla, editar o corregir un cierre, registrar la entrega efectiva de una venta programada, reabrir, quién cerró, mostrar el cierre en la cola o en Stock, métricas, comisiones y documentos de la venta.
+- `0010` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0010_opportunity_closure_metadata` (o con las anteriores que falten delante, en orden). Si staging tuviera oportunidades cerradas que no cumplen la precondición, la migración se detiene y hay que decidir cómo corregirlas.
 
 ## Convenciones
 

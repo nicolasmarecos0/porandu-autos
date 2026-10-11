@@ -93,7 +93,13 @@ function fakeTransaction(results: unknown[][]) {
 const OPPORTUNITY_ROW = {
   id: OPPORTUNITY,
   stage: "qualifying",
-  lossReason: null,
+  lossReason: null as string | null,
+  lossNotes: null as string | null,
+  salePrice: null as string | null,
+  saleCurrency: null as string | null,
+  paymentMethod: null as string | null,
+  deliveryStatus: null as string | null,
+  deliveryDate: null as string | null,
   vehicleId: null as string | null,
   createdAt: CREATED_AT,
   interestModel: " Hilux ",
@@ -176,7 +182,7 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
 
     const [query] = mocks.queries;
     expect(query?.sql).toMatch(
-      /^select "opportunities"\."id", "opportunities"\."stage", "opportunities"\."loss_reason", "opportunities"\."vehicle_id", "opportunities"\."created_at", "opportunities"\."interest_model", "opportunities"\."interest_version", "contacts"\."name" from "opportunities"/,
+      /^select "opportunities"\."id", "opportunities"\."stage", "opportunities"\."loss_reason", "opportunities"\."loss_notes", "opportunities"\."sale_price", "opportunities"\."sale_currency", "opportunities"\."payment_method", "opportunities"\."delivery_status", "opportunities"\."delivery_date", "opportunities"\."vehicle_id", "opportunities"\."created_at", "opportunities"\."interest_model", "opportunities"\."interest_version", "contacts"\."name" from "opportunities"/,
     );
     expect(query?.sql).toContain(
       'inner join "contacts" on ("contacts"."organization_id" = "opportunities"."organization_id" and "contacts"."id" = "opportunities"."contact_id")',
@@ -255,7 +261,7 @@ describe("getOpportunityDetail: ViewModel", () => {
       id: OPPORTUNITY,
       contactName: "Ana Benítez",
       stage: "qualifying",
-      lossReason: null,
+      closure: null,
       demand: { empty: true, legacy: "Hilux" },
       summary: { vehicle: { title: "Hilux", source: "legacy" } },
     });
@@ -356,7 +362,7 @@ describe("getOpportunityDetail: bitácora y unidad vinculada (Hito 2)", () => {
     ["new", false],
     ["qualifying", false],
     ["negotiating", true],
-    ["won", true],
+    ["won", false],
     ["lost", false],
   ] as const)("en %s, cambiar la unidad: %s", async (stage, canChange) => {
     mocks.results = [[{ ...OPPORTUNITY_ROW, stage }], [], [], []];
@@ -378,7 +384,8 @@ describe("getOpportunityDetail: bitácora y unidad vinculada (Hito 2)", () => {
     const detail = await getOpportunityDetail(OPPORTUNITY);
 
     expect(detail!.vehicleLink).toEqual({
-      canChange: true,
+      // Ganada: es la unidad vendida y queda fija (DEC-034 §4).
+      canChange: false,
       linked: {
         vehicleId: VEHICLE,
         name: "Toyota Hilux",
@@ -390,4 +397,68 @@ describe("getOpportunityDetail: bitácora y unidad vinculada (Hito 2)", () => {
       },
     });
   });
+});
+
+describe("getOpportunityDetail: cierre (DEC-034)", () => {
+  it("una venta llega como resumen: precio con su moneda, forma de pago y entrega", async () => {
+    mocks.results = [
+      [
+        {
+          ...OPPORTUNITY_ROW,
+          stage: "won",
+          vehicleId: VEHICLE,
+          salePrice: "47500.00",
+          saleCurrency: "USD",
+          paymentMethod: "financing",
+          deliveryStatus: "delivered",
+          deliveryDate: "2026-10-10",
+        },
+      ],
+      [],
+      [],
+      [LINKED_ROW],
+      [],
+    ];
+
+    const detail = await getOpportunityDetail(OPPORTUNITY);
+
+    expect(detail!.closure).toEqual({
+      outcome: "won",
+      salePrice: "USD 47.500",
+      paymentMethod: "Financiación",
+      delivery: "Entregada el 10 oct 2026",
+    });
+  });
+
+  it("una pérdida llega con su motivo y sus notas", async () => {
+    mocks.results = [
+      [
+        {
+          ...OPPORTUNITY_ROW,
+          stage: "lost",
+          lossReason: "ghosted",
+          lossNotes: "No contestó más desde el viernes.",
+        },
+      ],
+      [],
+      [],
+      [],
+    ];
+
+    const detail = await getOpportunityDetail(OPPORTUNITY);
+
+    expect(detail!.closure).toEqual({
+      outcome: "lost",
+      reason: "Dejó de responder",
+      notes: "No contestó más desde el viernes.",
+    });
+  });
+
+  it.each(["new", "qualifying", "negotiating"] as const)(
+    "en %s no hay cierre",
+    async (stage) => {
+      mocks.results = [[{ ...OPPORTUNITY_ROW, stage }], [], [], []];
+      expect((await getOpportunityDetail(OPPORTUNITY))!.closure).toBeNull();
+    },
+  );
 });

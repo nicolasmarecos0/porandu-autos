@@ -13,8 +13,13 @@ import { resolveDemand, type DemandRow } from "@/domains/demand/resolver";
 import { demandSnapshot } from "@/domains/demand/snapshot";
 import { findMatchesForDemand } from "@/domains/match/engine";
 import { matchRail, type MatchRail } from "@/domains/match/presentation";
+import {
+  closureFromRow,
+  closureSummary,
+  type ClosureSummary,
+} from "@/domains/opportunities/closure";
 import { noteTimeline, type NoteEntry } from "@/domains/opportunities/notes";
-import type { LossReason, Stage } from "@/domains/opportunities/stages";
+import type { Stage } from "@/domains/opportunities/stages";
 import {
   canChangeVehicleLink,
   linkedVehicleCard,
@@ -46,8 +51,11 @@ import { selectMatchCandidates, selectVehicleById } from "./vehicles";
  * - Match v0 (H1.5, DEC-031 §5): en la misma transacción lee las unidades
  *   disponibles de la organización activa y calcula los matches en memoria
  *   con el DemandSnapshot de la oportunidad. No se persiste nada.
- * - Etapa (H1.6, DEC-032): lee la etapa y el motivo de la pérdida; el panel
- *   de etapa ofrece solo las acciones que la máquina de estados permite.
+ * - Etapa (H1.6, DEC-032): lee la etapa; el panel de etapa ofrece solo las
+ *   acciones que la máquina de estados permite.
+ * - Cierre (DEC-034): con `won` o `lost`, lee sus metadatos y arma el
+ *   resumen de la tarjeta "Cierre" (precio, forma de pago y entrega, o
+ *   motivo y notas).
  * - Bitácora y unidad vinculada (Hito 2, DEC-033): en la misma transacción
  *   lee las notas de la oportunidad y la unidad vinculada (de la
  *   organización activa, en cualquier estado), y dice si la etapa admite
@@ -62,8 +70,8 @@ export type OpportunityDetail = Readonly<{
   id: string;
   contactName: string;
   stage: Stage;
-  /** Motivo de la pérdida (H1.6): solo existe con la etapa `lost`. */
-  lossReason: LossReason | null;
+  /** Resumen del cierre (DEC-034): solo con `won` o `lost`. */
+  closure: ClosureSummary | null;
   demand: DemandDetail;
   /** Lo mismo que recibe la card "Busca": lo que necesita el drawer. */
   summary: DemandSummary;
@@ -99,6 +107,12 @@ export async function getOpportunityDetail(
         id: opportunities.id,
         stage: opportunities.stage,
         lossReason: opportunities.lossReason,
+        lossNotes: opportunities.lossNotes,
+        salePrice: opportunities.salePrice,
+        saleCurrency: opportunities.saleCurrency,
+        paymentMethod: opportunities.paymentMethod,
+        deliveryStatus: opportunities.deliveryStatus,
+        deliveryDate: opportunities.deliveryDate,
         vehicleId: opportunities.vehicleId,
         createdAt: opportunities.createdAt,
         interestModel: opportunities.interestModel,
@@ -140,6 +154,7 @@ export async function getOpportunityDetail(
 
   const { opportunity, rows, candidates, linked, notes } = found;
   const stage = stageFromDb[opportunity.stage];
+  const closure = closureFromRow({ ...opportunity, stage });
   const truth = resolveDemand(rows);
   const snapshot = demandSnapshot(truth);
   const matches = findMatchesForDemand(snapshot, candidates);
@@ -153,7 +168,7 @@ export async function getOpportunityDetail(
     id: opportunity.id,
     contactName: opportunity.contactName,
     stage,
-    lossReason: opportunity.lossReason,
+    closure: closure ? closureSummary(closure) : null,
     demand: demandDetail(truth, {
       viewerUserId: ctx.userId,
       createdAt: opportunity.createdAt,

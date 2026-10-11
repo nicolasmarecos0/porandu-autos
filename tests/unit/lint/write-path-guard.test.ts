@@ -19,6 +19,9 @@ import { describe, expect, it } from "vitest";
  * - el cambio de etapa de una oportunidad (H1.6)
  *   (db/queries/change-opportunity-stage), también: la Server Action
  *   changeOpportunityStage() (lib/opportunities/actions.ts);
+ * - el cierre comercial con sus metadatos (DEC-034)
+ *   (db/queries/close-opportunity), también: la Server Action
+ *   closeOpportunity() (lib/opportunities/actions.ts);
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -244,6 +247,78 @@ describe(
           `import type { StageChangeOutcome } from "@/db/queries/change-opportunity-stage";\nexport type T = StageChangeOutcome;\n`,
         ),
       ).toEqual([]);
+    });
+  },
+);
+
+const importCloseWrite = `import { closeOpportunityWithMetadata } from "@/db/queries/close-opportunity";\nexport const use = closeOpportunityWithMetadata;\n`;
+
+describe(
+  "una sola puerta para el cierre comercial (DEC-034)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/opportunities/page.tsx",
+      "app/(app)/opportunities/[id]/page.tsx",
+      "components/opportunities/opportunity-stage-panel.tsx",
+      "components/opportunities/stage-close-dialog.tsx",
+      "components/opportunities/closure-fields.tsx",
+      "components/opportunities/closure-summary.tsx",
+      "domains/opportunities/closure.ts",
+      "lib/opportunities/closure.ts",
+      "lib/opportunities/stage-change.ts",
+      "lib/vehicles/actions.ts",
+      "lib/tenant/session.ts",
+      "lib/contacts/phone.ts",
+      "db/queries/opportunities.ts",
+      "db/queries/opportunity-detail.ts",
+      "db/queries/change-opportunity-stage.ts",
+      "db/queries/link-opportunity-vehicle.ts",
+      "db/queries/create-opportunity.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importCloseWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/change-opportunity-stage.ts",
+          `import { closeOpportunityWithMetadata } from "./close-opportunity";\nexport const use = closeOpportunityWithMetadata;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en la Server Action", async () => {
+      expect(
+        await restrictedBy("lib/opportunities/actions.ts", importCloseWrite),
+      ).toEqual([]);
+    });
+
+    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/opportunities/closure.ts",
+          `import type { CloseOpportunityOutcome } from "@/db/queries/close-opportunity";\nexport type T = CloseOpportunityOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+
+    it("db/queries/close-opportunity.ts no importa db/client, withUser() ni resolveTenant()", async () => {
+      for (const code of [
+        `import { getDb } from "../client";\nexport const use = getDb;\n`,
+        `import { getDb } from "@/db/client";\nexport const use = getDb;\n`,
+        `export const use = () => import("../client");\n`,
+        `import { withUser } from "../tenant";\nexport const use = withUser;\n`,
+        `import { resolveTenant } from "@/lib/tenant/resolution";\nexport const use = resolveTenant;\n`,
+      ]) {
+        expect(
+          await restrictedBy("db/queries/close-opportunity.ts", code),
+        ).not.toEqual([]);
+      }
     });
   },
 );

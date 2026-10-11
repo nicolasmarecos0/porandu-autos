@@ -9,9 +9,9 @@ import { finding, type Finding } from "./report.mts";
  * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
  * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
- * 0008_opportunity_stages y 0009_opportunity_notes_vehicle_link, leído del
- * catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030, DEC-032,
- * DEC-033). Espeja
+ * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link y
+ * 0010_opportunity_closure_metadata, leído del catálogo real (DEC-018,
+ * DEC-019, ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034). Espeja
  * tests/db/tenant-catalog y tests/db/schema: si una migración nueva cambia
  * lo esperado, se actualiza junto con esos tests.
  */
@@ -247,21 +247,31 @@ export const EXPECTED_DEMAND_CHAIN = {
 };
 
 /**
- * Etapas de la oportunidad (H1.6, 0008) y su unidad vinculada (Hito 2,
- * 0009), tal como las deja PostgreSQL 17: las cinco etapas, el motivo de
- * pérdida estructurado (si y solo si `lost`), la unidad de la misma
- * organización (FK compuesta) que solo existe desde la negociación (CHECK) y
- * el trigger BEFORE UPDATE que valida el par etapa anterior → etapa nueva y
- * el cambio de unidad, habilitado, con una función invoker, de search_path
- * vacío, sin EXECUTE para nadie (DEC-028 §6, DEC-032 §4, DEC-033 §3).
+ * Etapas de la oportunidad (H1.6, 0008), su unidad vinculada (Hito 2,
+ * 0009) y su cierre (DEC-034, 0010), tal como los deja PostgreSQL 17: las
+ * cinco etapas, el motivo de pérdida estructurado (si y solo si `lost`) con
+ * sus notas, la venta completa con su unidad (si y solo si `won`), la unidad
+ * de la misma organización (FK compuesta) que solo existe desde la
+ * negociación (CHECK) y el trigger BEFORE UPDATE que valida el par etapa
+ * anterior → etapa nueva, el cambio de unidad y la inmutabilidad del cierre,
+ * habilitado, con una función invoker, de search_path vacío, sin EXECUTE
+ * para nadie (DEC-028 §6, DEC-032 §4, DEC-033 §3, DEC-034 §5).
  */
 export const EXPECTED_OPPORTUNITY_STAGES = {
   checks: [
-    "opportunities_loss_reason_check CHECK ((loss_reason = ANY (ARRAY['price'::text, 'vehicle_not_available'::text, 'bought_elsewhere'::text, 'no_response'::text, 'unqualified'::text, 'other'::text])))",
+    "opportunities_delivery_date_check CHECK (((delivery_date >= '2000-01-01'::date) AND (delivery_date <= '2100-12-31'::date)))",
+    "opportunities_delivery_status_check CHECK ((delivery_status = ANY (ARRAY['scheduled'::text, 'delivered'::text])))",
+    "opportunities_loss_notes_check CHECK ((((char_length(loss_notes) >= 1) AND (char_length(loss_notes) <= 500)) AND (loss_notes = btrim(loss_notes, (' '::text || chr(10)))) AND (translate(loss_notes, chr(10), ''::text) !~ '[[:cntrl:]]'::text)))",
+    "opportunities_loss_notes_stage_check CHECK (((loss_notes IS NULL) OR (stage = 'lost'::text)))",
+    "opportunities_loss_reason_check CHECK ((loss_reason = ANY (ARRAY['price'::text, 'vehicle_unavailable'::text, 'competitor'::text, 'financing_rejected'::text, 'ghosted'::text, 'other'::text])))",
     "opportunities_loss_reason_stage_check CHECK ((((stage = 'lost'::text) AND (loss_reason IS NOT NULL)) OR ((stage <> 'lost'::text) AND (loss_reason IS NULL))))",
+    "opportunities_payment_method_check CHECK ((payment_method = ANY (ARRAY['cash'::text, 'financing'::text, 'trade_in'::text, 'mixed'::text])))",
+    "opportunities_sale_currency_check CHECK ((sale_currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
+    "opportunities_sale_price_check CHECK ((((sale_price IS NULL) = (sale_currency IS NULL)) AND ((sale_price IS NULL) OR ((sale_price > (0)::numeric) AND ((sale_currency <> 'PYG'::text) OR (sale_price = trunc(sale_price)))))))",
     "opportunities_stage_check CHECK ((stage = ANY (ARRAY['new'::text, 'qualifying'::text, 'negotiating'::text, 'won'::text, 'lost'::text])))",
     "opportunities_vehicle_fk FOREIGN KEY (organization_id, vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
     "opportunities_vehicle_stage_check CHECK (((vehicle_id IS NULL) OR (stage = ANY (ARRAY['negotiating'::text, 'won'::text, 'lost'::text]))))",
+    "opportunities_won_closure_check CHECK ((((stage = 'won'::text) AND (vehicle_id IS NOT NULL) AND (sale_price IS NOT NULL) AND (sale_currency IS NOT NULL) AND (payment_method IS NOT NULL) AND (delivery_status IS NOT NULL) AND (delivery_date IS NOT NULL)) OR ((stage <> 'won'::text) AND (sale_price IS NULL) AND (sale_currency IS NULL) AND (payment_method IS NULL) AND (delivery_status IS NULL) AND (delivery_date IS NULL))))",
   ],
   triggers: [
     "O CREATE TRIGGER opportunities_stage_transition BEFORE UPDATE ON public.opportunities FOR EACH ROW EXECUTE FUNCTION private.enforce_opportunity_stage_transition()",
@@ -273,6 +283,8 @@ export const EXPECTED_OPPORTUNITY_STAGES = {
     executable: false,
     // La versión de 0009: también valida el cambio de unidad vinculada.
     vehicleLink: true,
+    // La versión de 0010: además mantiene inmutable el cierre (DEC-034).
+    closureImmutable: true,
   },
 };
 
@@ -312,11 +324,17 @@ const AUTHENTICATED_PRIVILEGES = [
 ];
 
 /**
- * Lo único que authenticated puede actualizar (H1.3C, H1.6 y el Hito 2):
- * nunca la tabla.
+ * Lo único que authenticated puede actualizar (H1.3C, H1.6, el Hito 2 y el
+ * cierre de DEC-034): nunca la tabla.
  */
 const AUTHENTICATED_UPDATE_COLUMNS = [
+  "opportunities.delivery_date",
+  "opportunities.delivery_status",
+  "opportunities.loss_notes",
   "opportunities.loss_reason",
+  "opportunities.payment_method",
+  "opportunities.sale_currency",
+  "opportunities.sale_price",
   "opportunities.stage",
   "opportunities.updated_at",
   "opportunities.vehicle_id",
@@ -540,6 +558,7 @@ export async function verifyCatalog(
       owner: string | null;
       executable: boolean | null;
       vehicleLink: boolean | null;
+      closureImmutable: boolean | null;
     }[]
   >`
     SELECT
@@ -553,7 +572,15 @@ export async function verifyCatalog(
             'opportunities_loss_reason_check',
             'opportunities_loss_reason_stage_check',
             'opportunities_vehicle_fk',
-            'opportunities_vehicle_stage_check'
+            'opportunities_vehicle_stage_check',
+            'opportunities_loss_notes_check',
+            'opportunities_loss_notes_stage_check',
+            'opportunities_sale_price_check',
+            'opportunities_sale_currency_check',
+            'opportunities_payment_method_check',
+            'opportunities_delivery_status_check',
+            'opportunities_delivery_date_check',
+            'opportunities_won_closure_check'
           )
       ) AS checks,
       (
@@ -572,7 +599,8 @@ export async function verifyCatalog(
           WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
         )
       ) AS executable,
-      position('opportunities_vehicle_link' in p.prosrc) > 0 AS "vehicleLink"
+      position('opportunities_vehicle_link' in p.prosrc) > 0 AS "vehicleLink",
+      position('opportunities_closure_immutable' in p.prosrc) > 0 AS "closureImmutable"
     FROM (SELECT 1) AS one
     LEFT JOIN pg_proc p
       ON p.oid = to_regprocedure('private.enforce_opportunity_stage_transition()')
@@ -586,13 +614,14 @@ export async function verifyCatalog(
       owner: stages?.owner ?? null,
       executable: stages?.executable ?? null,
       vehicleLink: stages?.vehicleLink ?? null,
+      closureImmutable: stages?.closureImmutable ?? null,
     },
   };
   findings.push(
     finding(
       "schema.opportunity-stages",
       equal(stagesFound, EXPECTED_OPPORTUNITY_STAGES),
-      `opportunities: ${stagesFound.checks.length} stage and linked-vehicle constraints, triggers: ${list(stagesFound.triggers)}; transition function: ${stagesFound.function.owner === null ? "missing" : `SECURITY DEFINER=${stagesFound.function.securityDefiner}, config=${list(stagesFound.function.config ?? [])}, owner=${stagesFound.function.owner}, EXECUTE granted=${stagesFound.function.executable}, linked-vehicle rule=${stagesFound.function.vehicleLink}`}`,
+      `opportunities: ${stagesFound.checks.length} stage, linked-vehicle and closure constraints (expected: ${EXPECTED_OPPORTUNITY_STAGES.checks.length}, exact definitions), triggers: ${list(stagesFound.triggers)}; transition function: ${stagesFound.function.owner === null ? "missing" : `SECURITY DEFINER=${stagesFound.function.securityDefiner}, config=${list(stagesFound.function.config ?? [])}, owner=${stagesFound.function.owner}, EXECUTE granted=${stagesFound.function.executable}, linked-vehicle rule=${stagesFound.function.vehicleLink}, immutable closure rule=${stagesFound.function.closureImmutable}`}`,
     ),
   );
 

@@ -588,9 +588,10 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
     );
     await expectSqlError(
       withTenant(ctx, (tx) =>
-        // Solo stage, loss_reason y updated_at tienen UPDATE (H1.6, 0008):
-        // el resto de las columnas sigue sin él. El cambio de etapa se
-        // prueba en opportunity-stages.test.ts.
+        // Solo la etapa, la unidad, el cierre y updated_at tienen UPDATE
+        // (0008 a 0010): el resto de las columnas sigue sin él. Se prueban
+        // en opportunity-stages, opportunity-vehicle-link y
+        // opportunity-closure.test.ts.
         tx
           .update(opportunities)
           .set({ source: "web" })

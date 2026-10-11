@@ -76,12 +76,11 @@ function plan(overrides: Partial<VehicleLinkInput> = {}) {
 }
 
 describe("etapas", () => {
-  it("la unidad se cambia en En negociación y Ganada; Perdida la conserva", () => {
-    expect(VEHICLE_LINK_STAGES).toEqual(["negotiating", "won"]);
+  it("la unidad se cambia solo En negociación; Ganada (la vendida, DEC-034 §4) y Perdida la conservan", () => {
+    expect(VEHICLE_LINK_STAGES).toEqual(["negotiating"]);
     expect(VEHICLE_HOLDING_STAGES).toEqual(["negotiating", "won", "lost"]);
     expect(OPPORTUNITY_STAGES.filter(canChangeVehicleLink)).toEqual([
       "negotiating",
-      "won",
     ]);
     expect(OPPORTUNITY_STAGES.filter(canHoldVehicle)).toEqual([
       "negotiating",
@@ -125,7 +124,7 @@ describe("planVehicleLink", () => {
 
   it.each(
     OPPORTUNITY_STAGES.filter(
-      (stage): stage is Exclude<Stage, "negotiating" | "won"> =>
+      (stage): stage is Exclude<Stage, "negotiating"> =>
         !canChangeVehicleLink(stage),
     ),
   )("en %s no se vincula ni se quita nada", (stage) => {

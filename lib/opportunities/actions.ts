@@ -7,6 +7,10 @@ import {
   type StageChangeOutcome,
 } from "@/db/queries/change-opportunity-stage";
 import {
+  closeOpportunityWithMetadata,
+  type CloseOpportunityOutcome,
+} from "@/db/queries/close-opportunity";
+import {
   createOpportunityWithContact,
   type CreatedOpportunity,
 } from "@/db/queries/create-opportunity";
@@ -22,8 +26,10 @@ import {
   insertOpportunityNote,
   type NoteWriteOutcome,
 } from "@/db/queries/record-opportunity-note";
+import { todayInAsuncion } from "@/domains/opportunities/closure";
 import { requireTenant } from "@/lib/tenant/session";
 
+import { parseCloseRequest, type CloseOpportunityState } from "./closure";
 import { demandErrorsToForm, parseDemandEditForm } from "./demand-form";
 import {
   parseNewOpportunityForm,
@@ -64,7 +70,12 @@ const OPPORTUNITIES_PATH = "/opportunities";
  */
 function logFailure(
   operation:
-    "create" | "record demand" | "change stage" | "add note" | "link vehicle",
+    | "create"
+    | "record demand"
+    | "change stage"
+    | "close"
+    | "add note"
+    | "link vehicle",
   error: unknown,
 ): void {
   const { name, cause } =
@@ -209,14 +220,16 @@ export async function recordDemand(
  *    que emite requireTenant(); si se agrega un rol, un test falla y esta
  *    regla se revisa. Cualquier miembro mueve la oportunidad de otro
  *    (DEC-023: sin responsable asignado).
- * 2. El pedido solo trae la oportunidad, la etapa de destino y, para
- *    `lost`, el motivo. La etapa de origen la lee el servidor de la fila
- *    bloqueada; organización, usuario y reloj no salen del pedido. Un id
- *    malformado o ajeno es `not_found`, sin revelar nada.
+ * 2. El pedido solo trae la oportunidad y la etapa de destino. La etapa de
+ *    origen la lee el servidor de la fila bloqueada; organización, usuario
+ *    y reloj no salen del pedido. Un id malformado o ajeno es `not_found`,
+ *    sin revelar nada.
  * 3. Falla de forma segura: un pase que la máquina no permite (p. ej. la
  *    oportunidad ya estaba cerrada) es `invalid_transition` con la etapa
  *    real, y pedir la etapa actual es `unchanged`; en ninguno cambia nada y
- *    las páginas se revalidan igual para mostrar el estado real.
+ *    las páginas se revalidan igual para mostrar el estado real. Un cierre
+ *    (`won` o `lost`) es `closure_required`: va por closeOpportunity(), con
+ *    sus metadatos (DEC-034 §1).
  * 4. Un error inesperado no expone detalles de la base y no revalida.
  *
  * Cambiar de etapa no modifica `last_activity_at` (DEC-032 §7). El estado
@@ -237,7 +250,6 @@ export async function changeOpportunityStage(
     outcome = await transitionOpportunityStage(ctx, {
       opportunityId: parsed.opportunityId,
       to: parsed.to,
-      lossReason: parsed.lossReason,
     });
   } catch (error) {
     logFailure("change stage", error);
@@ -270,8 +282,103 @@ export async function changeOpportunityStage(
         opportunityId: outcome.opportunityId,
         current: outcome.current,
       };
-    case "loss_reason_required":
-      return { status: "loss_reason_required" };
+    case "closure_required":
+      return {
+        status: "closure_required",
+        opportunityId: outcome.opportunityId,
+        current: outcome.current,
+      };
+    case "not_found":
+      return { status: "not_found" };
+  }
+}
+
+/*
+ * Cierre comercial (DEC-034), closeOpportunity(): la única puerta para
+ * marcar una oportunidad ganada o perdida, con sus metadatos.
+ *
+ *   requireTenant() → leer y validar el pedido (Zod) →
+ *   closeOpportunityWithMetadata() (withTenant(), fila bloqueada, planner
+ *   del dominio, una UPDATE, CHECKs de cierre y trigger) → revalidar
+ *   /opportunities y /opportunities/[id]
+ *
+ * 1. El TenantContext sale de requireTenant(). Autorización: membership
+ *    activa AND role IN ('admin', 'seller') (DEC-027 §4), hoy todo contexto
+ *    que emite requireTenant(); si se agrega un rol, un test falla y esta
+ *    regla se revisa. Cualquier miembro cierra la oportunidad de otro
+ *    (DEC-023: sin responsable asignado).
+ * 2. El pedido solo trae la oportunidad, el resultado y sus campos. La
+ *    etapa de origen y la unidad las lee el servidor de la fila bloqueada;
+ *    organización, usuario y reloj no salen del pedido ("hoy" es el día de
+ *    Asunción del servidor). Un id malformado o ajeno es `not_found`, sin
+ *    revelar nada.
+ * 3. Un campo inválido vuelve con lo cargado y el error de cada campo, sin
+ *    llegar a la base. Falla de forma segura: un cierre que la máquina no
+ *    permite es `invalid_transition` con la etapa real, ganar sin unidad es
+ *    `vehicle_required` y pedir el cierre que ya tiene es `unchanged` (los
+ *    metadatos no se reescriben); en ninguno cambia nada.
+ * 4. Un error inesperado no expone detalles de la base ni lo cargado (los
+ *    logs no registran valores) y lo devuelve para reintentar.
+ *
+ * Cerrar no modifica `last_activity_at` (DEC-034 §9) ni el stock. El estado
+ * previo (`_previous`) lo envía el cliente: no se usa.
+ */
+export async function closeOpportunity(
+  _previous: CloseOpportunityState,
+  formData: FormData,
+): Promise<CloseOpportunityState> {
+  const ctx = await requireTenant();
+
+  const parsed = parseCloseRequest(formData, todayInAsuncion(new Date()));
+  if (parsed.kind === "not_found") return { status: "not_found" };
+  if (parsed.kind === "invalid_outcome") return { status: "invalid_outcome" };
+  if (parsed.kind === "invalid") {
+    return {
+      status: "invalid",
+      outcome: parsed.outcome,
+      errors: parsed.errors,
+      values: parsed.values,
+    };
+  }
+  const { opportunityId, closure, values } = parsed;
+
+  let outcome: CloseOpportunityOutcome;
+  try {
+    outcome = await closeOpportunityWithMetadata(ctx, {
+      opportunityId,
+      closure,
+    });
+  } catch (error) {
+    logFailure("close", error);
+    return { status: "failed", outcome: closure.outcome, values };
+  }
+
+  const revalidate = () => {
+    revalidatePath(OPPORTUNITIES_PATH);
+    revalidatePath(`${OPPORTUNITIES_PATH}/${opportunityId}`);
+  };
+  switch (outcome.outcome) {
+    case "closed":
+      revalidate();
+      return {
+        status: "closed",
+        opportunityId,
+        from: outcome.from,
+        to: outcome.to,
+      };
+    case "unchanged":
+      return { status: "unchanged", opportunityId, stage: outcome.stage };
+    case "invalid_transition":
+      revalidate();
+      return {
+        status: "invalid_transition",
+        opportunityId,
+        current: outcome.current,
+      };
+    case "vehicle_required":
+      // La unidad pudo cambiar desde que se abrió el formulario.
+      revalidate();
+      return { status: "vehicle_required", opportunityId };
     case "not_found":
       return { status: "not_found" };
   }

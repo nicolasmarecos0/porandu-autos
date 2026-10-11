@@ -12,14 +12,21 @@ import { withTenant, type TenantContext } from "@/db/tenant";
 import {
   canTransition,
   OPPORTUNITY_STAGES,
-  type LossReason,
   type Stage,
 } from "@/domains/opportunities/stages";
-import { changeOpportunityStage } from "@/lib/opportunities/actions";
+import {
+  changeOpportunityStage,
+  closeOpportunity,
+} from "@/lib/opportunities/actions";
 import type { ChangeStageState } from "@/lib/opportunities/stage-change";
 import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
 
 import { cookieJar, type CookieJar } from "../unit/support/cookie-jar";
+import {
+  closureColumns,
+  LOST_METADATA,
+  WON_METADATA,
+} from "./support/closures";
 import {
   runMigrations,
   startTestServer,
@@ -42,7 +49,10 @@ import {
 
 /*
  * Etapas de la oportunidad (H1.6, DEC-032) de punta a punta contra
- * PostgreSQL 17 con las migraciones aplicadas:
+ * PostgreSQL 17 con las migraciones aplicadas. Los avances van por
+ * changeOpportunityStage(); los cierres (`won` y `lost`, con sus metadatos)
+ * tienen su propia puerta y su propio archivo (opportunity-closure.test.ts,
+ * DEC-034), pero el trigger se cruza acá con los 25 pares:
  *
  *   Server Action → requireTenant() → validación del pedido → withTenant() →
  *   SELECT … FOR UPDATE → máquina de estados del dominio → UPDATE → RLS
@@ -140,28 +150,46 @@ function request(userId: string | null, cookie?: string): void {
 let sequence = 0;
 
 /**
- * Una oportunidad propia del caso, en `stage` (con `lossReason` si es lost),
- * creada (y actualizada por última vez) hace un día: así se ve si el cambio
- * toca `updated_at` y que no toca `last_activity_at`.
+ * Una oportunidad propia del caso, en `stage`, creada (y actualizada por
+ * última vez) hace un día: así se ve si el cambio toca `updated_at` y que no
+ * toca `last_activity_at`. Cerrada, trae metadatos de cierre válidos
+ * (DEC-034), y `won` (o `negotiating` con `withVehicle`), su unidad.
  */
 async function opportunity(
   organizationId: string,
   stage: Stage = "new",
-  lossReason: LossReason | null = stage === "lost" ? "other" : null,
+  { withVehicle = stage === "won" } = {},
 ): Promise<string> {
   sequence += 1;
   const contactId = randomUUID();
   const id = randomUUID();
+  let vehicleId: string | null = null;
+  if (withVehicle) {
+    vehicleId = randomUUID();
+    await db.admin`
+      INSERT INTO public.vehicles (id, organization_id, brand, model, year,
+        status)
+      VALUES (${vehicleId}, ${organizationId}, 'Toyota', 'Hilux', 2025,
+        'available')
+    `;
+  }
   await db.admin`
     INSERT INTO public.contacts (id, organization_id, name)
     VALUES (${contactId}, ${organizationId}, ${`Prueba H1.6 ${sequence}`})
   `;
   await db.admin`
-    INSERT INTO public.opportunities (id, organization_id, contact_id, stage,
-      loss_reason, source, last_activity_at, created_at, updated_at)
-    VALUES (${id}, ${organizationId}, ${contactId}, ${stage}, ${lossReason},
-      'web', now() - interval '1 day', now() - interval '1 day',
-      now() - interval '1 day')
+    INSERT INTO public.opportunities ${db.admin({
+      id,
+      organization_id: organizationId,
+      contact_id: contactId,
+      stage,
+      source: "web",
+      vehicle_id: vehicleId,
+      ...closureColumns(stage),
+      last_activity_at: new Date(Date.now() - 86_400_000),
+      created_at: new Date(Date.now() - 86_400_000),
+      updated_at: new Date(Date.now() - 86_400_000),
+    })}
   `;
   return id;
 }
@@ -170,7 +198,7 @@ type OpportunityRow = {
   organizationId: string;
   contactId: string;
   stage: Stage;
-  lossReason: LossReason | null;
+  lossReason: string | null;
   source: string;
   lastActivityAt: Date;
   createdAt: Date;
@@ -276,7 +304,7 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
     expect(after!.lossReason).toBeNull();
   });
 
-  it("seller (C con ORG_1 activa) recorre el flujo hasta Ganada; un cambio no depende de quién lo hizo antes", async () => {
+  it("seller (C con ORG_1 activa) recorre el flujo hasta En negociación; un cambio no depende de quién lo hizo antes", async () => {
     const id = await opportunity(ORG_1);
     request(USER_A);
     expect(await change(id, "qualifying")).toMatchObject({ status: "changed" });
@@ -286,13 +314,10 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
       from: "qualifying",
       to: "negotiating",
     });
-    request(USER_A);
-    expect(await change(id, "won")).toMatchObject({
-      status: "changed",
-      from: "negotiating",
-      to: "won",
+    expect(await row(id)).toMatchObject({
+      stage: "negotiating",
+      lossReason: null,
     });
-    expect(await row(id)).toMatchObject({ stage: "won", lossReason: null });
   });
 
   it("C con ORG_3 activa (admin) mueve una oportunidad de ORG_3", async () => {
@@ -302,35 +327,28 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
     expect((await row(id))!.stage).toBe("qualifying");
   });
 
-  it.each(["new", "qualifying", "negotiating"] as const)(
-    "perder desde %s guarda el motivo estructurado",
-    async (from) => {
-      const id = await opportunity(ORG_1, from);
-      request(USER_A);
-      expect(
-        await change(id, "lost", { lossReason: "bought_elsewhere" }),
-      ).toEqual({ status: "changed", opportunityId: id, from, to: "lost" });
-      expect(await row(id)).toMatchObject({
-        stage: "lost",
-        lossReason: "bought_elsewhere",
+  it.each([
+    ["new", "lost"],
+    ["qualifying", "lost"],
+    ["negotiating", "lost"],
+    ["negotiating", "won"],
+  ] as const)(
+    "un cierre (%s → %s) no va por acá: closure_required, no escribe ni revalida (DEC-034 §1)",
+    async (from, to) => {
+      const id = await opportunity(ORG_1, from, {
+        withVehicle: from === "negotiating",
       });
+      const before = await row(id);
+      request(USER_A);
+      expect(await change(id, to, { lossReason: "price" })).toEqual({
+        status: "closure_required",
+        opportunityId: id,
+        current: from,
+      });
+      expect(await row(id)).toEqual(before);
+      expect(mocks.revalidated).toEqual([]);
     },
   );
-
-  it.each([
-    ["sin motivo", {}],
-    ["con un motivo vacío", { lossReason: "" }],
-    ["con un motivo desconocido", { lossReason: "caro" }],
-  ])("perder %s se rechaza y no escribe", async (_, extra) => {
-    const id = await opportunity(ORG_1, "negotiating");
-    const before = await row(id);
-    request(USER_A);
-    expect(await change(id, "lost", extra)).toEqual({
-      status: "loss_reason_required",
-    });
-    expect(await row(id)).toEqual(before);
-    expect(mocks.revalidated).toEqual([]);
-  });
 
   it("un motivo de pérdida con otra etapa de destino se descarta: no queda en la fila", async () => {
     const id = await opportunity(ORG_1, "qualifying");
@@ -439,7 +457,7 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
     });
     // Su membership inactiva en ORG_2 no cuenta.
     request(USER_C, ORG_1);
-    expect(await change(foreign, "lost", { lossReason: "price" })).toEqual({
+    expect(await change(foreign, "qualifying")).toEqual({
       status: "not_found",
     });
 
@@ -521,25 +539,31 @@ describe("los loaders reflejan la etapa", () => {
     expect(await stageOf(USER_B)).toBeUndefined();
 
     request(USER_A);
-    await change(id, "lost", { lossReason: "no_response" });
+    await closeOpportunity(
+      null,
+      form({ opportunityId: id, outcome: "lost", lossReason: "ghosted" }),
+    );
     expect(await stageOf(USER_A)).toBe("lost");
   });
 
-  it("el detalle trae la etapa y el motivo de la pérdida, y es notFound en otra organización", async () => {
+  it("el detalle trae la etapa y, cerrada, su cierre; es notFound en otra organización", async () => {
     const id = await opportunity(ORG_1, "negotiating");
     request(USER_A);
     expect(await getOpportunityDetail(id)).toMatchObject({
       id,
       stage: "negotiating",
-      lossReason: null,
+      closure: null,
     });
     request(USER_A);
-    await change(id, "lost", { lossReason: "price" });
+    await closeOpportunity(
+      null,
+      form({ opportunityId: id, outcome: "lost", lossReason: "price" }),
+    );
 
     request(USER_C, ORG_1);
     expect(await getOpportunityDetail(id)).toMatchObject({
       stage: "lost",
-      lossReason: "price",
+      closure: { outcome: "lost", reason: "Precio", notes: null },
     });
     request(USER_B);
     expect(await getOpportunityDetail(id)).toBeNull();
@@ -565,23 +589,32 @@ describe("los loaders reflejan la etapa", () => {
 });
 
 /*
- * La máquina de estados vive dos veces: en el dominio (planStageChange, que
- * decide qué se ofrece y qué se escribe) y en el trigger de la base (que lo
- * exige aunque el código falle). Acá se cruzan los 25 pares: un UPDATE
- * directo por el boundary, sin pasar por la Server Action ni por el dominio.
+ * La máquina de estados vive dos veces: en el dominio (planStageChange y
+ * planOpportunityClosure, que deciden qué se ofrece y qué se escribe) y en
+ * el trigger de la base (que lo exige aunque el código falle). Acá se cruzan
+ * los 25 pares: un UPDATE directo por el boundary, sin pasar por la Server
+ * Action ni por el dominio. Un pase a `won` o `lost` lleva sus metadatos de
+ * cierre (DEC-034), y la oportunidad En negociación, su unidad: así lo único
+ * que decide es el par.
  */
 describe("el trigger de la base espeja la máquina del dominio (25 pares)", () => {
   const pairs = OPPORTUNITY_STAGES.flatMap((from) =>
     OPPORTUNITY_STAGES.map((to) => [from, to] as const),
   );
 
+  /** La UPDATE del pase: con `won` o `lost`, sus metadatos. */
+  function pass(to: Stage) {
+    if (to === "won") return { stage: to, lossReason: null, ...WON_METADATA };
+    if (to === "lost") return { stage: to, ...LOST_METADATA };
+    return { stage: to, lossReason: null };
+  }
+
   it.each(pairs)("%s → %s", async (from, to) => {
-    const id = await opportunity(ORG_1, from);
-    const before = await row(id);
-    const attempt = directUpdate(ctxA(), id, {
-      stage: to,
-      lossReason: to === "lost" ? "price" : null,
+    const id = await opportunity(ORG_1, from, {
+      withVehicle: from === "negotiating" || from === "won",
     });
+    const before = await row(id);
+    const attempt = directUpdate(ctxA(), id, pass(to));
 
     if (canTransition(from, to)) {
       expect(await attempt).toEqual([{ id, stage: to }]);
@@ -607,12 +640,12 @@ describe("la base exige la coherencia del motivo de pérdida y del reloj", () =>
     expect((await row(id))!.stage).toBe("qualifying");
   });
 
-  it("un motivo con una etapa que no es lost falla por CHECK", async () => {
+  it("un motivo en un avance que no cierra lo rechaza el trigger (DEC-034 §5)", async () => {
     const id = await opportunity(ORG_1, "qualifying");
     await expectSqlError(
       directUpdate(ctxA(), id, { stage: "negotiating", lossReason: "price" }),
       "23514",
-      "opportunities_loss_reason_stage_check",
+      "opportunities_closure_immutable",
     );
     expect((await row(id))!.stage).toBe("qualifying");
   });
@@ -630,17 +663,17 @@ describe("la base exige la coherencia del motivo de pérdida y del reloj", () =>
     );
   });
 
-  it("el motivo de una oportunidad perdida no se reescribe", async () => {
-    const id = await opportunity(ORG_1, "lost", "price");
+  it("el motivo de una oportunidad perdida no se reescribe (DEC-034 §4)", async () => {
+    const id = await opportunity(ORG_1, "lost");
     await expectSqlError(
       directUpdate(ctxA(), id, { lossReason: "other" }),
       "23514",
-      "opportunities_stage_transition",
+      "opportunities_closure_immutable",
     );
     await expectSqlError(
       directUpdate(ctxA(), id, { stage: "lost", lossReason: "other" }),
       "23514",
-      "opportunities_stage_transition",
+      "opportunities_closure_immutable",
     );
     expect((await row(id))!.lossReason).toBe("price");
   });
@@ -752,7 +785,6 @@ describe("privilegios y RLS del UPDATE", () => {
       await transitionOpportunityStage(tenantContext(USER_B, ORG_2), {
         opportunityId: id,
         to: "qualifying",
-        lossReason: null,
       }),
     ).toEqual({ outcome: "not_found" });
     expect(await row(id)).toEqual(before);
@@ -868,11 +900,7 @@ describe("concurrencia: la fila bloqueada serializa los cambios", () => {
   }
 
   const advance = (ctx: TenantContext, id: string, to: Stage) =>
-    transitionOpportunityStage(ctx, {
-      opportunityId: id,
-      to,
-      lossReason: to === "lost" ? "price" : null,
-    });
+    transitionOpportunityStage(ctx, { opportunityId: id, to });
 
   it("admin y seller a la vez (dos pedidos cada uno) piden el mismo pase: exactamente un changed, los demás unchanged", async () => {
     const id = await opportunity(ORG_1);
@@ -897,39 +925,6 @@ describe("concurrencia: la fila bloqueada serializa los cambios", () => {
     expect(await row(id)).toMatchObject({ stage: "qualifying" });
   });
 
-  it("ganar y perder a la vez: uno gana la carrera y el otro ve la etapa real, nunca ganada y perdida", async () => {
-    const id = await opportunity(ORG_1, "negotiating");
-    const [won, lost] = await whileRowIsHeld(
-      id,
-      async () => {},
-      () =>
-        Promise.all([
-          advance(tenantContext(USER_A, ORG_1), id, "won"),
-          advance(tenantContext(USER_C, ORG_1), id, "lost"),
-        ]),
-      2,
-    );
-    const final = (await row(id))!;
-    expect(["won", "lost"]).toContain(final.stage);
-    if (final.stage === "won") {
-      expect(won).toMatchObject({ outcome: "changed", to: "won" });
-      expect(lost).toEqual({
-        outcome: "invalid_transition",
-        opportunityId: id,
-        current: "won",
-      });
-      expect(final.lossReason).toBeNull();
-    } else {
-      expect(lost).toMatchObject({ outcome: "changed", to: "lost" });
-      expect(won).toEqual({
-        outcome: "invalid_transition",
-        opportunityId: id,
-        current: "lost",
-      });
-      expect(final.lossReason).toBe("price");
-    }
-  });
-
   it("si otra transacción la pasa a En calificación mientras el pedido espera, el pedido no hace una segunda transición", async () => {
     const id = await opportunity(ORG_1);
     const result = await whileRowIsHeld(
@@ -952,7 +947,7 @@ describe("concurrencia: la fila bloqueada serializa los cambios", () => {
     const result = await whileRowIsHeld(
       id,
       async (tx) => {
-        await tx`UPDATE public.opportunities SET stage = 'lost', loss_reason = 'no_response' WHERE id = ${id}`;
+        await tx`UPDATE public.opportunities SET stage = 'lost', loss_reason = 'ghosted' WHERE id = ${id}`;
       },
       () => advance(tenantContext(USER_C, ORG_1), id, "qualifying"),
       1,
@@ -964,38 +959,8 @@ describe("concurrencia: la fila bloqueada serializa los cambios", () => {
     });
     expect(await row(id)).toMatchObject({
       stage: "lost",
-      lossReason: "no_response",
+      lossReason: "ghosted",
     });
-  });
-
-  it("dos pérdidas simultáneas con motivos distintos: queda el motivo de la primera", async () => {
-    const id = await opportunity(ORG_1, "qualifying");
-    const results = await whileRowIsHeld(
-      id,
-      async () => {},
-      () =>
-        Promise.all([
-          transitionOpportunityStage(tenantContext(USER_A, ORG_1), {
-            opportunityId: id,
-            to: "lost",
-            lossReason: "price",
-          }),
-          transitionOpportunityStage(tenantContext(USER_C, ORG_1), {
-            opportunityId: id,
-            to: "lost",
-            lossReason: "bought_elsewhere",
-          }),
-        ]),
-      2,
-    );
-    const changed = results.filter((r) => r.outcome === "changed");
-    expect(changed).toHaveLength(1);
-    expect(results.filter((r) => r.outcome === "unchanged")).toHaveLength(1);
-    const winner = changed[0] as Extract<
-      (typeof results)[number],
-      { outcome: "changed" }
-    >;
-    expect((await row(id))!.lossReason).toBe(winner.lossReason);
   });
 
   it("por la Server Action, dos pedidos simultáneos del mismo usuario: uno changed y otro unchanged", async () => {
