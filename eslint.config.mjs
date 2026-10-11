@@ -173,6 +173,33 @@ const changeOpportunityStageImport = {
   message: CHANGE_OPPORTUNITY_STAGE_MESSAGE,
 };
 
+// Hito 2 (DEC-033 §4): la bitácora comercial tiene una sola puerta, la
+// Server Action addOpportunityNote() (lib/opportunities/actions.ts), que
+// obtiene el contexto con requireTenant() y valida el texto antes de escribir.
+const RECORD_OPPORTUNITY_NOTE_MESSAGE =
+  "Opportunity notes are written only through the addOpportunityNote() Server Action (lib/opportunities/actions.ts): requireTenant(), server-side validation, then withTenant().";
+const recordOpportunityNoteImport = {
+  regex:
+    "(^|/)db/queries/record-opportunity-note$|^\\.{1,2}/record-opportunity-note$",
+  // Los tipos del resultado (NoteWriteOutcome) no escriben nada.
+  allowTypeImports: true,
+  message: RECORD_OPPORTUNITY_NOTE_MESSAGE,
+};
+
+// Hito 2 (DEC-033 §4): la unidad vinculada a una oportunidad tiene una sola
+// puerta, la Server Action linkOpportunityVehicle()
+// (lib/opportunities/actions.ts), que obtiene el contexto con
+// requireTenant() y valida el pedido antes de escribir.
+const LINK_OPPORTUNITY_VEHICLE_MESSAGE =
+  "The vehicle linked to an opportunity changes only through the linkOpportunityVehicle() Server Action (lib/opportunities/actions.ts): requireTenant(), server-side validation, then withTenant().";
+const linkOpportunityVehicleImport = {
+  regex:
+    "(^|/)db/queries/link-opportunity-vehicle$|^\\.{1,2}/link-opportunity-vehicle$",
+  // Los tipos del resultado (VehicleLinkOutcome) no escriben nada.
+  allowTypeImports: true,
+  message: LINK_OPPORTUNITY_VEHICLE_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -215,6 +242,8 @@ const basePatterns = [
   createVehicleImport,
   markVehicleAvailableImport,
   changeOpportunityStageImport,
+  recordOpportunityNoteImport,
+  linkOpportunityVehicleImport,
   demandFactsImport,
   phoneLibraryImport,
 ];
@@ -367,6 +396,8 @@ const eslintConfig = defineConfig([
             createVehicleImport,
             markVehicleAvailableImport,
             changeOpportunityStageImport,
+            recordOpportunityNoteImport,
+            linkOpportunityVehicleImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -389,6 +420,8 @@ const eslintConfig = defineConfig([
             createVehicleImport,
             markVehicleAvailableImport,
             changeOpportunityStageImport,
+            recordOpportunityNoteImport,
+            linkOpportunityVehicleImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -432,6 +465,8 @@ const eslintConfig = defineConfig([
             opportunitiesMockImport,
             createOpportunityImport,
             changeOpportunityStageImport,
+            recordOpportunityNoteImport,
+            linkOpportunityVehicleImport,
             demandFactsImport,
             phoneLibraryImport,
             stockMockImport,
@@ -456,6 +491,8 @@ const eslintConfig = defineConfig([
             createVehicleImport,
             markVehicleAvailableImport,
             changeOpportunityStageImport,
+            recordOpportunityNoteImport,
+            linkOpportunityVehicleImport,
             demandFactsImport,
           ],
         },
@@ -478,6 +515,8 @@ const eslintConfig = defineConfig([
             createVehicleImport,
             markVehicleAvailableImport,
             changeOpportunityStageImport,
+            recordOpportunityNoteImport,
+            linkOpportunityVehicleImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
