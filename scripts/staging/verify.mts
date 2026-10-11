@@ -8,8 +8,9 @@ import { finding, type Finding } from "./report.mts";
  * 0000_saas_core_schema, 0001_tenant_isolation,
  * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
  * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
- * 0006_vehicle_availability y 0007_opportunity_demand_facts, leído del
- * catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030). Espeja
+ * 0006_vehicle_availability, 0007_opportunity_demand_facts y
+ * 0008_opportunity_stages, leído del catálogo real (DEC-018, DEC-019,
+ * ADR-001 §2, §3.6 y §4, DEC-030, DEC-032). Espeja
  * tests/db/tenant-catalog y tests/db/schema: si una migración nueva cambia
  * lo esperado, se actualiza junto con esos tests.
  */
@@ -53,7 +54,9 @@ type Policy = {
  * nueva en `available` (WITH CHECK). La demanda de H1.4
  * (opportunity_demand_facts) tiene lectura y un alta append-only: miembro
  * activo, fuente `member`, estado humano, autor de la request y reloj de la
- * base. Tal como las deparsea PostgreSQL 17.
+ * base. El cambio de etapa de H1.6 (opportunities) exige solo la
+ * organización, antes y después: el par de etapas lo valida el trigger
+ * (EXPECTED_OPPORTUNITY_STAGES). Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -105,6 +108,17 @@ export const EXPECTED_POLICIES: Policy[] = [
     using:
       "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
     withCheck: null,
+  },
+  {
+    table: "opportunities",
+    name: "opportunities_update_stage",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "UPDATE",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
   },
   {
     table: "opportunity_demand_facts",
@@ -208,11 +222,35 @@ export const EXPECTED_DEMAND_CHAIN = {
 };
 
 /**
+ * Etapas de la oportunidad (H1.6, 0008), tal como las deja PostgreSQL 17: las
+ * cinco etapas, el motivo de pérdida estructurado (si y solo si `lost`) y el
+ * trigger BEFORE UPDATE que valida el par etapa anterior → etapa nueva,
+ * habilitado, con una función invoker, de search_path vacío, sin EXECUTE
+ * para nadie (DEC-028 §6, DEC-032 §4).
+ */
+export const EXPECTED_OPPORTUNITY_STAGES = {
+  checks: [
+    "opportunities_loss_reason_check CHECK ((loss_reason = ANY (ARRAY['price'::text, 'vehicle_not_available'::text, 'bought_elsewhere'::text, 'no_response'::text, 'unqualified'::text, 'other'::text])))",
+    "opportunities_loss_reason_stage_check CHECK ((((stage = 'lost'::text) AND (loss_reason IS NOT NULL)) OR ((stage <> 'lost'::text) AND (loss_reason IS NULL))))",
+    "opportunities_stage_check CHECK ((stage = ANY (ARRAY['new'::text, 'qualifying'::text, 'negotiating'::text, 'won'::text, 'lost'::text])))",
+  ],
+  triggers: [
+    "O CREATE TRIGGER opportunities_stage_transition BEFORE UPDATE ON public.opportunities FOR EACH ROW EXECUTE FUNCTION private.enforce_opportunity_stage_transition()",
+  ],
+  function: {
+    securityDefiner: false,
+    config: ['search_path=""'],
+    owner: "postgres",
+    executable: false,
+  },
+};
+
+/**
  * Privilegios de authenticated: lectura en todo, las altas de H1.2
  * (contacts, opportunities), H1.3B (vehicles) y H1.4
- * (opportunity_demand_facts, de tabla: diseño A), y el UPDATE de H1.3C sobre
- * vehicles, que es por columna (AUTHENTICATED_UPDATE_COLUMNS). Ningún
- * DELETE.
+ * (opportunity_demand_facts, de tabla: diseño A), y los UPDATE de H1.3C
+ * (vehicles) y H1.6 (opportunities), que son por columna
+ * (AUTHENTICATED_UPDATE_COLUMNS). Ningún DELETE.
  */
 const AUTHENTICATED_PRIVILEGES = [
   "INSERT contacts",
@@ -220,11 +258,21 @@ const AUTHENTICATED_PRIVILEGES = [
   "INSERT opportunity_demand_facts",
   "INSERT vehicles",
   ...APP_TABLES.map((table) => `SELECT ${table}`),
+  "UPDATE opportunities",
   "UPDATE vehicles",
 ];
 
-/** Lo único que authenticated puede actualizar (H1.3C): nunca la tabla. */
-const AUTHENTICATED_UPDATE_COLUMNS = ["vehicles.status", "vehicles.updated_at"];
+/**
+ * Lo único que authenticated puede actualizar (H1.3C y H1.6): nunca la
+ * tabla.
+ */
+const AUTHENTICATED_UPDATE_COLUMNS = [
+  "opportunities.loss_reason",
+  "opportunities.stage",
+  "opportunities.updated_at",
+  "vehicles.status",
+  "vehicles.updated_at",
+];
 
 function list(values: readonly string[]): string {
   return values.length === 0 ? "none" : values.join(", ");
@@ -381,8 +429,9 @@ export async function verifyCatalog(
     ),
   );
 
-  // Policies (DEC-019, H1.1, H1.2, H1.3A, H1.3B, H1.3C): lectura, alta y
-  // disponibilidad, con la forma de referencia; ningún DELETE.
+  // Policies (DEC-019, H1.1, H1.2, H1.3A, H1.3B, H1.3C, H1.4, H1.6):
+  // lectura, alta, disponibilidad y cambio de etapa, con la forma de
+  // referencia; ningún DELETE.
   const policies = await tx<Policy[]>`
     SELECT tablename AS table, policyname AS name, permissive,
       roles::text[] AS roles, cmd AS command, qual AS using,
@@ -427,6 +476,68 @@ export async function verifyCatalog(
       "schema.demand-facts-chain",
       equal(chain, EXPECTED_DEMAND_CHAIN),
       `opportunity_demand_facts: ${chain.indexes.length} chain indexes, ${chain.foreignKeys.length} foreign keys (expected: ${EXPECTED_DEMAND_CHAIN.indexes.length} and ${EXPECTED_DEMAND_CHAIN.foreignKeys.length}, exact definitions)`,
+    ),
+  );
+
+  // Etapas de la oportunidad (H1.6): CHECKs, trigger de transiciones y su
+  // función.
+  const [stages] = await tx<
+    {
+      checks: string[] | null;
+      triggers: string[] | null;
+      securityDefiner: boolean | null;
+      config: string[] | null;
+      owner: string | null;
+      executable: boolean | null;
+    }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.opportunities')
+          AND contype = 'c'
+          AND conname IN (
+            'opportunities_stage_check',
+            'opportunities_loss_reason_check',
+            'opportunities_loss_reason_stage_check'
+          )
+      ) AS checks,
+      (
+        SELECT array_agg(t.tgenabled::text || ' ' || pg_get_triggerdef(t.oid) ORDER BY t.tgname)
+        FROM pg_trigger t
+        WHERE t.tgrelid = to_regclass('public.opportunities') AND NOT t.tgisinternal
+      ) AS triggers,
+      p.prosecdef AS "securityDefiner", p.proconfig AS config,
+      p.proowner::regrole::text AS owner,
+      (
+        has_function_privilege('authenticated', p.oid, 'EXECUTE')
+        OR has_function_privilege('anon', p.oid, 'EXECUTE')
+        OR has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+        OR EXISTS (
+          SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+          WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+        )
+      ) AS executable
+    FROM (SELECT 1) AS one
+    LEFT JOIN pg_proc p
+      ON p.oid = to_regprocedure('private.enforce_opportunity_stage_transition()')
+  `;
+  const stagesFound = {
+    checks: stages?.checks ?? [],
+    triggers: stages?.triggers ?? [],
+    function: {
+      securityDefiner: stages?.securityDefiner ?? null,
+      config: stages?.config ?? null,
+      owner: stages?.owner ?? null,
+      executable: stages?.executable ?? null,
+    },
+  };
+  findings.push(
+    finding(
+      "schema.opportunity-stages",
+      equal(stagesFound, EXPECTED_OPPORTUNITY_STAGES),
+      `opportunities: ${stagesFound.checks.length} stage checks, triggers: ${list(stagesFound.triggers)}; transition function: ${stagesFound.function.owner === null ? "missing" : `SECURITY DEFINER=${stagesFound.function.securityDefiner}, config=${list(stagesFound.function.config ?? [])}, owner=${stagesFound.function.owner}, EXECUTE granted=${stagesFound.function.executable}`}`,
     ),
   );
 
@@ -602,7 +713,7 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles and opportunity_demand_facts, UPDATE on vehicles only; no DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles and opportunity_demand_facts, UPDATE on opportunities and vehicles only; no DELETE)`,
     ),
   );
 

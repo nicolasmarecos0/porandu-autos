@@ -44,8 +44,14 @@ import {
 
 vi.mock("server-only", () => ({}));
 
+/*
+ * Las postcondiciones del ledger append-only (0007) viajan en cada migración
+ * posterior junto con las de toda la base: se corren las de la última
+ * (0008_opportunity_stages, H1.6), que son las que describen el catálogo
+ * real de hoy.
+ */
 const MIGRATION = new URL(
-  "../../db/migrations/0007_opportunity_demand_facts.sql",
+  "../../db/migrations/0008_opportunity_stages.sql",
   import.meta.url,
 );
 
@@ -721,7 +727,7 @@ describe("autores (C-9): RESTRICT hacia profiles", () => {
   });
 });
 
-describe("postcondiciones de 0007 sobre catálogos mutados (DB5)", () => {
+describe("postcondiciones del ledger (0007, vigentes en 0008) sobre catálogos mutados (DB5)", () => {
   let postconditions: string;
 
   beforeAll(async () => {
@@ -756,7 +762,7 @@ describe("postcondiciones de 0007 sobre catálogos mutados (DB5)", () => {
        CREATE POLICY probe ON public.opportunity_demand_facts FOR UPDATE TO authenticated
          USING (organization_id IN (SELECT private.user_org_ids()))
          WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
-      /may only update vehicles\.status and vehicles\.updated_at/,
+      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\) and opportunities\.stage, opportunities\.loss_reason, opportunities\.updated_at \(H1\.6\)/,
     ],
     [
       "UPDATE de service_role",

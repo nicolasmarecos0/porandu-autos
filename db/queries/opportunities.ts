@@ -69,9 +69,10 @@ type OpportunityRecord = typeof opportunities.$inferSelect;
 
 export const stageFromDb: Record<OpportunityRecord["stage"], Stage> = {
   new: "new",
-  qualified: "qualified",
-  test_drive: "testDrive",
-  negotiation: "negotiation",
+  qualifying: "qualifying",
+  negotiating: "negotiating",
+  won: "won",
+  lost: "lost",
 };
 
 // Mismo copy que el formulario de alta: una sola fuente (domains/).

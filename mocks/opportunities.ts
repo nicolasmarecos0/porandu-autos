@@ -61,7 +61,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Preguntó si puede retirar antes del 15/10",
     },
     owner: ADVISORS.dr,
-    stage: "qualified",
+    stage: "qualifying",
     bucket: "now",
     nba: {
       kind: "call",
@@ -160,7 +160,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Pidió factura a nombre de la empresa",
     },
     owner: ADVISORS.mg,
-    stage: "negotiation",
+    stage: "negotiating",
     bucket: "today",
     nba: {
       kind: "offer",
@@ -243,7 +243,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Comentó que le gustó el manejo en ruta",
     },
     owner: ADVISORS.mg,
-    stage: "testDrive",
+    stage: "qualifying",
     bucket: "today",
     nba: {
       kind: "offer",
@@ -332,7 +332,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Pidió probar la versión híbrida el sábado",
     },
     owner: ADVISORS.lv,
-    stage: "qualified",
+    stage: "qualifying",
     bucket: "now",
     nba: {
       kind: "testDrive",
@@ -415,7 +415,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Consultó si puede ir con su esposo al test drive",
     },
     owner: ADVISORS.lv,
-    stage: "testDrive",
+    stage: "qualifying",
     bucket: "now",
     nba: {
       kind: "testDrive",
@@ -498,7 +498,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Contraoferta: pidió USD 2.000 menos",
     },
     owner: ADVISORS.dr,
-    stage: "negotiation",
+    stage: "negotiating",
     bucket: "today",
     nba: {
       kind: "offer",
@@ -577,7 +577,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Pidió cotización formal por WhatsApp",
     },
     owner: ADVISORS.mg,
-    stage: "qualified",
+    stage: "qualifying",
     bucket: "now",
     nba: {
       kind: "offer",
@@ -660,7 +660,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Envió modelo y año de su HB20",
     },
     owner: ADVISORS.sa,
-    stage: "qualified",
+    stage: "qualifying",
     bucket: "today",
     nba: {
       kind: "tradeIn",
@@ -747,7 +747,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Preguntó autonomía y costo de carga",
     },
     owner: ADVISORS.mg,
-    stage: "qualified",
+    stage: "qualifying",
     bucket: "today",
     nba: {
       kind: "message",
@@ -908,7 +908,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Visitó el salón e hizo test drive",
     },
     owner: ADVISORS.lv,
-    stage: "testDrive",
+    stage: "qualifying",
     bucket: "today",
     nba: {
       kind: "message",
@@ -991,7 +991,7 @@ export const OPPORTUNITY_FIXTURES: readonly Opportunity[] = [
       summary: "Ingresó a stock una Vitara compatible",
     },
     owner: ADVISORS.sa,
-    stage: "qualified",
+    stage: "qualifying",
     bucket: "followUp",
     nba: {
       kind: "message",

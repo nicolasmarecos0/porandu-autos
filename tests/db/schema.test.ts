@@ -257,10 +257,12 @@ describe("opportunities (H1.1)", () => {
         default: "now()",
       },
       ...TIMESTAMPS,
+      // H1.6 (0008): agregada con ALTER TABLE, así que es la última.
+      { name: "loss_reason", type: "text", notNull: false, default: null },
     ]);
   });
 
-  it("FK compuesta al contacto de la misma organización, CHECK de etapa y origen", async () => {
+  it("FK compuesta al contacto de la misma organización, CHECK de etapa, origen y motivo de pérdida", async () => {
     expect(await constraints(db.admin, "opportunities")).toEqual({
       opportunities_pkey: "PRIMARY KEY (id)",
       opportunities_organization_id_organizations_id_fk:
@@ -268,9 +270,14 @@ describe("opportunities (H1.1)", () => {
       opportunities_organization_id_contact_id_contacts_fk:
         "FOREIGN KEY (organization_id, contact_id) REFERENCES contacts(organization_id, id) ON DELETE RESTRICT",
       opportunities_stage_check:
-        "CHECK ((stage = ANY (ARRAY['new'::text, 'qualified'::text, 'test_drive'::text, 'negotiation'::text])))",
+        "CHECK ((stage = ANY (ARRAY['new'::text, 'qualifying'::text, 'negotiating'::text, 'won'::text, 'lost'::text])))",
       opportunities_source_check:
         "CHECK ((source = ANY (ARRAY['whatsapp'::text, 'meta_ads'::text, 'web'::text, 'showroom'::text, 'referral'::text])))",
+      // H1.6: motivo de pérdida estructurado, si y solo si la etapa es lost.
+      opportunities_loss_reason_check:
+        "CHECK ((loss_reason = ANY (ARRAY['price'::text, 'vehicle_not_available'::text, 'bought_elsewhere'::text, 'no_response'::text, 'unqualified'::text, 'other'::text])))",
+      opportunities_loss_reason_stage_check:
+        "CHECK ((((stage = 'lost'::text) AND (loss_reason IS NOT NULL)) OR ((stage <> 'lost'::text) AND (loss_reason IS NULL))))",
       // H1.4: destino de la FK compuesta de opportunity_demand_facts.
       opportunities_organization_id_id_key: "UNIQUE (organization_id, id)",
     });
@@ -1021,7 +1028,8 @@ describe("constraints de contacts y opportunities con datos", () => {
       await seed(tx);
       for (const [stage, source] of [
         ["sold", "web"],
-        ["testDrive", "web"],
+        ["test_drive", "web"],
+        ["qualified", "web"],
         ["new", "instagram"],
         ["new", "WhatsApp"],
       ]) {
@@ -1034,10 +1042,10 @@ describe("constraints de contacts y opportunities con datos", () => {
       }
       const [row] = await tx<{ stage: string; recent: boolean }[]>`
         INSERT INTO public.opportunities (organization_id, contact_id, stage, source)
-        VALUES (${ORG_1}, ${CONTACT_1}, 'test_drive', 'referral')
+        VALUES (${ORG_1}, ${CONTACT_1}, 'qualifying', 'referral')
         RETURNING stage, last_activity_at > now() - interval '1 minute' AS recent
       `;
-      expect(row).toEqual({ stage: "test_drive", recent: true });
+      expect(row).toEqual({ stage: "qualifying", recent: true });
     });
   });
 

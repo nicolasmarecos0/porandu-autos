@@ -17,6 +17,10 @@ import {
   IMPLEMENTED_SOURCE_KINDS,
 } from "@/domains/demand/resolver";
 import { CURRENCIES } from "@/domains/money";
+import {
+  LOSS_REASONS,
+  OPPORTUNITY_STAGES,
+} from "@/domains/opportunities/stages";
 
 /*
  * Schema de Drizzle (db/schema), sin base de datos. El catálogo real que
@@ -213,6 +217,17 @@ describe("db/schema", () => {
         withCheck: undefined,
       },
       {
+        table: "opportunities",
+        name: "opportunities_update_stage",
+        as: "permissive",
+        for: "update",
+        to: ["authenticated"],
+        using:
+          '"opportunities"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck:
+          '"opportunities"."organization_id" IN (SELECT private.user_org_ids())',
+      },
+      {
         table: "opportunity_demand_facts",
         name: "opportunity_demand_facts_insert_member",
         as: "permissive",
@@ -351,6 +366,7 @@ describe("db/schema", () => {
       ["contact_id", true, false],
       ["stage", true, false],
       ["source", true, false],
+      ["loss_reason", false, false],
       ["interest_model", false, false],
       ["interest_version", false, false],
       ["last_activity_at", true, true],
@@ -370,19 +386,39 @@ describe("db/schema", () => {
     ).toEqual([
       {
         name: "opportunities_stage_check",
-        sql: `"opportunities"."stage" IN ('new', 'qualified', 'test_drive', 'negotiation')`,
+        sql: `"opportunities"."stage" IN ('new', 'qualifying', 'negotiating', 'won', 'lost')`,
       },
       {
         name: "opportunities_source_check",
         sql: `"opportunities"."source" IN ('whatsapp', 'meta_ads', 'web', 'showroom', 'referral')`,
       },
+      {
+        name: "opportunities_loss_reason_check",
+        sql: `"opportunities"."loss_reason" IN ('price', 'vehicle_not_available', 'bought_elsewhere', 'no_response', 'unqualified', 'other')`,
+      },
+      {
+        name: "opportunities_loss_reason_stage_check",
+        sql: `("opportunities"."stage" = 'lost' AND "opportunities"."loss_reason" IS NOT NULL) OR ("opportunities"."stage" <> 'lost' AND "opportunities"."loss_reason" IS NULL)`,
+      },
     ]);
     expect(schema.opportunityStages).toEqual([
       "new",
-      "qualified",
-      "test_drive",
-      "negotiation",
+      "qualifying",
+      "negotiating",
+      "won",
+      "lost",
     ]);
+    expect(schema.opportunityLossReasons).toEqual([
+      "price",
+      "vehicle_not_available",
+      "bought_elsewhere",
+      "no_response",
+      "unqualified",
+      "other",
+    ]);
+    // El schema y el dominio (H1.6) hablan de las mismas etapas y motivos.
+    expect(schema.opportunityStages).toEqual([...OPPORTUNITY_STAGES]);
+    expect(schema.opportunityLossReasons).toEqual([...LOSS_REASONS]);
     expect(
       table("opportunities").indexes.map((i) => ({
         name: i.config.name,

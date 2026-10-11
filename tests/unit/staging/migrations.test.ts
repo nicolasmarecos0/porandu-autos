@@ -39,6 +39,7 @@ describe("readRepoMigrations", () => {
       [5, "0005_vehicle_quick_create"],
       [6, "0006_vehicle_availability"],
       [7, "0007_opportunity_demand_facts"],
+      [8, "0008_opportunity_stages"],
     ]);
   });
 
@@ -67,13 +68,13 @@ describe("compareHistory", () => {
       applied: [REPO[0]],
       pending: REPO.slice(1),
     });
-    // Staging hoy (H1.3C): solo 0007 pendiente.
-    expect(compareHistory(REPO, applied(7))).toEqual({
+    // Staging hoy (H1.4/H1.5): solo 0008 pendiente.
+    expect(compareHistory(REPO, applied(8))).toEqual({
       kind: "consistent",
-      applied: REPO.slice(0, 7),
-      pending: [REPO[7]],
+      applied: REPO.slice(0, 8),
+      pending: [REPO[8]],
     });
-    expect(compareHistory(REPO, [...applied(8)].reverse())).toMatchObject({
+    expect(compareHistory(REPO, [...applied(9)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -93,8 +94,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(8), { id: 9, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 8",
+      [...applied(9), { id: 10, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 9",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -133,7 +134,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0007: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0008: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -204,7 +205,7 @@ describe("expectedFootprint", () => {
     };
     expect(expectedFootprint(REPO.slice(0, 7))).toEqual(h13c);
     // 0007 suma el ledger de demanda, con sus policies de lectura y alta.
-    expect(expectedFootprint(REPO)).toEqual({
+    const h14 = {
       ...h13c,
       tables: [
         "contacts",
@@ -229,6 +230,15 @@ describe("expectedFootprint", () => {
         "vehicles.vehicles_select_member",
         "vehicles.vehicles_update_mark_available",
       ],
+    };
+    expect(expectedFootprint(REPO.slice(0, 8))).toEqual(h14);
+    // 0008 no crea tablas: suma la policy de cambio de etapa (H1.6).
+    expect(expectedFootprint(REPO)).toEqual({
+      ...h14,
+      policies: [
+        ...h14.policies,
+        "opportunities.opportunities_update_stage",
+      ].sort(),
     });
   });
 });

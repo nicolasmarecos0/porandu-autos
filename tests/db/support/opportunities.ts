@@ -24,7 +24,7 @@ type SeedOpportunity = {
     phone: string | null;
     city: string | null;
   };
-  stage: "new" | "qualified" | "test_drive" | "negotiation";
+  stage: "new" | "qualifying" | "negotiating" | "won" | "lost";
   source: "whatsapp" | "meta_ads" | "web" | "showroom" | "referral";
   interestModel: string | null;
   interestVersion: string | null;
@@ -45,7 +45,7 @@ export const OPPORTUNITIES: SeedOpportunity[] = [
       phone: "0981 555 214",
       city: "Luque",
     },
-    stage: "qualified",
+    stage: "qualifying",
     source: "whatsapp",
     interestModel: "Toyota Hilux",
     interestVersion: "SRV 2.8 4x4 AT",
@@ -71,7 +71,7 @@ export const OPPORTUNITIES: SeedOpportunity[] = [
       phone: "0981 555 214",
       city: "Luque",
     },
-    stage: "test_drive",
+    stage: "qualifying",
     source: "showroom",
     interestModel: "Toyota Fortuner",
     interestVersion: null,
@@ -86,7 +86,7 @@ export const OPPORTUNITIES: SeedOpportunity[] = [
       phone: "+595 985 555 119",
       city: "Asunción",
     },
-    stage: "negotiation",
+    stage: "negotiating",
     source: "referral",
     interestModel: "Kia Sportage",
     interestVersion: "2.0 EX AT",
@@ -116,7 +116,7 @@ export const OPPORTUNITIES: SeedOpportunity[] = [
       phone: "0331 555 480",
       city: "Concepción",
     },
-    stage: "negotiation",
+    stage: "negotiating",
     source: "referral",
     interestModel: "Toyota Hilux",
     interestVersion: "SR 2.8 4x4 MT",
@@ -131,7 +131,15 @@ export function opportunityIdsOf(organizationId: string): string[] {
     .map((o) => o.id);
 }
 
-export async function seedOpportunities(admin: Sql): Promise<void> {
+/**
+ * `initialOnly`: todas las oportunidades en `new`. Es lo que tiene una base
+ * real antes de H1.6 (el alta nace en `new` y no había UPDATE) y lo único que
+ * admite el CHECK de las migraciones 0002 a 0007 con las etapas de H1.6.
+ */
+export async function seedOpportunities(
+  admin: Sql,
+  options: { initialOnly?: boolean } = {},
+): Promise<void> {
   const contacts = new Map(
     OPPORTUNITIES.map((o) => [
       o.contact.id,
@@ -156,7 +164,7 @@ export async function seedOpportunities(admin: Sql): Promise<void> {
           id: o.id,
           organization_id: o.organizationId,
           contact_id: o.contact.id,
-          stage: o.stage,
+          stage: options.initialOnly ? "new" : o.stage,
           source: o.source,
           interest_model: o.interestModel,
           interest_version: o.interestVersion,

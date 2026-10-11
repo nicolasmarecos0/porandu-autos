@@ -7,6 +7,8 @@ import type {
   VehicleMatch,
 } from "@/domains/vehicles/types";
 
+import type { Stage } from "./stages";
+
 export type Advisor = {
   id: string;
   name: string;
@@ -23,8 +25,8 @@ export type Channel = "WhatsApp" | "Meta Ads" | "Web" | "Showroom" | "Referido";
 export type OpportunitySource =
   "whatsapp" | "meta_ads" | "web" | "showroom" | "referral";
 
-/** Etapas del pipeline baseline (Master Context §6). */
-export type Stage = "new" | "qualified" | "testDrive" | "negotiation";
+/** Etapa comercial de la oportunidad (H1.6, DEC-032): ver `./stages`. */
+export type { Stage };
 
 /** Urgencia de la cola: cuándo conviene actuar. */
 export type Bucket = "now" | "today" | "followUp";
