@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -130,6 +131,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0007_opportunity_demand_facts",
       "0008_opportunity_stages",
       "0009_opportunity_notes_vehicle_link",
+      "0010_opportunity_closure_metadata",
     ]);
   });
 
@@ -294,7 +296,7 @@ describe("comandos del workflow (scripts/staging/commands.mts)", () => {
     const output = lines.join("\n");
     expect(output).toContain("✗ postgres.database");
     expect(output).toContain(
-      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create, 0004_vehicles_stock_persistence, 0005_vehicle_quick_create, 0006_vehicle_availability, 0007_opportunity_demand_facts, 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link",
+      "✓ migrations.history — applied: none; pending: 0000_saas_core_schema, 0001_tenant_isolation, 0002_opportunities_persistence, 0003_contact_identity_opportunity_create, 0004_vehicles_stock_persistence, 0005_vehicle_quick_create, 0006_vehicle_availability, 0007_opportunity_demand_facts, 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link, 0010_opportunity_closure_metadata",
     );
     expect(output).not.toContain(ctx.secrets[0]!);
     expect(output).not.toMatch(/postgres(ql)?:\/\//);
@@ -625,6 +627,55 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta un cierre sin su CHECK y la función de 0009 sin la regla de inmutabilidad (DEC-034)", async () => {
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef('private.enforce_opportunity_stage_transition()'::regprocedure) AS definition
+    `;
+    const v0009 = await readFile(
+      new URL(
+        "../../db/migrations/0009_opportunity_notes_vehicle_link.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const function0009 = v0009.slice(
+      v0009.indexOf('CREATE OR REPLACE FUNCTION "private"'),
+      v0009.indexOf("$$;", v0009.indexOf("AS $$")) + 3,
+    );
+    expect(function0009).toContain("opportunities_vehicle_link");
+    expect(function0009).not.toContain("opportunities_closure_immutable");
+
+    for (const drift of [
+      "ALTER TABLE public.opportunities DROP CONSTRAINT opportunities_won_closure_check",
+      function0009,
+    ]) {
+      await migrated.admin.unsafe(drift);
+      try {
+        const sql = connect(migrated.migrationUrl);
+        const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+        await sql.end({ timeout: 5 });
+        expect(
+          findings.filter((f) => !f.ok).map((f) => f.check),
+          drift.slice(0, 60),
+        ).toEqual(["schema.opportunity-stages"]);
+      } finally {
+        await migrated.admin.unsafe(`
+          ALTER TABLE public.opportunities DROP CONSTRAINT IF EXISTS opportunities_won_closure_check;
+          ALTER TABLE public.opportunities ADD CONSTRAINT opportunities_won_closure_check
+            CHECK ((stage = 'won' AND vehicle_id IS NOT NULL AND sale_price IS NOT NULL AND sale_currency IS NOT NULL AND payment_method IS NOT NULL AND delivery_status IS NOT NULL AND delivery_date IS NOT NULL) OR (stage <> 'won' AND sale_price IS NULL AND sale_currency IS NULL AND payment_method IS NULL AND delivery_status IS NULL AND delivery_date IS NULL));
+        `);
+        await migrated.admin.unsafe(current!.definition);
+      }
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -635,11 +686,11 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-033): 0009 después del merge, con
- * preflight → migrate → verify. Staging está en H1.6 (0000 a 0008) si 0008
- * ya se aplicó; si no, en H1.4 (0000 a 0007) o todavía en H1.3C (0000 a
- * 0006, DEC-028): expected_migrations declara exactamente lo pendiente en
- * cada caso. Esta rama no aplica nada a staging.
+ * El próximo rollout real (DEC-034): 0010 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 2 (0000 a 0009) si
+ * 0009 ya se aplicó; si no, en H1.6 (0000 a 0008), H1.4 (0000 a 0007) o
+ * todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
+ * exactamente lo pendiente en cada caso. Esta rama no aplica nada a staging.
  */
 describe.each([
   {
@@ -650,6 +701,7 @@ describe.each([
       "0007_opportunity_demand_facts",
       "0008_opportunity_stages",
       "0009_opportunity_notes_vehicle_link",
+      "0010_opportunity_closure_metadata",
     ],
   },
   {
@@ -659,16 +711,26 @@ describe.each([
     expected: [
       "0008_opportunity_stages",
       "0009_opportunity_notes_vehicle_link",
+      "0010_opportunity_closure_metadata",
     ],
   },
   {
     stagingAt: "0008_opportunity_stages",
     label: "H1.6",
     applied: 9,
-    expected: ["0009_opportunity_notes_vehicle_link"],
+    expected: [
+      "0009_opportunity_notes_vehicle_link",
+      "0010_opportunity_closure_metadata",
+    ],
+  },
+  {
+    stagingAt: "0009_opportunity_notes_vehicle_link",
+    label: "Hito 2",
+    applied: 10,
+    expected: ["0010_opportunity_closure_metadata"],
   },
 ])(
-  "staging en $label: rollout hasta 0009",
+  "staging en $label: rollout hasta 0010",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 
