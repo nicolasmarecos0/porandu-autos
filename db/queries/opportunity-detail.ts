@@ -10,6 +10,9 @@ import {
   type LegacyInterest,
 } from "@/domains/demand/presentation";
 import { resolveDemand, type DemandRow } from "@/domains/demand/resolver";
+import { demandSnapshot } from "@/domains/demand/snapshot";
+import { findMatchesForDemand } from "@/domains/match/engine";
+import { matchRail, type MatchRail } from "@/domains/match/presentation";
 import type { Stage } from "@/domains/opportunities/types";
 import { requireTenant } from "@/lib/tenant/session";
 
@@ -17,6 +20,7 @@ import { contacts, opportunities } from "../schema";
 import { withTenant } from "../tenant";
 import { selectDemandRows } from "./demand-rows";
 import { stageFromDb } from "./opportunities";
+import { selectMatchCandidates } from "./vehicles";
 
 /*
  * Detalle de una oportunidad en /opportunities/[id] (H1.4, DEC-030 §10):
@@ -32,7 +36,10 @@ import { stageFromDb } from "./opportunities";
  * - La oportunidad y su ledger se leen en la misma transacción.
  * - El autor se presenta como "Vos" u "Otro miembro" contra el usuario de la
  *   request: ningún id de usuario llega a la página.
- * - Solo lee: no toca `last_activity_at` ni nada del ledger.
+ * - Match v0 (H1.5, DEC-031 §5): en la misma transacción lee las unidades
+ *   disponibles de la organización activa y calcula los matches en memoria
+ *   con el DemandSnapshot de la oportunidad. No se persiste nada.
+ * - Solo lee: no toca `last_activity_at`, el ledger ni el stock.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,6 +52,8 @@ export type OpportunityDetail = Readonly<{
   demand: DemandDetail;
   /** Lo mismo que recibe la card "Busca": lo que necesita el drawer. */
   summary: DemandSummary;
+  /** Top Match y alternativa del stock disponible, o por qué no hay. */
+  matches: MatchRail;
 }>;
 
 /** Texto opcional del legado: vacío o en blanco no cuenta. */
@@ -91,12 +100,15 @@ export async function getOpportunityDetail(
       opportunity.id,
     ]);
     const rows: readonly DemandRow[] = ledger.get(opportunity.id) ?? [];
-    return { opportunity, rows };
+    const candidates = await selectMatchCandidates(tx, ctx.organizationId);
+    return { opportunity, rows, candidates };
   });
   if (!found) return null;
 
-  const { opportunity, rows } = found;
+  const { opportunity, rows, candidates } = found;
   const truth = resolveDemand(rows);
+  const snapshot = demandSnapshot(truth);
+  const matches = findMatchesForDemand(snapshot, candidates);
   const model = present(opportunity.interestModel);
   const version = present(opportunity.interestVersion);
   const legacy: LegacyInterest = {
@@ -113,5 +125,6 @@ export async function getOpportunityDetail(
       legacy,
     }),
     summary: demandSummary(truth, legacy),
+    matches: matchRail(snapshot, candidates, matches),
   };
 }

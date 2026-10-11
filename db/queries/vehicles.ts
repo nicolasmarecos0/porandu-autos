@@ -1,7 +1,8 @@
 import "server-only";
 
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
+import type { MatchCandidate } from "@/domains/match/presentation";
 import type { StockVehicle, VehicleStatus } from "@/domains/vehicles/stock";
 import { requireTenant } from "@/lib/tenant/session";
 
@@ -111,4 +112,59 @@ export async function getStockList(): Promise<readonly StockVehicle[]> {
     selectStock(tx, ctx.organizationId),
   );
   return rows.map(toStockVehicle);
+}
+
+/*
+ * Candidatas de Match v0 (H1.5, DEC-031 §5): las unidades disponibles de la
+ * organización activa. Corre dentro de la transacción withTenant() que ya
+ * abrió quien llama (el loader de /opportunities/[id]) y filtra por la
+ * organización del contexto y por `status = 'available'` en la base: RLS y
+ * el filtro explícito son capas complementarias, y el motor vuelve a exigir
+ * una sola organización y unidades disponibles.
+ *
+ * Mismo orden que la Stock List: un empate de puntaje conserva el ingreso
+ * más reciente primero.
+ */
+type MatchRow = StockRow & Readonly<Pick<VehicleRecord, "organizationId">>;
+
+function selectAvailable(
+  tx: ScopedTransaction,
+  organizationId: string,
+): Promise<MatchRow[]> {
+  return tx
+    .select({
+      id: vehicles.id,
+      organizationId: vehicles.organizationId,
+      brand: vehicles.brand,
+      model: vehicles.model,
+      version: vehicles.version,
+      year: vehicles.year,
+      km: vehicles.km,
+      price: vehicles.price,
+      currency: vehicles.currency,
+      status: vehicles.status,
+    })
+    .from(vehicles)
+    .where(
+      and(
+        eq(vehicles.organizationId, organizationId),
+        eq(vehicles.status, "available"),
+      ),
+    )
+    .orderBy(desc(vehicles.createdAt), asc(vehicles.id));
+}
+
+/** Fila persistida → unidad candidata de Match. Pura. */
+export function toMatchCandidate(row: MatchRow): MatchCandidate {
+  const { price, ...unit } = toStockVehicle(row);
+  return { ...unit, organizationId: row.organizationId, price: price ?? null };
+}
+
+/** Unidades disponibles de `organizationId`, como candidatas de Match. */
+export async function selectMatchCandidates(
+  tx: ScopedTransaction,
+  organizationId: string,
+): Promise<MatchCandidate[]> {
+  const rows = await selectAvailable(tx, organizationId);
+  return rows.map(toMatchCandidate);
 }

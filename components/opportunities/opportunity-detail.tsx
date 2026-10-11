@@ -4,6 +4,7 @@ import { WorkspaceLayout } from "@/components/shell/workspace-layout";
 import { Badge } from "@/components/ui/badge";
 import { ChevronRightIcon } from "@/components/ui/icons";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { OpportunityMatches } from "@/components/vehicle-rail/vehicle-rail";
 import {
   NO_DATA,
   type DemandDetail,
@@ -12,6 +13,7 @@ import {
   type DemandSummary,
 } from "@/domains/demand/presentation";
 import type { CurrentStatus } from "@/domains/demand/resolver";
+import type { MatchRail } from "@/domains/match/presentation";
 import { stageLabel } from "@/domains/opportunities/labels";
 import type { Stage } from "@/domains/opportunities/types";
 
@@ -19,20 +21,21 @@ import { OpportunityDemandEdit } from "./opportunity-demand-edit";
 
 /*
  * /opportunities/[id] (H1.4, DEC-030 §10, dentro de DEC-017): responde, para
- * cada fact, "¿Por qué Porandú cree que este cliente busca esto?".
+ * cada fact, "¿Por qué Porandú cree que este cliente busca esto?", y qué
+ * unidad del stock ofrecerle (Match v0, H1.5, DEC-031 §5).
  *
- *   ┌ contacto · etapa ───────────── Volver · Editar ┐
- *   │ Lo que busca                                    │
- *   │  Vehículo   Toyota Hilux   [Confirmado]         │
- *   │             Cargado al crear la oportunidad…    │
- *   │             ▸ Historial (2)                     │
- *   │  …                                              │
- *   └─────────────────────────────────────────────────┘
+ *   ┌ contacto · etapa ──────────────────────────── Volver · Editar ┐
+ *   │ Lo que busca                          │ Matches en stock       │
+ *   │  Vehículo   Toyota Hilux [Confirmado] │  Top Match        (100)│
+ *   │             Cargado al crear…         │  Alternativa       (70)│
+ *   │             ▸ Historial (2)           │                        │
+ *   └───────────────────────────────────────┴────────────────────────┘
  *
  * Server Component: el historial, las notas y los autores ("Vos" u "Otro
- * miembro") se arman en el servidor y nunca llegan ids de usuario. Al
- * navegador solo viaja el drawer "Editar", con el mismo resumen que la card
- * "Busca". Sin cola, scores, Why Now, NBA ni Vehicle Rail (DEC-017).
+ * miembro") se arman en el servidor y nunca llegan ids de usuario. Los
+ * matches llegan calculados por el loader. Al navegador solo viajan el drawer
+ * "Editar", con el mismo resumen que la card "Busca", y los tooltips del
+ * puntaje. Sin cola, scores, Why Now ni NBA (DEC-017).
  */
 
 const STATUS_TONE: Readonly<
@@ -115,6 +118,8 @@ type OpportunityDetailViewProps = Readonly<{
   demand: DemandDetail;
   /** Lo que necesita el drawer "Editar": el mismo resumen de la card. */
   summary: DemandSummary;
+  /** Top Match y alternativa del stock disponible, o por qué no hay. */
+  matches: MatchRail;
 }>;
 
 export function OpportunityDetailView({
@@ -123,6 +128,7 @@ export function OpportunityDetailView({
   stage,
   demand,
   summary,
+  matches,
 }: OpportunityDetailViewProps) {
   return (
     <WorkspaceLayout
@@ -140,6 +146,7 @@ export function OpportunityDetailView({
           }
         />
       }
+      aside={<OpportunityMatches rail={matches} />}
     >
       <section aria-labelledby="demand-heading" className="max-w-3xl">
         <Panel>
