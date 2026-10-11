@@ -5,7 +5,10 @@
  *
  *   new ──► qualifying ──► negotiating ──► won
  *    │          │               │
- *    └──────────┴───────────────┴────────► lost (con motivo)
+ *    └──────────┴───────────────┴────────► lost
+ *
+ * Los pases a `won` y `lost` cierran la oportunidad: llevan sus metadatos
+ * (DEC-034) y tienen su propia puerta y su propio planner (`./closure`).
  *
  * Módulo puro y apto para el navegador: la UI lo usa para ofrecer las
  * acciones, pero la regla la imponen el servidor (planStageChange() sobre la
@@ -70,60 +73,37 @@ export function sourceStagesOf(to: Stage): readonly Stage[] {
 }
 
 /**
- * Motivo de pérdida estructurado. Es obligatorio al pasar a `lost` (DEC-032
- * §3) y no existe en ninguna otra etapa. `other` es la salida cuando
- * ninguno aplica; no hay texto libre.
- */
-export const LOSS_REASONS = [
-  "price",
-  "vehicle_not_available",
-  "bought_elsewhere",
-  "no_response",
-  "unqualified",
-  "other",
-] as const;
-
-export type LossReason = (typeof LOSS_REASONS)[number];
-
-export function isLossReason(value: unknown): value is LossReason {
-  return (
-    typeof value === "string" &&
-    (LOSS_REASONS as readonly string[]).includes(value)
-  );
-}
-
-/**
- * Campos que el servidor lee del pedido: la oportunidad, la etapa de
- * destino y, para `lost`, el motivo. Organización, usuario, etapa de origen
- * y reloj nunca salen del cliente.
+ * Campos que el servidor lee del pedido: la oportunidad y la etapa de
+ * destino. Organización, usuario, etapa de origen y reloj nunca salen del
+ * cliente. Un cierre (`won` o `lost`) no viaja por acá: tiene su propia
+ * puerta, con sus metadatos (DEC-034, `./closure`).
  */
 export const STAGE_CHANGE_FIELDS = {
   opportunityId: "opportunityId",
   stage: "stage",
-  lossReason: "lossReason",
 } as const;
 
-/** Lo que se pide: la etapa de destino y, si es `lost`, su motivo. */
-export type StageChangeRequest = Readonly<{
-  to: Stage;
-  lossReason: LossReason | null;
-}>;
+/** Lo que se pide: la etapa de destino. */
+export type StageChangeRequest = Readonly<{ to: Stage }>;
 
 /** Qué hacer con un pedido, dada la etapa actual de la oportunidad. */
 export type StageChangePlan =
-  /** Escribir: `lossReason` solo viaja con `lost`. */
-  | Readonly<{
-      kind: "change";
-      from: Stage;
-      to: Stage;
-      lossReason: LossReason | null;
-    }>
+  /** Escribir el avance (nunca un cierre). */
+  | Readonly<{ kind: "change"; from: Stage; to: Stage }>
   /** Ya está en la etapa pedida (p. ej. otra persona la movió antes). */
   | Readonly<{ kind: "unchanged"; stage: Stage }>
   /** El par no existe en la máquina (incluye salir de una etapa terminal). */
   | Readonly<{ kind: "invalid_transition"; from: Stage; to: Stage }>
-  /** Pasar a `lost` exige un motivo. */
-  | Readonly<{ kind: "loss_reason_required"; from: Stage }>;
+  /**
+   * El pase es válido, pero cierra la oportunidad: se hace con
+   * closeOpportunity(), que escribe la etapa junto con sus metadatos
+   * (DEC-034 §1).
+   */
+  | Readonly<{
+      kind: "closure_required";
+      from: Stage;
+      to: (typeof TERMINAL_STAGES)[number];
+    }>;
 
 /**
  * Decide, sin tocar nada, qué pasa con un pedido de cambio de etapa. Pedir
@@ -136,11 +116,8 @@ export function planStageChange(
   const { to } = request;
   if (from === to) return { kind: "unchanged", stage: from };
   if (!canTransition(from, to)) return { kind: "invalid_transition", from, to };
-  if (to === "lost") {
-    if (request.lossReason === null) {
-      return { kind: "loss_reason_required", from };
-    }
-    return { kind: "change", from, to, lossReason: request.lossReason };
+  if (to === "won" || to === "lost") {
+    return { kind: "closure_required", from, to };
   }
-  return { kind: "change", from, to, lossReason: null };
+  return { kind: "change", from, to };
 }

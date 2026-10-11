@@ -1,4 +1,5 @@
-import { type LossReason, type Stage, LOSS_REASONS } from "./stages";
+import type { DeliveryStatus, LossReason, PaymentMethod } from "./closure";
+import type { Stage } from "./stages";
 import type { Bucket, Channel, OpportunitySource } from "./types";
 
 /* Copy visible (es-PY) de los estados de una oportunidad. */
@@ -37,21 +38,35 @@ export const STAGE_ACTION_LABELS: Readonly<
   lost: "Marcar como perdida",
 };
 
-/** Motivos de pérdida (H1.6, DEC-032 §3), en el orden en que se ofrecen. */
+/*
+ * Metadatos de un cierre (DEC-034), en el orden en que se ofrecen. Las
+ * listas de opciones las arma `./closure`, dueño de los valores.
+ */
+
+/** Motivos de pérdida (DEC-034 §2). */
 export const LOSS_REASON_LABELS: Readonly<Record<LossReason, string>> = {
   price: "Precio",
-  vehicle_not_available: "Unidad no disponible",
-  bought_elsewhere: "Compró en otro lado",
-  no_response: "Sin respuesta",
-  unqualified: "No calificaba",
+  vehicle_unavailable: "Unidad no disponible",
+  competitor: "Compró en la competencia",
+  financing_rejected: "Financiación rechazada",
+  ghosted: "Dejó de responder",
   other: "Otro motivo",
 };
 
-/** Motivos válidos, en el orden en que se ofrecen al cerrar una oportunidad. */
-export const LOSS_REASON_OPTIONS: readonly {
-  id: LossReason;
-  label: string;
-}[] = LOSS_REASONS.map((id) => ({ id, label: LOSS_REASON_LABELS[id] }));
+/** Formas de pago de una venta (DEC-034 §3). */
+export const PAYMENT_METHOD_LABELS: Readonly<Record<PaymentMethod, string>> = {
+  cash: "Contado",
+  financing: "Financiación",
+  trade_in: "Usado como parte de pago",
+  mixed: "Mixto",
+};
+
+/** Estado de la entrega al cerrar la venta (DEC-034 §3). */
+export const DELIVERY_STATUS_LABELS: Readonly<Record<DeliveryStatus, string>> =
+  {
+    scheduled: "Entrega programada",
+    delivered: "Entregada",
+  };
 
 export const BUCKETS: readonly { id: Bucket; label: string }[] = [
   { id: "now", label: "Actuar ahora" },
