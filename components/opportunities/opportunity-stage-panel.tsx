@@ -6,7 +6,6 @@ import { cn } from "@/components/ui/cn";
 import { CheckIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import {
-  LOSS_REASON_LABELS,
   STAGE_ACTION_LABELS,
   stageLabel,
 } from "@/domains/opportunities/labels";
@@ -14,12 +13,13 @@ import {
   isTerminalStage,
   nextStages,
   STAGE_CHANGE_FIELDS,
-  type LossReason,
   type Stage,
 } from "@/domains/opportunities/stages";
 import { changeOpportunityStage } from "@/lib/opportunities/actions";
+import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 import type { ChangeStageState } from "@/lib/opportunities/stage-change";
 
+import type { SaleVehicle } from "./closure-fields";
 import { StageBadge } from "./stage-badge";
 import { StageCloseDialog } from "./stage-close-dialog";
 
@@ -34,15 +34,16 @@ import { StageCloseDialog } from "./stage-close-dialog";
  *
  * Las acciones son exactamente las que la máquina de estados del dominio
  * permite desde la etapa actual (nextStages()). Pasar a calificación o a
- * negociación es un click. Cerrar (ganada o perdida) abre una confirmación,
- * porque de una etapa terminal no se vuelve; perder pide además el motivo.
- * Una oportunidad cerrada no ofrece acciones.
+ * negociación es un click (changeOpportunityStage()). Cerrar (ganada o
+ * perdida) abre una confirmación que pide los metadatos del cierre y los
+ * envía a closeOpportunity() (DEC-034), porque de una etapa terminal no se
+ * vuelve. Una oportunidad cerrada no ofrece acciones: su cierre lo muestra
+ * la tarjeta "Cierre".
  *
- * No conoce la base: envía a la Server Action changeOpportunityStage() la
- * oportunidad y la etapa de destino. La regla la imponen el servidor y la
- * base; este panel solo evita ofrecer lo que no corresponde. Al cambiar, la
- * Server Action revalida la página y la etapa se vuelve a leer en el
- * servidor.
+ * No conoce la base: envía a las Server Actions la oportunidad y lo pedido.
+ * La regla la imponen el servidor y la base; este panel solo evita ofrecer
+ * lo que no corresponde. Al cambiar, la Server Action revalida la página y
+ * la etapa se vuelve a leer en el servidor.
  */
 
 /** Tramo del flujo que se dibuja; `lost` no es un paso, es una salida. */
@@ -51,15 +52,14 @@ const PIPELINE = ["new", "qualifying", "negotiating", "won"] as const;
 type OpportunityStagePanelProps = Readonly<{
   opportunityId: string;
   stage: Stage;
-  /** Motivo de la pérdida; solo existe con `lost`. */
-  lossReason: LossReason | null;
+  /** La unidad vinculada: la que se vende al marcarla ganada. */
+  saleVehicle: SaleVehicle | null;
 }>;
 
-/** Texto del aviso tras un pedido, o null si no hay nada que avisar. */
-function noticeOf(state: ChangeStageState): {
-  text: string;
-  tone: "info" | "error";
-} | null {
+type Notice = { text: string; tone: "info" | "error" };
+
+/** Texto del aviso tras un avance, o null si no hay nada que avisar. */
+function noticeOf(state: ChangeStageState): Notice | null {
   switch (state?.status) {
     case undefined:
       return null;
@@ -78,8 +78,11 @@ function noticeOf(state: ChangeStageState): {
         text: `No se hizo ningún cambio: la oportunidad está en ${stageLabel(state.current)} y desde ahí no se puede hacer ese pase.`,
         tone: "error",
       };
-    case "loss_reason_required":
-      return { text: "Elegí el motivo de la pérdida.", tone: "error" };
+    case "closure_required":
+      return {
+        text: "Para cerrarla, usá «Marcar como ganada» o «Marcar como perdida»: piden los datos del cierre.",
+        tone: "error",
+      };
     case "invalid":
       return { text: "No pudimos interpretar el pedido.", tone: "error" };
     case "not_found":
@@ -89,6 +92,38 @@ function noticeOf(state: ChangeStageState): {
         text: "No pudimos cambiar la etapa. No se hizo ningún cambio: intentá de nuevo en unos minutos.",
         tone: "error",
       };
+  }
+}
+
+/** Texto del aviso tras un cierre que cerró el diálogo. */
+function closureNoticeOf(
+  state: Exclude<CloseOpportunityState, null>,
+): Notice | null {
+  switch (state.status) {
+    case "closed":
+      return {
+        text: `Oportunidad cerrada: ${stageLabel(state.to)}.`,
+        tone: "info",
+      };
+    case "unchanged":
+      return {
+        text: `Ya estaba ${stageLabel(state.stage)}. No se hizo ningún cambio.`,
+        tone: "info",
+      };
+    case "invalid_transition":
+      return {
+        text: `No se hizo ningún cambio: la oportunidad está en ${stageLabel(state.current)} y desde ahí no se puede cerrar así.`,
+        tone: "error",
+      };
+    case "invalid_outcome":
+      return { text: "No pudimos interpretar el pedido.", tone: "error" };
+    case "not_found":
+      return { text: "No encontramos la oportunidad.", tone: "error" };
+    // Se corrigen con el diálogo abierto: no llegan acá.
+    case "invalid":
+    case "failed":
+    case "vehicle_required":
+      return null;
   }
 }
 
@@ -150,37 +185,24 @@ function Stepper({ stage }: { stage: Stage }) {
 export function OpportunityStagePanel({
   opportunityId,
   stage,
-  lossReason,
+  saleVehicle,
 }: OpportunityStagePanelProps) {
   const [dialog, setDialog] = useState<"won" | "lost" | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const settled = useRef(false);
-  const [state, action, pending] = useActionState<ChangeStageState, FormData>(
+  const [, action, pending] = useActionState<ChangeStageState, FormData>(
     async (previous, formData) => {
       const result = await changeOpportunityStage(previous, formData);
-      // Lo que cierra el diálogo: cualquier respuesta salvo las que se
-      // corrigen con el diálogo abierto (falla inesperada, falta el motivo).
-      if (
-        result !== null &&
-        result.status !== "failed" &&
-        result.status !== "loss_reason_required"
-      ) {
-        settled.current = true;
-        setDialog(null);
-        // El botón apretado deja de existir al cambiar la etapa: el foco
-        // pasa al aviso, que además se anuncia.
-        noticeRef.current?.focus();
-      }
+      setNotice(noticeOf(result));
+      // El botón apretado deja de existir al cambiar la etapa: el foco pasa
+      // al aviso, que además se anuncia.
+      noticeRef.current?.focus();
       return result;
     },
     null,
   );
 
-  const notice = noticeOf(state);
-  // Con un diálogo abierto, sus errores se muestran adentro.
-  const inDialog =
-    dialog !== null &&
-    (state?.status === "failed" || state?.status === "loss_reason_required");
   const targets = nextStages(stage);
   const advances = targets.filter(
     (to): to is "qualifying" | "negotiating" => !isTerminalStage(to),
@@ -192,10 +214,15 @@ export function OpportunityStagePanel({
   const dialogProps = {
     opportunityId,
     stage,
-    action,
-    pending,
-    state,
+    saleVehicle,
+    onSettled: (result: Exclude<CloseOpportunityState, null>) => {
+      settled.current = true;
+      setNotice(closureNoticeOf(result));
+      setDialog(null);
+    },
     onCloseAutoFocus: (event: Event) => {
+      // Cerrada, el botón que abrió el diálogo ya no existe: el foco va al
+      // aviso, que además se anuncia.
       if (settled.current) {
         event.preventDefault();
         noticeRef.current?.focus();
@@ -217,16 +244,7 @@ export function OpportunityStagePanel({
         <div className="flex flex-col gap-3 px-4 py-3.5">
           {stage === "lost" ? (
             <p className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 text-label text-danger">
-              Oportunidad perdida
-              {lossReason ? (
-                <>
-                  . Motivo:{" "}
-                  <span className="font-semibold">
-                    {LOSS_REASON_LABELS[lossReason]}
-                  </span>
-                </>
-              ) : null}
-              . Es una etapa final: no admite más cambios.
+              Oportunidad perdida. Es una etapa final: no admite más cambios.
             </p>
           ) : (
             <Stepper stage={stage} />
@@ -239,14 +257,7 @@ export function OpportunityStagePanel({
           {targets.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
               {advances.map((to) => (
-                <form
-                  key={to}
-                  action={(formData) => {
-                    settled.current = false;
-                    action(formData);
-                  }}
-                  aria-busy={pending}
-                >
+                <form key={to} action={action} aria-busy={pending}>
                   <input
                     type="hidden"
                     name={STAGE_CHANGE_FIELDS.opportunityId}
@@ -282,14 +293,14 @@ export function OpportunityStagePanel({
             tabIndex={-1}
             className={cn(
               "text-caption focus:outline-none",
-              notice && !inDialog
+              notice && !pending
                 ? notice.tone === "error"
                   ? "text-danger"
                   : "text-success"
                 : "sr-only",
             )}
           >
-            {notice && !inDialog ? notice.text : null}
+            {notice && !pending ? notice.text : null}
           </p>
         </div>
       </Panel>

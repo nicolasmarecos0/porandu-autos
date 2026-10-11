@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import { OpportunityStagePanel } from "@/components/opportunities/opportunity-stage-panel";
-import type { LossReason, Stage } from "@/domains/opportunities/stages";
+import type { Stage } from "@/domains/opportunities/stages";
 
 /*
  * Panel de etapa de /opportunities/[id] (H1.6, DEC-032 §5), renderizado en el
@@ -16,16 +16,17 @@ import type { LossReason, Stage } from "@/domains/opportunities/stages";
 
 vi.mock("@/lib/opportunities/actions", () => ({
   changeOpportunityStage: vi.fn(),
+  closeOpportunity: vi.fn(),
 }));
 
 const ID = "10000000-0000-4000-8000-000000000101";
 
-function render(stage: Stage, lossReason: LossReason | null = null): string {
+function render(stage: Stage): string {
   return renderToStaticMarkup(
     createElement(OpportunityStagePanel, {
       opportunityId: ID,
       stage,
-      lossReason,
+      saleVehicle: { name: "Toyota Hilux", detail: "SRV 2.8 4x4 AT · 2025" },
     }),
   );
 }
@@ -69,9 +70,11 @@ describe("OpportunityStagePanel", () => {
     const html = render("new");
     expect(html).toContain(`name="opportunityId" value="${ID}"`);
     expect(html).toContain('name="stage" value="qualifying"');
-    // El motivo y la etapa de destino del cierre viven dentro de su diálogo,
-    // que arranca cerrado.
+    // El resultado y los metadatos del cierre viven dentro de su diálogo,
+    // que arranca cerrado (DEC-034).
     expect(html).not.toContain('name="lossReason"');
+    expect(html).not.toContain('name="outcome"');
+    expect(html).not.toContain('name="salePrice"');
     expect(html).not.toContain('value="lost"');
   });
 
@@ -82,12 +85,11 @@ describe("OpportunityStagePanel", () => {
     expect(html).toContain("Venta concretada. Es una etapa final");
   });
 
-  it("perdida: muestra el motivo, sin stepper ni acciones", () => {
-    const html = render("lost", "bought_elsewhere");
+  it("perdida: etapa final, sin stepper ni acciones (el motivo lo muestra la tarjeta Cierre)", () => {
+    const html = render("lost");
     expect(buttons(html)).toEqual([]);
     expect(currentStep(html)).toBeUndefined();
-    expect(html).toContain("Oportunidad perdida");
-    expect(html).toContain("Compró en otro lado");
+    expect(html).toContain("Oportunidad perdida. Es una etapa final");
   });
 
   it("el aviso del resultado es una región viva, vacía al empezar", () => {

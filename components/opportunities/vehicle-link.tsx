@@ -69,7 +69,7 @@ function noticeOf(
       };
     case "stage_not_allowed":
       return {
-        text: `No se hizo ningún cambio: la etapa actual es ${stageLabel(state.stage)} y la unidad solo se vincula En negociación o Ganada.`,
+        text: `No se hizo ningún cambio: la etapa actual es ${stageLabel(state.stage)} y la unidad solo se vincula En negociación.`,
         tone: "error",
       };
     case "vehicle_not_found":

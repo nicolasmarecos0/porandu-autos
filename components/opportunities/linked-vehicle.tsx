@@ -9,9 +9,10 @@ import { VehicleLinkButton } from "./vehicle-link";
  * §2): la unidad del stock que se negocia con el cliente, arriba de los
  * matches.
  *
- * - En negociación y Ganada se puede quitar el vínculo (la elección o el
- *   cambio se hacen desde las tarjetas de match).
- * - Perdida la muestra de solo lectura: es la unidad que se negociaba.
+ * - En negociación se puede quitar el vínculo (la elección o el cambio se
+ *   hacen desde las tarjetas de match).
+ * - Ganada la muestra de solo lectura: es la unidad vendida, parte del
+ *   cierre (DEC-034 §4). Perdida también: es la unidad que se negociaba.
  * - Si la unidad ya no está disponible, se dice con su estado de Stock.
  *
  * Vincular no cambia el stock: la unidad sigue disponible y Ganada no la

@@ -6,6 +6,7 @@ import { OpportunityDetailView } from "@/components/opportunities/opportunity-de
 import { demandDetail, demandSummary } from "@/domains/demand/presentation";
 import { resolveDemand } from "@/domains/demand/resolver";
 import type { MatchCard, MatchRail } from "@/domains/match/presentation";
+import type { ClosureSummary } from "@/domains/opportunities/closure";
 import type { NoteEntry } from "@/domains/opportunities/notes";
 import type { Stage } from "@/domains/opportunities/stages";
 import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
@@ -15,8 +16,10 @@ import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
  * §8), renderizada en el servidor sin DOM:
  * - el panel "Notas" con su formulario y la bitácora, sin ids de usuario;
  * - las tarjetas de match ofrecen "Vincular a la negociación" solo En
- *   negociación y Ganada, y la vinculada se marca en vez de ofrecerse;
- * - la tarjeta de la unidad vinculada ofrece quitarla solo en esas etapas.
+ *   negociación (DEC-034 §4: en Ganada la unidad queda fija), y la vinculada
+ *   se marca en vez de ofrecerse;
+ * - la tarjeta de la unidad vinculada ofrece quitarla solo En negociación;
+ * - una oportunidad cerrada muestra la tarjeta "Cierre" (DEC-034 §11).
  * Las Server Actions no se llaman: se prueban en note-action.test.ts,
  * vehicle-link-action.test.ts y contra la base en tests/db/.
  */
@@ -25,6 +28,7 @@ vi.mock("@/lib/opportunities/actions", () => ({
   addOpportunityNote: vi.fn(),
   linkOpportunityVehicle: vi.fn(),
   changeOpportunityStage: vi.fn(),
+  closeOpportunity: vi.fn(),
   recordDemand: vi.fn(),
   createOpportunity: vi.fn(),
 }));
@@ -79,15 +83,17 @@ const NOTES: readonly NoteEntry[] = [
 function render({
   stage = "negotiating",
   linked = null,
-  canChange = stage === "negotiating" || stage === "won",
+  canChange = stage === "negotiating",
   notes = NOTES,
   matches = MATCHES,
+  closure = null,
 }: {
   stage?: Stage;
   linked?: LinkedVehicleCard | null;
   canChange?: boolean;
   notes?: readonly NoteEntry[];
   matches?: MatchRail;
+  closure?: ClosureSummary | null;
 } = {}): string {
   const truth = resolveDemand([]);
   return renderToStaticMarkup(
@@ -95,7 +101,7 @@ function render({
       id: ID,
       contactName: "Ana Benítez",
       stage,
-      lossReason: stage === "lost" ? "price" : null,
+      closure,
       demand: demandDetail(truth, {
         viewerUserId: "u",
         createdAt: new Date("2026-10-06T14:05:00Z"),
@@ -158,7 +164,7 @@ describe("panel Notas", () => {
 });
 
 describe("unidad vinculada desde las tarjetas de match", () => {
-  it.each(["negotiating", "won"] as const)(
+  it.each(["negotiating"] as const)(
     "en %s sin unidad: las dos tarjetas ofrecen vincularse con su id",
     (stage) => {
       const html = render({ stage });
@@ -193,11 +199,14 @@ describe("unidad vinculada desde las tarjetas de match", () => {
     expect(linked).toContain('name="vehicleId" value=""');
   });
 
-  it("Ganada: la unidad de la venta, sin marcarla vendida", () => {
+  it("Ganada: la unidad de la venta, de solo lectura y sin marcarla vendida (DEC-034 §4)", () => {
     const html = render({ stage: "won", linked: LINKED });
     const linked = section(html, "Unidad de la venta");
     expect(linked).toContain("el stock no cambia");
-    expect(buttons(linked)).toEqual(["Quitar vínculo: Toyota Hilux"]);
+    expect(buttons(linked)).toEqual([]);
+    expect(html).not.toContain("Vincular a la negociación:");
+    expect(html).not.toContain("Quitar vínculo");
+    expect(section(html, "Top Match")).toContain("Vinculada a la negociación");
   });
 
   it.each(["new", "qualifying"] as const)(
@@ -236,5 +245,78 @@ describe("unidad vinculada desde las tarjetas de match", () => {
     });
     expect(section(html, "Unidad en negociación")).toContain("Toyota Hilux");
     expect(html).toContain("Ninguna unidad disponible alcanza 40");
+  });
+});
+
+describe("tarjeta Cierre (DEC-034 §11)", () => {
+  const WON: ClosureSummary = {
+    outcome: "won",
+    salePrice: "USD 47.500",
+    paymentMethod: "Financiación",
+    delivery: "Programada para el 15 oct 2026",
+  };
+  const LOST: ClosureSummary = {
+    outcome: "lost",
+    reason: "Compró en la competencia",
+    notes: "Le dieron mejor tasación.\nVolver a contactar en marzo.",
+  };
+
+  /** El HTML de la tarjeta Cierre. */
+  function closureCard(html: string): string {
+    const start = html.indexOf('aria-labelledby="closure-heading"');
+    if (start === -1) return "";
+    return html.slice(start, html.indexOf("</section>", start));
+  }
+
+  it.each(["new", "qualifying", "negotiating"] as const)(
+    "en %s no hay cierre que mostrar",
+    (stage) => {
+      expect(closureCard(render({ stage }))).toBe("");
+    },
+  );
+
+  it("Ganada: precio final, forma de pago, entrega y la unidad vendida, sin acciones", () => {
+    const html = render({ stage: "won", linked: LINKED, closure: WON });
+    const card = closureCard(html);
+    expect(card).toContain(">Cierre<");
+    expect(card).toContain("Ganada");
+    for (const text of [
+      "Precio final",
+      "USD 47.500",
+      "Forma de pago",
+      "Financiación",
+      "Entrega",
+      "Programada para el 15 oct 2026",
+      "Unidad",
+      "Toyota Hilux",
+      "el stock no cambia",
+      "Los datos del cierre no se pueden modificar.",
+    ]) {
+      expect(card).toContain(text);
+    }
+    expect(buttons(card)).toEqual([]);
+    // Sigue después del panel de etapa.
+    expect(html.indexOf('id="closure-heading"')).toBeGreaterThan(
+      html.indexOf('id="stage-heading"'),
+    );
+  });
+
+  it("Perdida: motivo y notas con sus saltos de línea", () => {
+    const card = closureCard(render({ stage: "lost", closure: LOST }));
+    expect(card).toContain("Perdida");
+    expect(card).toContain("Motivo");
+    expect(card).toContain("Compró en la competencia");
+    expect(card).toContain("whitespace-pre-line");
+    expect(card).toContain(
+      "Le dieron mejor tasación.\nVolver a contactar en marzo.",
+    );
+    expect(card).not.toContain("Precio final");
+  });
+
+  it("Perdida sin notas lo dice", () => {
+    const card = closureCard(
+      render({ stage: "lost", closure: { ...LOST, notes: null } }),
+    );
+    expect(card).toContain("Sin notas");
   });
 });
