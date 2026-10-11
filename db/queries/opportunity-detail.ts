@@ -13,14 +13,21 @@ import { resolveDemand, type DemandRow } from "@/domains/demand/resolver";
 import { demandSnapshot } from "@/domains/demand/snapshot";
 import { findMatchesForDemand } from "@/domains/match/engine";
 import { matchRail, type MatchRail } from "@/domains/match/presentation";
+import { noteTimeline, type NoteEntry } from "@/domains/opportunities/notes";
 import type { LossReason, Stage } from "@/domains/opportunities/stages";
+import {
+  canChangeVehicleLink,
+  linkedVehicleCard,
+  type LinkedVehicleCard,
+} from "@/domains/opportunities/vehicle-link";
 import { requireTenant } from "@/lib/tenant/session";
 
 import { contacts, opportunities } from "../schema";
 import { withTenant } from "../tenant";
 import { selectDemandRows } from "./demand-rows";
+import { selectOpportunityNotes } from "./opportunity-notes";
 import { stageFromDb } from "./opportunities";
-import { selectMatchCandidates } from "./vehicles";
+import { selectMatchCandidates, selectVehicleById } from "./vehicles";
 
 /*
  * Detalle de una oportunidad en /opportunities/[id] (H1.4, DEC-030 §10):
@@ -41,7 +48,11 @@ import { selectMatchCandidates } from "./vehicles";
  *   con el DemandSnapshot de la oportunidad. No se persiste nada.
  * - Etapa (H1.6, DEC-032): lee la etapa y el motivo de la pérdida; el panel
  *   de etapa ofrece solo las acciones que la máquina de estados permite.
- * - Solo lee: no toca `last_activity_at`, el ledger ni el stock.
+ * - Bitácora y unidad vinculada (Hito 2, DEC-033): en la misma transacción
+ *   lee las notas de la oportunidad y la unidad vinculada (de la
+ *   organización activa, en cualquier estado), y dice si la etapa admite
+ *   cambiarla. Las notas llegan con autor "Vos" u "Otro miembro".
+ * - Solo lee: no toca `last_activity_at`, el ledger, las notas ni el stock.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -58,6 +69,14 @@ export type OpportunityDetail = Readonly<{
   summary: DemandSummary;
   /** Top Match y alternativa del stock disponible, o por qué no hay. */
   matches: MatchRail;
+  /** Unidad vinculada a la negociación (Hito 2) y si se puede cambiar. */
+  vehicleLink: Readonly<{
+    /** La etapa admite elegir, cambiar o quitar la unidad. */
+    canChange: boolean;
+    linked: LinkedVehicleCard | null;
+  }>;
+  /** Bitácora comercial, de la nota más reciente a la más vieja. */
+  notes: readonly NoteEntry[];
 }>;
 
 /** Texto opcional del legado: vacío o en blanco no cuenta. */
@@ -80,6 +99,7 @@ export async function getOpportunityDetail(
         id: opportunities.id,
         stage: opportunities.stage,
         lossReason: opportunities.lossReason,
+        vehicleId: opportunities.vehicleId,
         createdAt: opportunities.createdAt,
         interestModel: opportunities.interestModel,
         interestVersion: opportunities.interestVersion,
@@ -106,11 +126,20 @@ export async function getOpportunityDetail(
     ]);
     const rows: readonly DemandRow[] = ledger.get(opportunity.id) ?? [];
     const candidates = await selectMatchCandidates(tx, ctx.organizationId);
-    return { opportunity, rows, candidates };
+    const linked = opportunity.vehicleId
+      ? await selectVehicleById(tx, ctx.organizationId, opportunity.vehicleId)
+      : null;
+    const notes = await selectOpportunityNotes(
+      tx,
+      ctx.organizationId,
+      opportunity.id,
+    );
+    return { opportunity, rows, candidates, linked, notes };
   });
   if (!found) return null;
 
-  const { opportunity, rows, candidates } = found;
+  const { opportunity, rows, candidates, linked, notes } = found;
+  const stage = stageFromDb[opportunity.stage];
   const truth = resolveDemand(rows);
   const snapshot = demandSnapshot(truth);
   const matches = findMatchesForDemand(snapshot, candidates);
@@ -123,7 +152,7 @@ export async function getOpportunityDetail(
   return {
     id: opportunity.id,
     contactName: opportunity.contactName,
-    stage: stageFromDb[opportunity.stage],
+    stage,
     lossReason: opportunity.lossReason,
     demand: demandDetail(truth, {
       viewerUserId: ctx.userId,
@@ -132,5 +161,10 @@ export async function getOpportunityDetail(
     }),
     summary: demandSummary(truth, legacy),
     matches: matchRail(snapshot, candidates, matches),
+    vehicleLink: {
+      canChange: canChangeVehicleLink(stage),
+      linked: linked ? linkedVehicleCard(linked) : null,
+    },
+    notes: noteTimeline(notes, ctx.userId),
   };
 }

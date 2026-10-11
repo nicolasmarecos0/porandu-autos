@@ -46,6 +46,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-030 | Demand Contract y Current Truth (H1.4) | Aceptada | 2026-10-06 |
 | DEC-031 | Match v0 Engine y Consumo en Opportunity Workspace (H1.5) | Aceptada | 2026-10-11 |
 | DEC-032 | Opportunity Stages: etapas comerciales y transiciones (H1.6) | Aceptada en principio | 2026-10-11 |
+| DEC-033 | Bitácora comercial y unidad vinculada a la negociación (Hito 2) | Aceptada en principio | 2026-10-11 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -549,6 +550,55 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - `0008_opportunity_stages` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0008_opportunity_stages` si staging ya tiene `0007`, o `0007_opportunity_demand_facts,0008_opportunity_stages` si no.
   - La verificación de staging suma `schema.opportunity-stages`.
   - Una transición nueva se agrega en la matriz del dominio y en el trigger, con una migración, y el test cruzado de los 25 pares la cubre. Nunca con una segunda policy de UPDATE.
+
+## DEC-033 — Bitácora comercial y unidad vinculada a la negociación (Hito 2)
+- **Estado:** Aceptada en principio · 2026-10-11. Formaliza el pedido del fundador para el bloque de Hito 2 "Registro de Actividad Comercial y Vinculación de Stock". Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** DEC-017 reserva para `/opportunities/[id]` las notas, el historial y las acciones comerciales profundas. H1.5 muestra el Top Match y la alternativa reales (DEC-031) y H1.6 lleva la oportunidad hasta `negotiating` y `won` (DEC-032). Faltan dos cosas: registrar qué pasó en la negociación y qué unidad del stock se está negociando. DEC-032 §10 dejaba fuera la venta "porque la oportunidad no tiene una unidad asociada".
+- **Decisión:**
+  1. **Bitácora comercial.** Cada oportunidad tiene una bitácora append-only de notas del vendedor (`opportunity_notes`): una fila inmutable por nota, que nunca se edita ni se borra.
+     - Texto libre de 1 a 1000 caracteres. Admite saltos de línea, pero no otros caracteres de control. Se normaliza en el servidor: NFC, `\r\n` → `\n`, espacios repetidos colapsados, a lo sumo una línea en blanco seguida y recortado.
+     - Autor y fecha los fija la base: `recorded_by = auth.uid()` y `recorded_at = now()`. La UI muestra "Vos" u "Otro miembro" y la fecha en hora de Asunción, sin ids de usuario.
+     - *Propuesta de implementación:* se admiten notas en cualquier etapa, también en las cerradas. Una nota es un registro, no una acción sobre la oportunidad.
+  2. **Unidad vinculada.** `opportunities.vehicle_id` (opcional) es la unidad del stock que se negocia.
+     - Solo se elige, cambia o quita en `negotiating` o `won`. En `lost` se conserva la que había y ya no cambia. En `new` y `qualifying` no puede existir (CHECK).
+     - Tiene que ser de la misma organización (FK compuesta `(organization_id, vehicle_id)` → `vehicles`, RESTRICT), estar `available` y ser un match de la demanda vigente (Match v0, al menos 40 puntos, DEC-031) en el momento de vincularla. El servidor lo vuelve a calcular: no confía en lo que mostró la tarjeta.
+     - Vincular no cambia el stock: la unidad sigue `available`, y `won` sigue sin crear una venta ni marcar la unidad `sold` (DEC-032 §10).
+     - *Propuesta de implementación:* quitar el vínculo también se permite en `negotiating` y `won`, para corregir un error. Dos pedidos simultáneos se serializan con el bloqueo de la fila: gana el último, sin compare-and-set.
+  3. **Validación en la base (amplía DEC-032 §4).** La función del trigger `opportunities_stage_transition` (`private.enforce_opportunity_stage_transition()`, mismo nombre) acepta exactamente dos clases de UPDATE: un pase de etapa válido que no toca la unidad, o un cambio de unidad en `negotiating` o `won` sin pase de etapa. Todo lo demás se rechaza con `23514`:
+     - `opportunities_stage_transition`: el pase no existe o la UPDATE no cambia ni etapa ni unidad (como en H1.6).
+     - `opportunities_vehicle_link`: cambiar la unidad en otra etapa, o en la misma UPDATE que un pase.
+     - Sigue habiendo una sola policy de UPDATE (`opportunities_update_stage`), y el rol dueño tampoco se salta el trigger. `authenticated` recibe además UPDATE sobre `vehicle_id` (grant por columna).
+  4. **Puertas únicas.** Dos Server Actions en `lib/opportunities/actions.ts`, cada una con su único módulo de escritura (ESLint impide importarlos desde otro lado):
+     - `addOpportunityNote()` → `db/queries/record-opportunity-note.ts`: `requireTenant()` → normalizar y validar → `withTenant()` → la oportunidad en la organización activa → INSERT. Resultados: `recorded`, `invalid` (vacía o demasiado larga), `not_found` y `failed`.
+     - `linkOpportunityVehicle()` → `db/queries/link-opportunity-vehicle.ts`: `requireTenant()` → leer el pedido → `withTenant()` → `SELECT … FOR UPDATE` de la oportunidad → la unidad pedida en la organización activa → demanda vigente → `planVehicleLink()` (dominio) → `UPDATE … AND stage = <la leída>` → trigger. Resultados: `linked`, `unlinked`, `unchanged`, `stage_not_allowed`, `vehicle_not_found` (inexistente o de otra organización, sin distinguir), `vehicle_not_available`, `not_a_match`, `invalid`, `not_found` y `failed`.
+     - El cliente solo envía la oportunidad y el texto de la nota, o la oportunidad y la unidad (vacía para quitarla). Organización, autor, etapa y reloj no salen del pedido.
+  5. **Autorización.** La de DEC-027 §4: membership activa AND role IN (`admin`, `seller`). Cualquier miembro anota o vincula en la oportunidad de otro (DEC-023: sin responsable asignado).
+  6. **Recencia.** *Propuesta de implementación:* ni las notas ni el vínculo modifican `last_activity_at`, que mide la interacción con el cliente (como la demanda en DEC-030 §10, los matches en DEC-031 §7 y la etapa en DEC-032 §7). Vincular sí actualiza `updated_at` (lo fija el trigger).
+  7. **Migración `0009_opportunity_notes_vehicle_link`.**
+     - `vehicles` recibe `UNIQUE (organization_id, id)`, destino de la FK compuesta.
+     - `opportunities` recibe `vehicle_id`, su FK compuesta, el CHECK `opportunities_vehicle_stage_check`, un índice parcial `(organization_id, vehicle_id)` y la función del trigger ampliada.
+     - `opportunity_notes`: FKs RESTRICT a la organización, a la oportunidad (compuesta) y a `profiles`; CHECK del texto; índice `(organization_id, opportunity_id, recorded_at DESC)`; RLS con SELECT por membership activa e INSERT con membership activa, `recorded_by = auth.uid()` y `recorded_at = now()`; sin policies de UPDATE, DELETE ni ALL.
+     - Grants: `authenticated` recibe SELECT e INSERT de tabla sobre `opportunity_notes` (diseño A, como DEC-030 §9) y UPDATE sobre `opportunities.vehicle_id`. `service_role` pierde UPDATE, DELETE y TRUNCATE sobre las notas (C-11). `anon` y `app_runtime` no reciben nada.
+     - Postcondiciones: las de `0008`, con `opportunity_notes` entre las altas aprobadas, `opportunities.vehicle_id` entre las ediciones aprobadas y las de un ledger append-only para las notas.
+  8. **UI de `/opportunities/[id]`.**
+     - Panel "Notas": un formulario con contador de caracteres y la bitácora de la más reciente a la más vieja, con autor y fecha.
+     - Las tarjetas de match (Top Match y alternativa) ofrecen "Vincular a la negociación" en `negotiating` y `won`. La unidad vinculada se muestra en una tarjeta propia, con "Quitar vínculo" en esas etapas y de solo lectura en `lost`. En `new` y `qualifying`, el rail avisa desde qué etapa se puede vincular.
+     - Un solo click, sin confirmación: vincular es reversible y no tiene efecto económico.
+  9. **Fuera de este bloque:**
+     - Editar o borrar notas, adjuntos, menciones, tareas, recordatorios y redacción de PII: la limitación C-14 de DEC-030 también aplica a las notas.
+     - El historial del vínculo (quién y cuándo), reservar o vender la unidad, y la venta como entidad.
+     - Mostrar notas o la unidad en la cola de `/opportunities` y en Stock, y el Lifecycle de posventa.
+- **Aclara / supersede:**
+  - DEC-029 (secuencia): bloque agregado por el fundador antes de H2a. No reemplaza H2a, ADR-002 ni H2b.
+  - DEC-032 §4: "toda UPDATE de `opportunities` tiene que ser un pase válido" pasa a ser "un pase válido o un cambio de unidad en `negotiating` o `won`".
+  - DEC-032 §8: una oportunidad ganada ofrece vincular, cambiar o quitar su unidad. Ninguna cerrada ofrece pases de etapa.
+  - DEC-032 §10: la oportunidad ya puede tener una unidad asociada, pero `won` sigue sin crear la venta ni marcarla `sold`.
+  - DEC-017 y DEC-031 §5 y §7: `/opportunities/[id]` suma la bitácora, y las tarjetas de match ofrecen vincular. Calcular matches sigue sin escribir: vincular es una escritura explícita del vendedor.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: ADR-001 alcanza.
+- **Consecuencias:**
+  - `0009_opportunity_notes_vehicle_link` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0009_opportunity_notes_vehicle_link` si staging ya tiene `0008`, o `0008_opportunity_stages,0009_opportunity_notes_vehicle_link` si no.
+  - La verificación de staging suma `schema.opportunity-notes` y amplía `schema.opportunity-stages` con la unidad vinculada.
+  - Cuando se habiliten reservar o vender una unidad, ese flujo tiene que considerar las oportunidades que la tienen vinculada: hoy ninguna transición saca una unidad de `available`.
 
 ---
 

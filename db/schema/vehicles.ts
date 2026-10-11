@@ -8,6 +8,7 @@ import {
   pgTable,
   smallint,
   text,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
 import { authenticatedRole } from "drizzle-orm/supabase";
@@ -54,6 +55,10 @@ export const vehicleCurrencies = ["PYG", "USD"] as const;
  * - `status`: obligatorio y sin default, con CHECK.
  * - Índice (organization_id, created_at DESC): la lista de una
  *   organización, del ingreso más reciente al más viejo.
+ * - unique (organization_id, id) (Hito 2, DEC-033): destino de la FK
+ *   compuesta de la unidad vinculada a una oportunidad
+ *   (`opportunities.vehicle_id`), que impide vincular una unidad de otra
+ *   organización.
  * - Borrar una organización con vehículos se rechaza (RESTRICT).
  *
  * No se persisten fotos (vehicle_media), sucursal, matches, interesados,
@@ -97,6 +102,7 @@ export const vehicles = pgTable(
       t.organizationId,
       t.createdAt.desc().nullsFirst(),
     ),
+    unique("vehicles_organization_id_id_key").on(t.organizationId, t.id),
     check("vehicles_status_check", oneOf(t.status, vehicleStatuses)),
     check("vehicles_currency_check", oneOf(t.currency, vehicleCurrencies)),
     check(

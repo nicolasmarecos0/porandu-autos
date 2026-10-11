@@ -14,6 +14,14 @@ import {
   recordDemandCapture,
   type DemandWriteOutcome,
 } from "@/db/queries/demand-facts";
+import {
+  setOpportunityVehicle,
+  type VehicleLinkOutcome,
+} from "@/db/queries/link-opportunity-vehicle";
+import {
+  insertOpportunityNote,
+  type NoteWriteOutcome,
+} from "@/db/queries/record-opportunity-note";
 import { requireTenant } from "@/lib/tenant/session";
 
 import { demandErrorsToForm, parseDemandEditForm } from "./demand-form";
@@ -21,8 +29,10 @@ import {
   parseNewOpportunityForm,
   type CreateOpportunityState,
 } from "./new-opportunity";
+import { parseNoteRequest, type AddNoteState } from "./note";
 import type { RecordDemandState } from "./record-demand";
 import { parseStageChange, type ChangeStageState } from "./stage-change";
+import { parseVehicleLink, type LinkVehicleState } from "./vehicle-link";
 
 /*
  * Alta manual de una oportunidad (H1.2). Es un endpoint público y la única
@@ -53,7 +63,8 @@ const OPPORTUNITIES_PATH = "/opportunities";
  * registra.
  */
 function logFailure(
-  operation: "create" | "record demand" | "change stage",
+  operation:
+    "create" | "record demand" | "change stage" | "add note" | "link vehicle",
   error: unknown,
 ): void {
   const { name, cause } =
@@ -261,6 +272,147 @@ export async function changeOpportunityStage(
       };
     case "loss_reason_required":
       return { status: "loss_reason_required" };
+    case "not_found":
+      return { status: "not_found" };
+  }
+}
+
+/*
+ * Bitácora comercial (Hito 2, DEC-033 §1), addOpportunityNote(): la única
+ * puerta del alta de notas.
+ *
+ *   requireTenant() → normalizar y validar el texto → insertOpportunityNote()
+ *   (withTenant(), la oportunidad en la organización activa, INSERT
+ *   append-only, RLS) → revalidar /opportunities/[id]
+ *
+ * 1. El TenantContext sale de requireTenant(). Autorización: membership
+ *    activa AND role IN ('admin', 'seller') (DEC-027 §4), hoy todo contexto
+ *    que emite requireTenant(); si se agrega un rol, un test falla y esta
+ *    regla se revisa. Cualquier miembro anota en la oportunidad de otro
+ *    (DEC-023: sin responsable asignado).
+ * 2. El pedido solo trae la oportunidad y el texto. Autor, organización y
+ *    fecha no salen del pedido: los fijan el contexto y la base. Un id
+ *    malformado o ajeno es `not_found`, sin revelar nada.
+ * 3. Un texto vacío o demasiado largo vuelve, tal como se tipeó, para
+ *    corregirlo. Un error inesperado no expone detalles de la base ni el
+ *    texto (los logs no lo registran) y lo devuelve para reintentar.
+ *
+ * Una nota no modifica `last_activity_at` (DEC-033 §6) ni la cola: solo se
+ * revalida el detalle. El estado previo (`_previous`) lo envía el cliente: no
+ * se usa.
+ */
+export async function addOpportunityNote(
+  _previous: AddNoteState,
+  formData: FormData,
+): Promise<AddNoteState> {
+  const ctx = await requireTenant();
+
+  const parsed = parseNoteRequest(formData);
+  if (parsed.kind === "not_found") return { status: "not_found" };
+  if (parsed.kind === "invalid") {
+    return { status: "invalid", error: parsed.error, body: parsed.body };
+  }
+
+  let outcome: NoteWriteOutcome;
+  try {
+    outcome = await insertOpportunityNote(ctx, {
+      opportunityId: parsed.opportunityId,
+      body: parsed.body,
+    });
+  } catch (error) {
+    logFailure("add note", error);
+    return { status: "failed", body: parsed.body };
+  }
+
+  switch (outcome.outcome) {
+    case "recorded":
+      revalidatePath(`${OPPORTUNITIES_PATH}/${outcome.opportunityId}`);
+      return { status: "recorded", opportunityId: outcome.opportunityId };
+    case "not_found":
+      return { status: "not_found" };
+  }
+}
+
+/*
+ * Unidad vinculada a la negociación (Hito 2, DEC-033 §2),
+ * linkOpportunityVehicle(): la única puerta de la vinculación.
+ *
+ *   requireTenant() → leer el pedido → setOpportunityVehicle() (withTenant(),
+ *   fila bloqueada, unidad y demanda vigente, planner del dominio, UPDATE,
+ *   trigger) → revalidar /opportunities/[id]
+ *
+ * 1. El TenantContext sale de requireTenant(). Autorización: la misma de
+ *    DEC-027 §4. Cualquier miembro vincula en la oportunidad de otro.
+ * 2. El pedido solo trae la oportunidad y la unidad (vacía para quitarla).
+ *    Etapa, unidad actual, estado de la unidad y organización los lee el
+ *    servidor. Un id malformado o ajeno es `not_found` (oportunidad) o
+ *    `vehicle_not_found` (unidad), sin revelar nada.
+ * 3. Falla de forma segura: si la etapa no lo admite, si la unidad ya no
+ *    está disponible o si dejó de ser un match, no cambia nada y la página se
+ *    revalida igual para mostrar el estado real. Pedir lo que ya está es
+ *    `unchanged`.
+ * 4. Un error inesperado no expone detalles de la base y no revalida.
+ *
+ * Vincular no cambia el stock ni `last_activity_at` (DEC-033 §2 y §6): solo
+ * se revalida el detalle. El estado previo (`_previous`) lo envía el
+ * cliente: no se usa.
+ */
+export async function linkOpportunityVehicle(
+  _previous: LinkVehicleState,
+  formData: FormData,
+): Promise<LinkVehicleState> {
+  const ctx = await requireTenant();
+
+  const parsed = parseVehicleLink(formData);
+  if (parsed.kind === "not_found") return { status: "not_found" };
+  if (parsed.kind === "vehicle_not_found") {
+    return { status: "vehicle_not_found" };
+  }
+  if (parsed.kind === "invalid") return { status: "invalid" };
+
+  let outcome: VehicleLinkOutcome;
+  try {
+    outcome = await setOpportunityVehicle(ctx, {
+      opportunityId: parsed.opportunityId,
+      vehicleId: parsed.vehicleId,
+    });
+  } catch (error) {
+    logFailure("link vehicle", error);
+    return { status: "failed" };
+  }
+
+  const revalidate = (opportunityId: string) =>
+    revalidatePath(`${OPPORTUNITIES_PATH}/${opportunityId}`);
+  switch (outcome.outcome) {
+    case "linked":
+      revalidate(outcome.opportunityId);
+      return {
+        status: "linked",
+        opportunityId: outcome.opportunityId,
+        vehicleId: outcome.vehicleId,
+      };
+    case "unlinked":
+      revalidate(outcome.opportunityId);
+      return { status: "unlinked", opportunityId: outcome.opportunityId };
+    case "unchanged":
+      return {
+        status: "unchanged",
+        opportunityId: outcome.opportunityId,
+        vehicleId: outcome.vehicleId,
+      };
+    case "stage_not_allowed":
+      revalidate(outcome.opportunityId);
+      return {
+        status: "stage_not_allowed",
+        opportunityId: outcome.opportunityId,
+        stage: outcome.stage,
+      };
+    case "vehicle_not_found":
+      return { status: "vehicle_not_found" };
+    case "vehicle_not_available":
+    case "not_a_match":
+      revalidate(outcome.opportunityId);
+      return { status: outcome.outcome };
     case "not_found":
       return { status: "not_found" };
   }

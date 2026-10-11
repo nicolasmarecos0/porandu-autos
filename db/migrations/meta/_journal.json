@@ -64,6 +64,13 @@
       "when": 1791738229959,
       "tag": "0008_opportunity_stages",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791752633583,
+      "tag": "0009_opportunity_notes_vehicle_link",
+      "breakpoints": true
     }
   ]
 }

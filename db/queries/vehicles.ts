@@ -127,23 +127,25 @@ export async function getStockList(): Promise<readonly StockVehicle[]> {
  */
 type MatchRow = StockRow & Readonly<Pick<VehicleRecord, "organizationId">>;
 
+const matchColumns = {
+  id: vehicles.id,
+  organizationId: vehicles.organizationId,
+  brand: vehicles.brand,
+  model: vehicles.model,
+  version: vehicles.version,
+  year: vehicles.year,
+  km: vehicles.km,
+  price: vehicles.price,
+  currency: vehicles.currency,
+  status: vehicles.status,
+};
+
 function selectAvailable(
   tx: ScopedTransaction,
   organizationId: string,
 ): Promise<MatchRow[]> {
   return tx
-    .select({
-      id: vehicles.id,
-      organizationId: vehicles.organizationId,
-      brand: vehicles.brand,
-      model: vehicles.model,
-      version: vehicles.version,
-      year: vehicles.year,
-      km: vehicles.km,
-      price: vehicles.price,
-      currency: vehicles.currency,
-      status: vehicles.status,
-    })
+    .select(matchColumns)
     .from(vehicles)
     .where(
       and(
@@ -167,4 +169,30 @@ export async function selectMatchCandidates(
 ): Promise<MatchCandidate[]> {
   const rows = await selectAvailable(tx, organizationId);
   return rows.map(toMatchCandidate);
+}
+
+/*
+ * Una unidad de la organización activa, en cualquier estado, como candidata
+ * de Match (Hito 2, DEC-033): la unidad que pide vincular el vendedor (el
+ * dominio decide si está disponible y si es un match) o la que ya está
+ * vinculada a una oportunidad. Corre dentro de la transacción withTenant()
+ * de quien llama, con filtro explícito por organización sobre RLS. Una
+ * unidad inexistente o de otra organización es null, sin distinguir.
+ */
+export async function selectVehicleById(
+  tx: ScopedTransaction,
+  organizationId: string,
+  vehicleId: string,
+): Promise<MatchCandidate | null> {
+  const [row] = await tx
+    .select(matchColumns)
+    .from(vehicles)
+    .where(
+      and(
+        eq(vehicles.organizationId, organizationId),
+        eq(vehicles.id, vehicleId),
+      ),
+    )
+    .limit(1);
+  return row ? toMatchCandidate(row) : null;
 }

@@ -94,10 +94,27 @@ const OPPORTUNITY_ROW = {
   id: OPPORTUNITY,
   stage: "qualifying",
   lossReason: null,
+  vehicleId: null as string | null,
   createdAt: CREATED_AT,
   interestModel: " Hilux ",
   interestVersion: null,
   contactName: "Ana Benítez",
+};
+
+const VEHICLE = "20000000-0000-4000-8000-000000000101";
+
+/** Unidad vinculada como la devuelve la base. */
+const LINKED_ROW = {
+  id: VEHICLE,
+  organizationId: ORG,
+  brand: "Toyota",
+  model: "Hilux",
+  version: "SRV 2.8 4x4 AT",
+  year: 2025,
+  km: 0,
+  price: "49900.00",
+  currency: "USD",
+  status: "available",
 };
 
 type DemandRecord = typeof opportunityDemandFacts.$inferSelect;
@@ -159,7 +176,7 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
 
     const [query] = mocks.queries;
     expect(query?.sql).toMatch(
-      /^select "opportunities"\."id", "opportunities"\."stage", "opportunities"\."loss_reason", "opportunities"\."created_at", "opportunities"\."interest_model", "opportunities"\."interest_version", "contacts"\."name" from "opportunities"/,
+      /^select "opportunities"\."id", "opportunities"\."stage", "opportunities"\."loss_reason", "opportunities"\."vehicle_id", "opportunities"\."created_at", "opportunities"\."interest_model", "opportunities"\."interest_version", "contacts"\."name" from "opportunities"/,
     );
     expect(query?.sql).toContain(
       'inner join "contacts" on ("contacts"."organization_id" = "opportunities"."organization_id" and "contacts"."id" = "opportunities"."contact_id")',
@@ -188,6 +205,43 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
       /from "opportunity_demand_facts" where \("opportunity_demand_facts"\."organization_id" = \$1 and "opportunity_demand_facts"\."opportunity_id" in \(\$2\)\)$/,
     );
     expect(demand?.params).toEqual([ORG, OPPORTUNITY]);
+  });
+
+  it("Hito 2: lee la unidad vinculada y la bitácora en la misma transacción, filtradas por organización", async () => {
+    mocks.results = [
+      [{ ...OPPORTUNITY_ROW, stage: "negotiating", vehicleId: VEHICLE }],
+      [],
+      [],
+      [LINKED_ROW],
+      [],
+    ];
+
+    await getOpportunityDetail(OPPORTUNITY);
+
+    expect(mocks.withTenant).toHaveBeenCalledTimes(1);
+    const [, , candidates, linked, notes] = mocks.queries;
+    expect(candidates?.sql).toContain('from "vehicles"');
+    expect(linked?.sql).toMatch(
+      /from "vehicles" where \("vehicles"\."organization_id" = \$1 and "vehicles"\."id" = \$2\) limit \$3$/,
+    );
+    expect(linked?.params).toEqual([ORG, VEHICLE, 1]);
+    expect(notes?.sql).toMatch(
+      /from "opportunity_notes" where \("opportunity_notes"\."organization_id" = \$1 and "opportunity_notes"\."opportunity_id" = \$2\) order by "opportunity_notes"\."recorded_at" desc, "opportunity_notes"\."id" desc$/,
+    );
+    expect(notes?.params).toEqual([ORG, OPPORTUNITY]);
+  });
+
+  it("Hito 2: sin unidad vinculada no consulta vehicles por id", async () => {
+    mocks.results = [[OPPORTUNITY_ROW], [], [], []];
+
+    await getOpportunityDetail(OPPORTUNITY);
+
+    expect(mocks.queries.map((q) => q.sql.match(/from "(\w+)"/)?.[1])).toEqual([
+      "opportunities",
+      "opportunity_demand_facts",
+      "vehicles",
+      "opportunity_notes",
+    ]);
   });
 });
 
@@ -252,5 +306,88 @@ describe("getOpportunityDetail: ViewModel", () => {
     expect(serialized).not.toContain(USER);
     expect(serialized).not.toContain(OTHER_USER);
     expect(serialized).not.toContain(ORG);
+  });
+});
+
+describe("getOpportunityDetail: bitácora y unidad vinculada (Hito 2)", () => {
+  it("las notas llegan de la más reciente a la más vieja, con autor contra el usuario de la request y sin ids de usuario", async () => {
+    mocks.results = [
+      [OPPORTUNITY_ROW],
+      [],
+      [],
+      [
+        {
+          id: "40000000-0000-4000-8000-000000000002",
+          body: "Pidió cuota fija.\nVuelve el lunes.",
+          recordedBy: OTHER_USER,
+          recordedAt: new Date("2026-10-11T17:32:00Z"),
+        },
+        {
+          id: "40000000-0000-4000-8000-000000000001",
+          body: "Primera llamada.",
+          recordedBy: USER,
+          recordedAt: new Date("2026-10-11T12:00:00Z"),
+        },
+      ],
+    ];
+
+    const detail = await getOpportunityDetail(OPPORTUNITY);
+
+    expect(detail!.notes).toEqual([
+      {
+        id: "40000000-0000-4000-8000-000000000002",
+        body: "Pidió cuota fija.\nVuelve el lunes.",
+        author: "Otro miembro",
+        at: "11 oct 2026 14:32",
+      },
+      {
+        id: "40000000-0000-4000-8000-000000000001",
+        body: "Primera llamada.",
+        author: "Vos",
+        at: "11 oct 2026 09:00",
+      },
+    ]);
+    const serialized = JSON.stringify(detail);
+    expect(serialized).not.toContain(USER);
+    expect(serialized).not.toContain(OTHER_USER);
+  });
+
+  it.each([
+    ["new", false],
+    ["qualifying", false],
+    ["negotiating", true],
+    ["won", true],
+    ["lost", false],
+  ] as const)("en %s, cambiar la unidad: %s", async (stage, canChange) => {
+    mocks.results = [[{ ...OPPORTUNITY_ROW, stage }], [], [], []];
+
+    const detail = await getOpportunityDetail(OPPORTUNITY);
+
+    expect(detail!.vehicleLink).toEqual({ canChange, linked: null });
+  });
+
+  it("la unidad vinculada llega como tarjeta, en cualquier estado", async () => {
+    mocks.results = [
+      [{ ...OPPORTUNITY_ROW, stage: "won", vehicleId: VEHICLE }],
+      [],
+      [],
+      [{ ...LINKED_ROW, status: "reserved" }],
+      [],
+    ];
+
+    const detail = await getOpportunityDetail(OPPORTUNITY);
+
+    expect(detail!.vehicleLink).toEqual({
+      canChange: true,
+      linked: {
+        vehicleId: VEHICLE,
+        name: "Toyota Hilux",
+        detail: "SRV 2.8 4x4 AT · 2025",
+        price: "USD 49.900",
+        km: "0 km",
+        status: "reserved",
+        statusLabel: "Reservado",
+      },
+    });
   });
 });

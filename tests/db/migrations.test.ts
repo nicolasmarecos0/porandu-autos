@@ -25,7 +25,8 @@ import { seedVehicles, VEHICLES } from "./support/vehicles";
 const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
 
 /*
- * Reversión de 0008_opportunity_stages, 0007_opportunity_demand_facts,
+ * Reversión de 0009_opportunity_notes_vehicle_link,
+ * 0008_opportunity_stages, 0007_opportunity_demand_facts,
  * 0006_vehicle_availability,
  * 0005_vehicle_quick_create,
  * 0004_vehicles_stock_persistence, 0003_contact_identity_opportunity_create,
@@ -36,6 +37,18 @@ const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
  * incluido el rol app_runtime) y que se pueden recrear limpias. Restaura los
  * default privileges de Supabase del shim.
  */
+const REVERT_0009 = `
+  REVOKE UPDATE (vehicle_id) ON public.opportunities FROM authenticated;
+  DROP POLICY opportunity_notes_insert_member ON public.opportunity_notes;
+  DROP POLICY opportunity_notes_select_member ON public.opportunity_notes;
+  DROP TABLE public.opportunity_notes;
+  DROP INDEX public.opportunities_organization_id_vehicle_id_idx;
+  ALTER TABLE public.opportunities DROP CONSTRAINT opportunities_vehicle_stage_check;
+  ALTER TABLE public.opportunities DROP CONSTRAINT opportunities_vehicle_fk;
+  ALTER TABLE public.opportunities DROP COLUMN vehicle_id;
+  ALTER TABLE public.vehicles DROP CONSTRAINT vehicles_organization_id_id_key;
+`;
+
 const REVERT_0008 = `
   REVOKE UPDATE (stage, loss_reason, updated_at) ON public.opportunities FROM authenticated;
   DROP TRIGGER opportunities_stage_transition ON public.opportunities;
@@ -110,9 +123,10 @@ const REVERT_0000 = `
 
 /*
  * Los snapshots fila a fila de los rollouts (más abajo) comparan
- * opportunities sin `loss_reason`: la columna la agrega 0008 (H1.6) y nace
- * NULL en toda fila existente, que es lo que prueba "0008 sobre una base en
- * H1.4/H1.5".
+ * opportunities sin `loss_reason` ni `vehicle_id`: las columnas las agregan
+ * 0008 (H1.6) y 0009 (Hito 2) y nacen NULL en toda fila existente, que es lo
+ * que prueban "0008 sobre una base en H1.4/H1.5" y "0009 sobre una base en
+ * H1.6".
  */
 let server: TestServer;
 let db: TestDatabase;
@@ -161,26 +175,27 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     expect(owners?.owners).toEqual(["postgres"]);
   });
 
-  it("crea solo las tablas de H0, H1.1, H1.3A y H1.4 en public (H1.2 no agrega tablas)", async () => {
+  it("crea solo las tablas de H0, H1.1, H1.3A, H1.4 y Hito 2 en public (H1.2 no agrega tablas)", async () => {
     expect(await tableNames(db.admin, "public")).toEqual([
       "contacts",
       "memberships",
       "opportunities",
       "opportunity_demand_facts",
+      "opportunity_notes",
       "organizations",
       "profiles",
       "vehicles",
     ]);
   });
 
-  it("registra 0000 a 0008 en el historial de drizzle", async () => {
-    expect(await appliedMigrations()).toBe(9);
+  it("registra 0000 a 0009 en el historial de drizzle", async () => {
+    expect(await appliedMigrations()).toBe(10);
   });
 
   it("volver a migrar no cambia nada", async () => {
     await runMigrations(db.migrationUrl);
 
-    expect(await appliedMigrations()).toBe(9);
+    expect(await appliedMigrations()).toBe(10);
     expect(await catalogSnapshot(db.admin)).toEqual(afterMigration);
   });
 
@@ -198,6 +213,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
       "0006_vehicle_availability.sql",
       "0007_opportunity_demand_facts.sql",
       "0008_opportunity_stages.sql",
+      "0009_opportunity_notes_vehicle_link.sql",
     ]);
     for (const file of files) {
       const content = await readFile(new URL(file, MIGRATIONS_DIR), "utf8");
@@ -211,6 +227,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     try {
       // La reversión corre con la credencial de migración, dueña de todo.
       await revert.begin(async (tx) => {
+        await tx.unsafe(REVERT_0009);
         await tx.unsafe(REVERT_0008);
         await tx.unsafe(REVERT_0007);
         await tx.unsafe(REVERT_0006);
@@ -348,7 +365,7 @@ describe("0002 sobre una base en Foundation", () => {
     expect(await foundationCount(foundation.admin)).toEqual({
       organizations: 3,
       memberships: MEMBERSHIPS.length,
-      history: 9,
+      history: 10,
     });
     expect(await catalogSnapshot(foundation.admin)).toEqual(afterMigration);
   });
@@ -441,7 +458,7 @@ describe("0003 sobre una base en H1.1", () => {
     `;
   }
 
-  it("pnpm db:migrate aplica 0003 a 0008, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0003 a 0009, conserva los datos y deja el mismo catálogo", async () => {
     const h11 = await server.createDatabase();
     await migrateUpTo(h11.migrationUrl, "0002_opportunities_persistence");
     await seedTenants(h11.admin);
@@ -457,7 +474,7 @@ describe("0003 sobre una base en H1.1", () => {
     const [history] = await h11.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
     `;
-    expect(history?.count).toBe(9);
+    expect(history?.count).toBe(10);
     expect(await h11Snapshot(h11.admin)).toEqual(before);
     // Sin backfill: los contactos existentes quedan sin teléfono normalizado.
     const [normalized] = await h11.admin<{ count: number }[]>`
@@ -560,7 +577,7 @@ describe("0004 sobre una base en H1.2", () => {
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
-        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' ORDER BY op.id) FROM public.opportunities op)
+        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' - 'vehicle_id' ORDER BY op.id) FROM public.opportunities op)
       ) AS data
     `;
     return snapshot?.data;
@@ -573,7 +590,7 @@ describe("0004 sobre una base en H1.2", () => {
     return row?.count ?? 0;
   }
 
-  it("pnpm db:migrate aplica 0004 a 0008, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0004 a 0009, conserva los datos y deja el mismo catálogo", async () => {
     const h12 = await server.createDatabase();
     await migrateUpTo(
       h12.migrationUrl,
@@ -592,7 +609,7 @@ describe("0004 sobre una base en H1.2", () => {
 
     await runMigrations(h12.migrationUrl);
 
-    expect(await history(h12.admin)).toBe(9);
+    expect(await history(h12.admin)).toBe(10);
     expect(await h12Snapshot(h12.admin)).toEqual(before);
     // Sin seeds: vehicles nace vacía.
     const [vehicles] = await h12.admin<{ count: number }[]>`
@@ -699,7 +716,7 @@ describe("0005 sobre una base en H1.3A", () => {
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
-        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' ORDER BY op.id) FROM public.opportunities op),
+        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' - 'vehicle_id' ORDER BY op.id) FROM public.opportunities op),
         'vehicles', (SELECT jsonb_agg(v ORDER BY v.id) FROM public.vehicles v)
       ) AS data
     `;
@@ -722,7 +739,7 @@ describe("0005 sobre una base en H1.3A", () => {
     return rows.map((row) => row.name);
   }
 
-  it("pnpm db:migrate aplica 0005 a 0008, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0005 a 0009, conserva los datos y deja el mismo catálogo", async () => {
     const h13a = await server.createDatabase();
     await migrateUpTo(h13a.migrationUrl, "0004_vehicles_stock_persistence");
     await seedTenants(h13a.admin);
@@ -736,7 +753,7 @@ describe("0005 sobre una base en H1.3A", () => {
 
     await runMigrations(h13a.migrationUrl);
 
-    expect(await history(h13a.admin)).toBe(9);
+    expect(await history(h13a.admin)).toBe(10);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13aSnapshot(h13a.admin)).toEqual(before);
     expect(await vehiclePolicies(h13a.admin)).toEqual([
@@ -851,7 +868,7 @@ describe("0006 sobre una base en H1.3B", () => {
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
-        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' ORDER BY op.id) FROM public.opportunities op),
+        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' - 'vehicle_id' ORDER BY op.id) FROM public.opportunities op),
         'vehicles', (SELECT jsonb_agg(v ORDER BY v.id) FROM public.vehicles v)
       ) AS data
     `;
@@ -886,7 +903,7 @@ describe("0006 sobre una base en H1.3B", () => {
     return rows.map((row) => row.name);
   }
 
-  it("pnpm db:migrate aplica 0006 a 0008, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0006 a 0009, conserva los datos y deja el mismo catálogo", async () => {
     const h13b = await server.createDatabase();
     await migrateUpTo(h13b.migrationUrl, "0005_vehicle_quick_create");
     await seedTenants(h13b.admin);
@@ -902,7 +919,7 @@ describe("0006 sobre una base en H1.3B", () => {
 
     await runMigrations(h13b.migrationUrl);
 
-    expect(await history(h13b.admin)).toBe(9);
+    expect(await history(h13b.admin)).toBe(10);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13bSnapshot(h13b.admin)).toEqual(before);
     expect(await vehiclePolicies(h13b.admin)).toEqual([
@@ -1048,7 +1065,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
-        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' ORDER BY op.id) FROM public.opportunities op),
+        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' - 'vehicle_id' ORDER BY op.id) FROM public.opportunities op),
         'vehicles', (SELECT jsonb_agg(v ORDER BY v.id) FROM public.vehicles v)
       ) AS data
     `;
@@ -1062,7 +1079,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
     return row?.count ?? 0;
   }
 
-  it("pnpm db:migrate aplica 0007 y 0008, conserva los datos (sin backfill del legado) y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0007 a 0009, conserva los datos (sin backfill del legado) y deja el mismo catálogo", async () => {
     const h13c = await server.createDatabase();
     await migrateUpTo(h13c.migrationUrl, "0006_vehicle_availability");
     await seedTenants(h13c.admin);
@@ -1076,7 +1093,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
 
     await runMigrations(h13c.migrationUrl);
 
-    expect(await history(h13c.admin)).toBe(9);
+    expect(await history(h13c.admin)).toBe(10);
     // Ninguna fila cambia: interest_model e interest_version quedan como
     // legado de solo lectura.
     expect(await h13cSnapshot(h13c.admin)).toEqual(before);
@@ -1184,7 +1201,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
-        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' ORDER BY op.id) FROM public.opportunities op),
+        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'loss_reason' - 'vehicle_id' ORDER BY op.id) FROM public.opportunities op),
         'vehicles', (SELECT jsonb_agg(v ORDER BY v.id) FROM public.vehicles v),
         'demand_facts', (SELECT jsonb_agg(f ORDER BY f.id) FROM public.opportunity_demand_facts f)
       ) AS data
@@ -1219,7 +1236,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
     return row?.definition ?? "";
   }
 
-  it("pnpm db:migrate aplica solo 0008, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0008 y 0009, conserva los datos y deja el mismo catálogo", async () => {
     const h14 = await server.createDatabase();
     await migrateUpTo(h14.migrationUrl, "0007_opportunity_demand_facts");
     await seedTenants(h14.admin);
@@ -1232,7 +1249,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
 
     await runMigrations(h14.migrationUrl);
 
-    expect(await history(h14.admin)).toBe(9);
+    expect(await history(h14.admin)).toBe(10);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia.
     expect(await h14Snapshot(h14.admin)).toEqual(before);
     const [reasons] = await h14.admin<{ count: number }[]>`
@@ -1245,6 +1262,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
       "stage",
       "updated_at",
       "loss_reason",
+      "vehicle_id",
     ]);
     expect(await catalogSnapshot(h14.admin)).toEqual(afterMigration);
   });
@@ -1282,7 +1300,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
       UPDATE public.opportunities SET stage = 'new' WHERE id = ${OPPORTUNITIES[0]!.id}
     `;
     await runMigrations(h14.migrationUrl);
-    expect(await history(h14.admin)).toBe(9);
+    expect(await history(h14.admin)).toBe(10);
     expect(await catalogSnapshot(h14.admin)).toEqual(afterMigration);
   });
 
@@ -1424,8 +1442,10 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
       "DEC-032: opportunities need the enabled BEFORE UPDATE",
     );
 
+    // Sobre una base en H1.6: 0009 amplía las ediciones y las altas que esta
+    // postcondición admite.
     const fresh = await server.createDatabase();
-    await runMigrations(fresh.migrationUrl);
+    await migrateUpTo(fresh.migrationUrl, "0008_opportunity_stages");
     // Control: con el trigger habilitado, la postcondición pasa.
     await fresh.admin.begin(async (tx) => {
       await tx.unsafe(block);
@@ -1450,6 +1470,214 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
           /^DEC-032: opportunities need the enabled BEFORE UPDATE stage transition trigger/,
         ),
       });
+    }
+  });
+});
+
+/*
+ * Una base en H1.6 (0000 a 0008, DEC-032) recibe 0009 (Hito 2, DEC-033):
+ * agrega la bitácora (opportunity_notes), la unidad vinculada
+ * (opportunities.vehicle_id, nula en toda fila existente) con su FK
+ * compuesta, su CHECK y su UPDATE por columna, y amplía la función del
+ * trigger. No toca ninguna fila.
+ */
+describe("0009 sobre una base en H1.6", () => {
+  /** Todo lo que puede tener staging, fila por fila (sin la columna nueva). */
+  async function h16Snapshot(sql: TestDatabase["admin"]) {
+    const [snapshot] = await sql<{ data: unknown }[]>`
+      SELECT jsonb_build_object(
+        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
+        'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
+        'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
+        'opportunities', (SELECT jsonb_agg(to_jsonb(op) - 'vehicle_id' ORDER BY op.id) FROM public.opportunities op),
+        'vehicles', (SELECT jsonb_agg(v ORDER BY v.id) FROM public.vehicles v),
+        'demand_facts', (SELECT jsonb_agg(f ORDER BY f.id) FROM public.opportunity_demand_facts f)
+      ) AS data
+    `;
+    return snapshot?.data;
+  }
+
+  async function history(sql: TestDatabase["admin"]): Promise<number> {
+    const [row] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+    `;
+    return row?.count ?? 0;
+  }
+
+  /** Si existen la columna de la unidad y la tabla de la bitácora. */
+  async function hito2Objects(sql: TestDatabase["admin"]) {
+    const [row] = await sql<{ column: boolean; notes: boolean }[]>`
+      SELECT
+        EXISTS (
+          SELECT FROM pg_attribute
+          WHERE attrelid = 'public.opportunities'::regclass
+            AND attname = 'vehicle_id' AND NOT attisdropped
+        ) AS "column",
+        to_regclass('public.opportunity_notes') IS NOT NULL AS notes
+    `;
+    return row;
+  }
+
+  it("pnpm db:migrate aplica solo 0009, conserva los datos (en todas las etapas) y deja el mismo catálogo", async () => {
+    const h16 = await server.createDatabase();
+    await migrateUpTo(h16.migrationUrl, "0008_opportunity_stages");
+    await seedTenants(h16.admin);
+    // Desde H1.6 las oportunidades pueden estar en cualquier etapa.
+    await seedOpportunities(h16.admin);
+    await seedVehicles(h16.admin);
+    const before = await h16Snapshot(h16.admin);
+    expect(await history(h16.admin)).toBe(9);
+    expect(await hito2Objects(h16.admin)).toEqual({
+      column: false,
+      notes: false,
+    });
+
+    await runMigrations(h16.migrationUrl);
+
+    expect(await history(h16.admin)).toBe(10);
+    // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia, ni stock.
+    expect(await h16Snapshot(h16.admin)).toEqual(before);
+    const [linked] = await h16.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.opportunities
+      WHERE vehicle_id IS NOT NULL
+    `;
+    expect(linked?.count).toBe(0);
+    const [notes] = await h16.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.opportunity_notes
+    `;
+    expect(notes?.count).toBe(0);
+    expect(OPPORTUNITIES.length).toBeGreaterThan(0);
+    expect(VEHICLES.length).toBeGreaterThan(0);
+    expect(await catalogSnapshot(h16.admin)).toEqual(afterMigration);
+  });
+
+  /*
+   * Postcondiciones de 0009: las de 0008, con opportunities.vehicle_id entre
+   * las ediciones aprobadas y opportunity_notes entre las altas aprobadas. Si
+   * la base no las cumple, 0009 falla y no aplica nada.
+   */
+  const UPDATE_COLUMNS_MESSAGE =
+    /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\) and opportunities\.stage, loss_reason, vehicle_id, updated_at \(H1\.6, Hito 2\)/;
+  const unsafeStates: [string, string, string, RegExp][] = [
+    [
+      "authenticated con UPDATE sobre opportunities.source",
+      "GRANT UPDATE (source) ON public.opportunities TO authenticated",
+      "REVOKE UPDATE (source) ON public.opportunities FROM authenticated",
+      UPDATE_COLUMNS_MESSAGE,
+    ],
+    [
+      "app_runtime con UPDATE directo sobre opportunities.stage",
+      "GRANT UPDATE (stage) ON public.opportunities TO app_runtime",
+      "REVOKE UPDATE (stage) ON public.opportunities FROM app_runtime",
+      /anon and app_runtime must not have privileges/,
+    ],
+    [
+      "service_role con UPDATE sobre la demanda",
+      "GRANT UPDATE ON public.opportunity_demand_facts TO service_role",
+      "REVOKE UPDATE ON public.opportunity_demand_facts FROM service_role",
+      /service_role must not update, delete or truncate opportunity_demand_facts or opportunity_notes/,
+    ],
+    [
+      "authenticated con INSERT fuera de las altas aprobadas (aun con policy y WITH CHECK)",
+      `GRANT INSERT ON public.memberships TO authenticated;
+       CREATE POLICY probe_insert ON public.memberships FOR INSERT TO authenticated
+         WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
+      `DROP POLICY probe_insert ON public.memberships;
+       REVOKE INSERT ON public.memberships FROM authenticated`,
+      /may only insert into contacts, opportunities, vehicles, opportunity_demand_facts \(H1\.4\) and opportunity_notes \(Hito 2\)/,
+    ],
+  ];
+
+  it.each(unsafeStates)(
+    "0009 falla cerrada ante %s",
+    async (_, unsafe, restore, reason) => {
+      const h16 = await server.createDatabase();
+      await migrateUpTo(h16.migrationUrl, "0008_opportunity_stages");
+      await h16.admin.unsafe(unsafe);
+      try {
+        await expect(runMigrations(h16.migrationUrl)).rejects.toThrow(
+          "pnpm db:migrate failed",
+        );
+        await expect(
+          migrateReportingErrors(h16.migrationUrl),
+        ).rejects.toMatchObject({
+          cause: { message: expect.stringMatching(reason) },
+        });
+        // Nada se aplicó: ni la columna, ni la tabla.
+        expect(await history(h16.admin)).toBe(9);
+        expect(await hito2Objects(h16.admin)).toEqual({
+          column: false,
+          notes: false,
+        });
+      } finally {
+        await h16.admin.unsafe(restore);
+      }
+      // Corregido el estado, 0009 se aplica.
+      await runMigrations(h16.migrationUrl);
+      expect(await catalogSnapshot(h16.admin)).toEqual(afterMigration);
+    },
+  );
+
+  /*
+   * Las postcondiciones que dependen de lo que crea la misma migración (el
+   * trigger ampliado y la bitácora append-only) se corren contra una base ya
+   * migrada: pasan sobre el catálogo real y fallan cerradas ante cada
+   * mutación.
+   */
+  it("la postcondición de 0009 exige el trigger y la bitácora append-only", async () => {
+    const sql = await readFile(
+      new URL("0009_opportunity_notes_vehicle_link.sql", MIGRATIONS_DIR),
+      "utf8",
+    );
+    const block = sql.split("--> statement-breakpoint").at(-1)!.trim();
+    expect(block).toMatch(/^-- Custom SQL · postcondiciones[\s\S]*DO \$\$/);
+
+    const fresh = await server.createDatabase();
+    await runMigrations(fresh.migrationUrl);
+    // Control: sobre el catálogo real, la postcondición pasa.
+    await fresh.admin.begin(async (tx) => {
+      await tx.unsafe(block);
+    });
+
+    const broken: [string, RegExp][] = [
+      [
+        "ALTER TABLE public.opportunities DISABLE TRIGGER opportunities_stage_transition",
+        /^DEC-032: opportunities need the enabled BEFORE UPDATE stage transition trigger/,
+      ],
+      [
+        `CREATE POLICY probe ON public.opportunity_notes FOR DELETE TO authenticated
+           USING (organization_id IN (SELECT private.user_org_ids()))`,
+        /opportunity_notes are append-only: no UPDATE, DELETE or ALL policies/,
+      ],
+      [
+        `GRANT UPDATE (body) ON public.opportunity_notes TO authenticated;
+         CREATE POLICY probe ON public.opportunity_notes FOR UPDATE TO authenticated
+           USING (organization_id IN (SELECT private.user_org_ids()))
+           WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
+        UPDATE_COLUMNS_MESSAGE,
+      ],
+      [
+        "GRANT DELETE ON public.opportunity_notes TO service_role",
+        /service_role must not update, delete or truncate opportunity_demand_facts or opportunity_notes/,
+      ],
+      [
+        "GRANT UPDATE (body) ON public.opportunity_notes TO service_role",
+        /service_role must not update, delete or truncate opportunity_demand_facts or opportunity_notes/,
+      ],
+      [
+        "ALTER TABLE public.opportunity_notes DISABLE ROW LEVEL SECURITY",
+        /RLS enabled/,
+      ],
+    ];
+    for (const [statement, reason] of broken) {
+      await expect(
+        fresh.admin.begin(async (tx) => {
+          await tx.unsafe(statement);
+          await tx.unsafe(block);
+        }),
+        statement,
+      ).rejects.toMatchObject({ message: expect.stringMatching(reason) });
     }
   });
 });

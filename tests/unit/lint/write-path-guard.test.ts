@@ -12,6 +12,10 @@ import { describe, expect, it } from "vitest";
  *   createVehicle() (lib/vehicles/actions.ts);
  * - la disponibilidad de una unidad (db/queries/mark-vehicle-available),
  *   también: la Server Action markVehicleAvailable() (lib/vehicles/actions.ts);
+ * - la bitácora (db/queries/record-opportunity-note) y la unidad vinculada
+ *   (db/queries/link-opportunity-vehicle) de una oportunidad (Hito 2),
+ *   también: las Server Actions addOpportunityNote() y
+ *   linkOpportunityVehicle() (lib/opportunities/actions.ts);
  * - el cambio de etapa de una oportunidad (H1.6)
  *   (db/queries/change-opportunity-stage), también: la Server Action
  *   changeOpportunityStage() (lib/opportunities/actions.ts);
@@ -238,6 +242,82 @@ describe(
         await restrictedBy(
           "lib/opportunities/stage-change.ts",
           `import type { StageChangeOutcome } from "@/db/queries/change-opportunity-stage";\nexport type T = StageChangeOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+/*
+ * Hito 2 (DEC-033 §4): la bitácora y la unidad vinculada tienen cada una un
+ * único módulo de escritura, que solo importa su Server Action
+ * (lib/opportunities/actions.ts).
+ */
+const HITO_2_WRITES = [
+  {
+    name: "el alta de notas",
+    module: "record-opportunity-note",
+    fn: "insertOpportunityNote",
+    type: "NoteWriteOutcome",
+  },
+  {
+    name: "la unidad vinculada",
+    module: "link-opportunity-vehicle",
+    fn: "setOpportunityVehicle",
+    type: "VehicleLinkOutcome",
+  },
+] as const;
+
+describe.each(HITO_2_WRITES)(
+  "una sola puerta para $name (Hito 2)",
+  { timeout: 30_000 },
+  ({ module, fn, type }) => {
+    const importWrite = `import { ${fn} } from "@/db/queries/${module}";\nexport const use = ${fn};\n`;
+
+    it.each([
+      "app/(app)/opportunities/page.tsx",
+      "app/(app)/opportunities/[id]/page.tsx",
+      "components/opportunities/opportunity-detail.tsx",
+      "components/opportunities/note-form.tsx",
+      "components/opportunities/vehicle-link.tsx",
+      "lib/opportunities/note.ts",
+      "lib/opportunities/vehicle-link.ts",
+      "lib/vehicles/actions.ts",
+      "lib/tenant/session.ts",
+      "lib/contacts/phone.ts",
+      "db/queries/opportunities.ts",
+      "db/queries/opportunity-detail.ts",
+      "db/queries/opportunity-notes.ts",
+      "db/queries/vehicles.ts",
+      "db/queries/change-opportunity-stage.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/opportunity-detail.ts",
+          `import { ${fn} } from "./${module}";\nexport const use = ${fn};\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en la Server Action", async () => {
+      expect(
+        await restrictedBy("lib/opportunities/actions.ts", importWrite),
+      ).toEqual([]);
+    });
+
+    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/opportunities/note.ts",
+          `import type { ${type} } from "@/db/queries/${module}";\nexport type T = ${type};\n`,
         ),
       ).toEqual([]);
     });
