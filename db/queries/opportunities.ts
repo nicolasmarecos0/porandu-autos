@@ -4,21 +4,30 @@ import { and, asc, desc, eq } from "drizzle-orm";
 
 import { demandSummary } from "@/domains/demand/presentation";
 import { resolveDemand, type DemandTruth } from "@/domains/demand/resolver";
+import { demandSnapshot } from "@/domains/demand/snapshot";
+import type { MatchableVehicle } from "@/domains/match/types";
 import { SOURCE_LABELS } from "@/domains/opportunities/labels";
 import { initialsOf, maskPhone } from "@/domains/opportunities/prospect";
 import { bucketFromRecency } from "@/domains/opportunities/queue";
-import { minuteOfDay, minutesSince } from "@/domains/opportunities/recency";
+import { minuteOfDay } from "@/domains/opportunities/recency";
 import type {
   Channel,
   Opportunity,
   Stage,
 } from "@/domains/opportunities/types";
-import { UNSCORED, type ScoreComposition } from "@/domains/scoring/types";
+import {
+  evaluateOpportunity,
+  PORANDU_SCORE_COMPOSITION,
+  stockFit,
+} from "@/domains/scoring/engine";
+import type { ScoreComposition } from "@/domains/scoring/types";
 import { requireTenant } from "@/lib/tenant/session";
 
 import { contacts, opportunities } from "../schema";
 import { withTenant, type ScopedTransaction } from "../tenant";
 import { selectDemandRows } from "./demand-rows";
+import { selectLastNoteTimes } from "./opportunity-notes";
+import { selectMatchCandidates } from "./vehicles";
 
 /*
  * Cola de Opportunities desde PostgreSQL (H1.1). Es la única fuente de la
@@ -36,7 +45,7 @@ import { selectDemandRows } from "./demand-rows";
  *   §2): con varias memberships activas, RLS deja ver todas sus
  *   organizaciones y el filtro deja solo la activa.
  *
- * Lo que la base todavía no tiene (scores, NBA, señales, matches, trade-in,
+ * Lo que la base todavía no tiene (señales, matches de la cola, trade-in,
  * responsable, conversación en vivo) llega como "sin dato": nunca se
  * completa con valores inventados.
  *
@@ -45,18 +54,16 @@ import { selectDemandRows } from "./demand-rows";
  * organización + RLS), el resolver corre en el servidor y a la página solo
  * llega un resumen por oportunidad: valores formateados, estado y los ids
  * de la edición. Sin evidencia, historial ni ids de usuario.
+ *
+ * Inteligencia (Hito 3, DEC-035): estado derivado, nunca persistido. En la
+ * misma transacción se leen por lote las unidades disponibles de la
+ * organización activa (las candidatas de Match v0) y la última nota de cada
+ * oportunidad; el motor puro (domains/scoring/engine.ts) calcula en memoria,
+ * con `now`, la recencia, el Porandú Score con su explicación y la NBA. De
+ * los matches solo se usa el puntaje del Top Match (Vehicle Fit): la cola no
+ * muestra tarjetas de match. Leer no escribe nada: ni `last_activity_at`, ni
+ * scores, ni matches.
  */
-
-/**
- * Composición conceptual del Porandú Score (Master Context §10: Intent 40 %,
- * Vehicle Fit 30 %, Deal Readiness 30 %). Solo dibuja el anillo, hoy todo
- * "sin dato". No es la fórmula del producto (DEC-004): la fija Hito 3.
- */
-const CONCEPTUAL_SCORE_COMPOSITION: ScoreComposition = [
-  { key: "intent", weight: 0.4 },
-  { key: "fit", weight: 0.3 },
-  { key: "deal", weight: 0.3 },
-];
 
 /**
  * Zona horaria con que se presenta la recencia ("ayer", "hace 3 días"). Las
@@ -87,6 +94,8 @@ export type OpportunityQueueRow = Readonly<{
   interestModel: string | null;
   interestVersion: string | null;
   lastActivityAt: Date;
+  /** Unidad vinculada a la negociación (DEC-033), o null. */
+  vehicleId: string | null;
   contactName: string;
   contactPhone: string | null;
   contactCity: string | null;
@@ -111,6 +120,7 @@ function selectQueue(
       interestModel: opportunities.interestModel,
       interestVersion: opportunities.interestVersion,
       lastActivityAt: opportunities.lastActivityAt,
+      vehicleId: opportunities.vehicleId,
       contactName: contacts.name,
       contactPhone: contacts.phone,
       contactCity: contacts.city,
@@ -134,16 +144,41 @@ function present(value: string | null): string | undefined {
 }
 
 /**
+ * Lo que el motor de inteligencia lee además de la fila (DEC-035): el stock
+ * disponible de la organización (candidatas de Match v0) y la nota más
+ * reciente de la oportunidad.
+ */
+export type QueueSignals = Readonly<{
+  stock: readonly MatchableVehicle[];
+  lastNoteAt: Date | null;
+}>;
+
+const NO_SIGNALS: QueueSignals = { stock: [], lastNoteAt: null };
+
+/**
  * Fila persistida → ViewModel de Opportunities. Pura: `now` fija el momento
- * de la recencia y `demand` es la Current Truth de su ledger. Solo completa
- * lo persistido y lo que se deriva de ello.
+ * de la recencia, `demand` es la Current Truth de su ledger y `signals`, el
+ * stock y la bitácora. Solo completa lo persistido y lo que se deriva de
+ * ello, incluida la inteligencia del motor (DEC-035).
  */
 export function toOpportunity(
   row: OpportunityQueueRow,
   now: Date,
   demand: DemandTruth = resolveDemand([]),
+  signals: QueueSignals = NO_SIGNALS,
 ): Opportunity {
-  const minutes = minutesSince(row.lastActivityAt, now);
+  const stage = stageFromDb[row.stage];
+  const intelligence = evaluateOpportunity(
+    {
+      stage,
+      lastActivityAt: row.lastActivityAt,
+      lastNoteAt: signals.lastNoteAt,
+      hasLinkedVehicle: row.vehicleId !== null,
+      stockFit: stockFit(demandSnapshot(demand), signals.stock),
+    },
+    now,
+  );
+  const { minutes, state } = intelligence.recency;
   const phone = row.contactPhone ? maskPhone(row.contactPhone) : undefined;
   const city = present(row.contactCity);
   const model = present(row.interestModel);
@@ -166,10 +201,12 @@ export function toOpportunity(
       ...(version ? { version } : {}),
     }),
     interest: {},
-    scores: UNSCORED,
-    lastActivity: { minutes },
-    stage: stageFromDb[row.stage],
+    scores: intelligence.scores,
+    scoreExplanation: intelligence.explanation,
+    lastActivity: { minutes, state },
+    stage,
     bucket: bucketFromRecency(minutes),
+    ...(intelligence.nba ? { nba: intelligence.nba } : {}),
     drivers: [],
   };
 }
@@ -179,20 +216,29 @@ export async function getOpportunityQueue(
   now: Date = new Date(),
 ): Promise<OpportunityQueue> {
   const ctx = await requireTenant();
-  const { rows, demand } = await withTenant(ctx, async (tx) => {
-    const rows = await selectQueue(tx, ctx.organizationId);
-    const demand = await selectDemandRows(
-      tx,
-      ctx.organizationId,
-      rows.map((row) => row.id),
-    );
-    return { rows, demand };
-  });
+  const { rows, demand, stock, lastNotes } = await withTenant(
+    ctx,
+    async (tx) => {
+      const rows = await selectQueue(tx, ctx.organizationId);
+      const ids = rows.map((row) => row.id);
+      // Sin oportunidades no se lee nada más: no hay a quién evaluar.
+      const demand = await selectDemandRows(tx, ctx.organizationId, ids);
+      const stock =
+        rows.length === 0
+          ? []
+          : await selectMatchCandidates(tx, ctx.organizationId);
+      const lastNotes = await selectLastNoteTimes(tx, ctx.organizationId, ids);
+      return { rows, demand, stock, lastNotes };
+    },
+  );
   return {
     opportunities: rows.map((row) =>
-      toOpportunity(row, now, resolveDemand(demand.get(row.id) ?? [])),
+      toOpportunity(row, now, resolveDemand(demand.get(row.id) ?? []), {
+        stock,
+        lastNoteAt: lastNotes.get(row.id) ?? null,
+      }),
     ),
     referenceMinuteOfDay: minuteOfDay(now, PRESENTATION_TIME_ZONE),
-    scoreComposition: CONCEPTUAL_SCORE_COMPOSITION,
+    scoreComposition: PORANDU_SCORE_COMPOSITION,
   };
 }

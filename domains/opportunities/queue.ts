@@ -28,7 +28,8 @@ export type QueueGroup = {
  *   🔥/🟢 (< 30 min) → Actuar ahora · 🟡 (30 min–2 h) → Durante el día ·
  *   ❄️ (> 2 h) → En seguimiento.
  * No es una regla comercial: se reemplaza cuando la urgencia la calcule el
- * motor de inteligencia.
+ * motor de inteligencia. El motor v0 (DEC-035) todavía no la reemplaza: deriva
+ * el Porandú Score, que ordena cada grupo, y su propia recencia en días.
  */
 export function bucketFromRecency(minutes: number): Bucket {
   if (minutes < RECENCY_BANDS.recent) return "now";

@@ -7,6 +7,7 @@ import {
   LockIcon,
   MapPinIcon,
   PhoneIcon,
+  StockIcon,
   SteeringIcon,
   SwapIcon,
   UndoIcon,
@@ -14,7 +15,10 @@ import {
 } from "@/components/ui/icons";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { NbaKind, NextBestAction } from "@/domains/opportunities/types";
+import type { RecencyState } from "@/domains/scoring/types";
 import type { ComponentType } from "react";
+
+import { RecencyStatus } from "./recency-status";
 
 const NBA_ICONS: Record<NbaKind, ComponentType<IconProps>> = {
   call: PhoneIcon,
@@ -23,6 +27,8 @@ const NBA_ICONS: Record<NbaKind, ComponentType<IconProps>> = {
   offer: DocumentIcon,
   tradeIn: SwapIcon,
   visit: MapPinIcon,
+  note: DocumentIcon,
+  linkVehicle: StockIcon,
 };
 
 type NextBestActionCardProps = {
@@ -30,19 +36,42 @@ type NextBestActionCardProps = {
   /** Estado simulado en cliente (B1 §3.2): no persiste. */
   done: boolean;
   onToggleDone: () => void;
+  /**
+   * Recencia de la oportunidad (motor de inteligencia, DEC-035), con el
+   * tiempo ya formateado. Los fixtures de B1 no la traen.
+   */
+  recency?: { state: RecencyState; elapsed: string };
 };
 
+/** Acento de la tarjeta: rojo si la acción es urgente (riesgo de pérdida). */
+const ACCENTS = {
+  normal: {
+    rule: "bg-brand",
+    icon: "bg-brand text-brand-contrast",
+    title: "text-brand",
+  },
+  urgent: {
+    rule: "bg-danger",
+    icon: "bg-danger text-text-inverse",
+    title: "text-danger",
+  },
+} as const;
+
 /**
- * ¿Qué hacer?: 1 acción primaria con su porqué y las secundarias. Una acción
- * que cambia condiciones económicas no se completa acá: requiere aprobación
- * humana antes de enviarse al cliente.
+ * ¿Qué hacer?: 1 acción primaria con su porqué y las secundarias. Desde
+ * Hito 3 la elige el motor de inteligencia (DEC-035): una acción urgente
+ * (riesgo de pérdida) se destaca en rojo, y la recencia acompaña el título.
+ * Una acción que cambia condiciones económicas no se completa acá: requiere
+ * aprobación humana antes de enviarse al cliente.
  */
 export function NextBestActionCard({
   nba,
   done,
   onToggleDone,
+  recency,
 }: NextBestActionCardProps) {
   const Icon = NBA_ICONS[nba.kind];
+  const accent = ACCENTS[nba.urgent ? "urgent" : "normal"];
   return (
     <section
       aria-label="¿Qué hacer?"
@@ -50,14 +79,27 @@ export function NextBestActionCard({
     >
       <span
         aria-hidden="true"
-        className="absolute inset-y-0 left-0 w-1 bg-brand"
+        className={cn("absolute inset-y-0 left-0 w-1", accent.rule)}
       />
       <div className="flex items-center gap-4 py-3.5 pr-4 pl-5">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-brand text-brand-contrast shadow-sm">
+        <span
+          className={cn(
+            "flex size-10 shrink-0 items-center justify-center rounded-md shadow-sm",
+            accent.icon,
+          )}
+        >
           <Icon className="size-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="text-overline text-brand uppercase">¿Qué hacer?</h2>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h2 className={cn("text-overline uppercase", accent.title)}>
+              ¿Qué hacer?
+              {nba.urgent ? <span className="sr-only"> Urgente.</span> : null}
+            </h2>
+            {recency ? (
+              <RecencyStatus state={recency.state} elapsed={recency.elapsed} />
+            ) : null}
+          </div>
           <p
             className={cn(
               "text-heading",
@@ -95,10 +137,12 @@ export function NextBestActionCard({
           )}
         </div>
       </div>
-      <p className="border-t border-border-subtle bg-surface-2 py-2 pr-4 pl-5 text-caption text-text-secondary">
-        <span className="font-semibold text-text-muted">Después</span> ·{" "}
-        {nba.secondary.join(" · ")}
-      </p>
+      {nba.secondary.length > 0 ? (
+        <p className="border-t border-border-subtle bg-surface-2 py-2 pr-4 pl-5 text-caption text-text-secondary">
+          <span className="font-semibold text-text-muted">Después</span> ·{" "}
+          {nba.secondary.join(" · ")}
+        </p>
+      ) : null}
     </section>
   );
 }

@@ -3,42 +3,47 @@ import { Tooltip } from "@/components/ui/tooltip";
 import {
   intentBand,
   type ScoreComposition,
+  type ScoreExplanation,
+  type ScorePenalty,
   type ScoreSet,
   type ScoreValue,
   type SubScoreKey,
 } from "@/domains/scoring/types";
 import { PoranduRing, RingKey } from "./porandu-ring";
-import { ScoreBreakdown } from "./score-breakdown";
+import { formatPoints, ScoreBreakdown } from "./score-breakdown";
 
-/*
- * Lecturas visuales temporales del mock de B1 para Vehicle Fit y Deal
- * Readiness. Sus umbrales no son reglas de negocio ni scoring aprobado: solo
- * la escala de Intent está definida (Visual Blueprint §3).
+/** Nombre corto de cada penalización, para el tile del Porandú. */
+const PENALTY_LABELS: Record<ScorePenalty["kind"], string> = {
+  inactivity: "Inactividad",
+};
+
+/**
+ * Lectura de Vehicle Fit y Deal Readiness: el motivo que da el motor
+ * (DEC-035). Sin explicación (fixtures de B1) solo se distingue "sin dato".
  */
-function mockFitReading(value: ScoreValue): string {
+function reading(
+  value: ScoreValue,
+  explanation: ScoreExplanation | undefined,
+  key: Exclude<SubScoreKey, "intent">,
+): string {
   if (value === null) return "Sin dato";
-  if (value >= 85) return "Coincidencia alta";
-  if (value >= 70) return "Coincidencia media";
-  return "Coincidencia baja";
-}
-
-function mockDealReading(value: ScoreValue): string {
-  if (value === null) return "Sin dato";
-  if (value >= 80) return "Operación viable";
-  if (value >= 60) return "Faltan condiciones";
-  return "Operación trabada";
+  return explanation?.factors[key] ?? "";
 }
 
 /**
  * Strip de scores: franja grafito con el Porandú Score elevado en color de
  * marca (con su anillo) y Intent, Vehicle Fit y Deal Readiness con su lectura.
+ * Si el motor restó puntos (inactividad), el tile del Porandú lo dice: el
+ * anillo dibuja los sub-scores y el número ya trae el descuento.
  */
 export function ScoreStrip({
   scores,
   composition,
+  explanation,
 }: {
   scores: ScoreSet;
   composition: ScoreComposition;
+  explanation?: ScoreExplanation;
 }) {
   const tiles: {
     part: SubScoreKey;
@@ -56,20 +61,26 @@ export function ScoreStrip({
       part: "fit",
       label: "Vehicle Fit",
       value: scores.fit,
-      note: mockFitReading(scores.fit),
+      note: reading(scores.fit, explanation, "fit"),
     },
     {
       part: "deal",
       label: "Deal",
       value: scores.deal,
-      note: mockDealReading(scores.deal),
+      note: reading(scores.deal, explanation, "deal"),
     },
   ];
 
   return (
     <div className="grid h-24 shrink-0 grid-cols-[1.55fr_repeat(3,minmax(0,1fr))] rounded-lg bg-surface-inverse text-text-inverse shadow-card">
       <Tooltip
-        content={<ScoreBreakdown scores={scores} composition={composition} />}
+        content={
+          <ScoreBreakdown
+            scores={scores}
+            composition={composition}
+            explanation={explanation}
+          />
+        }
       >
         <div className="relative z-[1] -my-2 flex items-center justify-center gap-3.5 rounded-lg bg-brand px-4 shadow-lg">
           <PoranduRing
@@ -88,6 +99,14 @@ export function ScoreStrip({
             <span className="text-caption whitespace-nowrap text-brand-inverse">
               Cobertura {Math.round(scores.coverage * 100)}%
             </span>
+            {explanation?.penalties.map((penalty) => (
+              <span
+                key={penalty.kind}
+                className="text-caption font-semibold whitespace-nowrap"
+              >
+                {PENALTY_LABELS[penalty.kind]} {formatPoints(penalty.points)}
+              </span>
+            ))}
           </span>
         </div>
       </Tooltip>
@@ -97,7 +116,7 @@ export function ScoreStrip({
           content={
             tile.value === null
               ? `${tile.label}: sin dato · no penaliza`
-              : `${tile.label} ${tile.value} · ${tile.note}`
+              : `${tile.label} ${tile.value}${tile.note ? ` · ${tile.note}` : ""}`
           }
         >
           <div
@@ -118,7 +137,7 @@ export function ScoreStrip({
             >
               {tile.value ?? "—"}
             </span>
-            <span className="text-caption text-text-inverse-muted">
+            <span className="max-w-full truncate px-2 text-caption text-text-inverse-muted">
               {tile.value === null ? "Sin dato" : tile.note}
             </span>
           </div>

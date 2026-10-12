@@ -185,7 +185,13 @@ function QueueRow({
       )}
     >
       <Tooltip
-        content={<ScoreBreakdown scores={scores} composition={composition} />}
+        content={
+          <ScoreBreakdown
+            scores={scores}
+            composition={composition}
+            explanation={opportunity.scoreExplanation}
+          />
+        }
         side="right"
       >
         <span>
