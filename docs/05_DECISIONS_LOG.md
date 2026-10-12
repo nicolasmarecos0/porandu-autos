@@ -48,6 +48,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-032 | Opportunity Stages: etapas comerciales y transiciones (H1.6) | Aceptada en principio | 2026-10-11 |
 | DEC-033 | Bitácora comercial y unidad vinculada a la negociación (Hito 2) | Aceptada en principio | 2026-10-11 |
 | DEC-034 | Formalización y metadatos de cierre comercial Won/Lost | Aceptada en principio | 2026-10-11 |
+| DEC-035 | Motor de Scoring, Recency y NBA | Aceptada en principio | 2026-10-12 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -650,6 +651,59 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - `0010_opportunity_closure_metadata` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0010_opportunity_closure_metadata` si staging ya tiene `0009`, o la lista desde la primera pendiente si no.
   - La verificación de staging amplía `schema.opportunity-stages` con los CHECKs de cierre y la regla de inmutabilidad, y la lista de columnas que `authenticated` puede actualizar.
   - Cuando se habilite la venta como entidad o vender la unidad, nace de una oportunidad `won` y sus metadatos: no se vuelven a cargar.
+
+## DEC-035 — Motor de Scoring, Recency y NBA
+- **Estado:** Aceptada en principio · 2026-10-12. Formaliza el pedido del fundador "Hito 3: Motor de Inteligencia, Recency y Next Best Action (NBA)". Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** DEC-004 fija cuatro scores explicables y deja su fórmula conceptual; DEC-005 posterga la fórmula concreta a Hito 3. Hasta acá la cola de `/opportunities` mostraba el Porandú Ring, los sub-scores y "¿Qué hacer?" como "sin dato" (DEC-023), aunque ya existen las señales para derivarlos: la etapa (DEC-032), la unidad vinculada y la bitácora (DEC-033), Match v0 (DEC-031) y `last_activity_at` (DEC-024 §7). El fundador llama a este bloque "Hito 3": no es el Hito 3 del Master Context §34 (Match Engine, que DEC-029 adelantó como H1.5) y adelanta la NBA, que el MC §34 ubicaba en Hito 4.
+- **Decisión:**
+  1. **Motor puro y estado derivado.** `domains/scoring/engine.ts` calcula, por oportunidad y con un `now` explícito, la recencia, el Porandú Score con su explicación y la Next Best Action. Determinista, síncrono y sin IA; no conoce la base, React ni Next. Nada se persiste: ni scores, ni recencia, ni NBA, ni matches. Sin tablas, migraciones, jobs ni colas, así que no hay nada que pueda desincronizarse de los hechos.
+  2. **Recencia.** Días desde `last_activity_at`, a precisión de minuto:
+     - `active` (Activa): menos de 2 días;
+     - `warning` (Enfriándose): de 2 a 5 días, extremos incluidos;
+     - `stale` (Inactiva): más de 5 días.
+     - Una fecha futura (reloj desfasado) cuenta como 0. Una fecha inválida falla en vez de inventar un estado.
+     - Complementa, no reemplaza, las bandas en minutos de B1 §3.2 y MC §12 (🔥 🟢 🟡 ❄️) ni la urgencia temporal de la cola (`bucketFromRecency()`).
+  3. **Porandú Score v0.** *Propuesta de implementación:* el "Health Score (0–100)" del pedido es el Porandú Score de DEC-004, no un quinto score. Se compone de sus sub-scores:
+     - **Intent:** sin dato en v0. Sus señales (MC §10: respuestas recientes, timing, cuota, visita) llegan con las conversaciones (H2a/H2b).
+     - **Vehicle Fit** (match de la demanda): una unidad vinculada (`vehicle_id`) vale 100; si no, el puntaje del Top Match v0 contra el stock disponible (40 a 100); si ninguna unidad disponible llega al umbral, 0 ("no coincide"). Sin demanda evaluable o sin unidades disponibles es sin dato (DEC-005).
+     - **Deal Readiness** (progreso en el embudo): la base de la etapa. `new` 20, `qualifying` 45, `negotiating` 75, `won` 100, `lost` 0.
+     - **Base:** el promedio ponderado de los sub-scores conocidos con la composición del MC §10 (Intent 40 %, Vehicle Fit 30 %, Deal Readiness 30 %). Un sub-score sin dato no penaliza; la cobertura es la suma de los pesos evaluados (hoy, a lo sumo 60 %). Se calcula con pesos enteros para que el redondeo sea exacto (87,5 → 88).
+     - **Penalización por recencia:** Enfriándose −15, Inactiva −40. El resultado se redondea y se acota entre 0 y 100.
+     - **Etapas terminales:** el resultado ya se conoce. Ganada vale 100 y Perdida 0, sin penalización.
+     - **Explicabilidad:** cada score lleva el motivo de cada sub-score, las penalizaciones aplicadas y, si está cerrada, su resultado.
+     - Los pesos, las bases por etapa y las penalizaciones son provisorios y se recalibran con datos del piloto (DEC-004).
+  4. **Composición como dato.** La composición que dibujan el Porandú Ring y el desglose (DEC-015) es la del motor (`PORANDU_SCORE_COMPOSITION`): la misma con que se calcula la base.
+  5. **Next Best Action.** Reglas en orden de prioridad. La primera que se cumple es la acción primaria y las dos siguientes que se cumplen, las secundarias (MC §10: 1 primaria y hasta 2 secundarias, con qué hacer y por qué):
+     1. `recover_stale`: Inactiva → "Retomar contacto urgente", con los días sin actividad y el riesgo de pérdida. Es la única urgente.
+     2. `link_vehicle`: En negociación sin unidad vinculada → "Vincular unidad de stock". El porqué dice qué ofrece el stock: el puntaje del Top Match, que ninguna unidad coincide, que falta cargar lo que busca o que no hay unidades disponibles.
+     3. `log_contact_update`: sin notas en la bitácora o con la última de hace 2 días o más → "Registrar actualización de contacto".
+     4. *Propuesta de implementación:* `follow_up`: Enfriándose → "Hacer seguimiento".
+     5. *Propuesta de implementación:* `on_track`: si no se cumple ninguna → "Sostener el seguimiento" ("Actividad y bitácora al día").
+     - Una oportunidad cerrada (Ganada o Perdida) no tiene NBA.
+     - Ninguna sugerencia cambia condiciones económicas: ninguna requiere aprobación ni ejecuta nada. "Marcar como hecha" sigue siendo estado simulado en el cliente (DEC-015).
+  6. **Consumo en la cola de `/opportunities`.** *Propuesta de implementación:* el pedido admitía la cola o el loader del detalle; se eligió la cola, porque DEC-017 ubica ahí los scores, la NBA y la recencia, y `/opportunities/[id]` no los repite.
+     - `getOpportunityQueue()` (`db/queries/opportunities.ts`) sigue la cadena `requireTenant()` → `withTenant()`. En la misma transacción, con filtro explícito por organización sobre RLS, lee la cola (ahora con `vehicle_id`), el ledger de demanda, una sola vez las unidades disponibles de la organización activa (`selectMatchCandidates()`) y la nota más reciente de cada oportunidad (`selectLastNoteTimes()`: `max(recorded_at)` agrupado, sin texto ni autor).
+     - El motor corre en memoria por oportunidad. De Match v0 solo se usa el puntaje del Top Match: la cola no muestra tarjetas de match.
+     - Calcular no escribe nada: ni `last_activity_at`, ni `updated_at`, ni notas, ni stock.
+  7. **UI de `/opportunities`** (columna "Decisión" de DEC-015):
+     - El strip muestra el Porandú Score real con su anillo, la cobertura, la penalización ("Inactividad −40") y la lectura del motor para Vehicle Fit y Deal Readiness. Intent sigue con la escala del Visual Blueprint §3 ("Sin dato").
+     - El desglose (tooltip del anillo, también en la cola) muestra cada sub-score con su peso, valor y motivo, las penalizaciones y el resultado.
+     - "¿Qué hacer?" muestra la NBA real con su porqué y sus secundarias, y un indicador de recencia con texto y color semántico: verde Activa, ámbar Enfriándose, rojo Inactiva. Una NBA urgente se destaca en rojo. Las secundarias solo aparecen si existen.
+     - Dentro de cada grupo de la cola, el orden por Porandú Score (`groupQueue()`) pasa a usar el score real.
+  8. **Fuera de este bloque:** persistir scores o snapshots, recalcular por jobs o eventos, Intent desde conversaciones, los drivers de "¿Por qué ahora?", reemplazar la urgencia de la cola (`bucketFromRecency()`), matches en la cola o en Stock, ejecutar la NBA desde la tarjeta, notificaciones, Cockpit, el módulo Intelligence, IA y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-004 y DEC-005: la fórmula v0 concreta es la de §3. Sigue siendo provisoria y explicable.
+  - DEC-015: la composición del anillo deja de ser un valor de mock y pasa a ser la del motor.
+  - DEC-023 ("sin outputs inventados"): el Porandú Score, sus sub-scores y la NBA dejan de ser "sin dato" porque ahora los deriva un motor aprobado. Siguen sin persistirse. Las señales de Why Now, el trade-in y la conversación en vivo siguen sin dato.
+  - DEC-031 §5 y su "fuera de H1.5" (matches en la cola): la cola calcula Match v0 solo para Vehicle Fit, sin mostrar matches.
+  - B1 §4 ("cálculo real de scores… desde fixtures"): el cálculo real entra en la cola. Los fixtures siguen como referencia de tests.
+  - MC §34 y DEC-029 (secuencia): bloque agregado por el fundador como "Hito 3". No reemplaza H2a, ADR-002 ni H2b, y adelanta la NBA del Hito 4 del MC.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: no hay datos nuevos ni accesos nuevos, y ADR-001 alcanza.
+- **Consecuencias:**
+  - Cero drift de base de datos: no hay migración ni paso de staging.
+  - **`last_activity_at` todavía no se mueve después del alta.** Ni la demanda, ni la etapa, ni las notas, ni la unidad vinculada lo modifican (DEC-030 §10, DEC-032 §7, DEC-033 §6). Con la regla de §2, toda oportunidad abierta pasa a Enfriándose a los 2 días de creada y a Inactiva a los 5, aunque el vendedor anote todos los días: −40 y "Retomar contacto urgente". Se corrige cuando las conversaciones (H2a/H2b) actualicen `last_activity_at`, o antes con una decisión nueva que defina qué acto del vendedor cuenta como interacción con el cliente. Esta DEC no reinterpreta DEC-033 §6.
+  - Intent queda sin dato y la cobertura nunca supera 60 % hasta que haya conversaciones.
+  - La cola lee el stock disponible una vez por request y evalúa Match v0 contra cada oportunidad en memoria (O(oportunidades × unidades)). Si el volumen del piloto lo exige, se revisa con una decisión nueva (índices, límites o materialización).
 
 ---
 
