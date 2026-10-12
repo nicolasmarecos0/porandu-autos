@@ -7,7 +7,10 @@ import { WhyNowCard } from "@/components/intelligence/why-now";
 import { CloseIcon } from "@/components/ui/icons";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { VehicleRail } from "@/components/vehicle-rail/vehicle-rail";
-import { formatElapsedLong } from "@/domains/opportunities/recency";
+import {
+  formatElapsedLong,
+  formatElapsedShort,
+} from "@/domains/opportunities/recency";
 import type { Opportunity } from "@/domains/opportunities/types";
 import type { ScoreComposition } from "@/domains/scoring/types";
 import {
@@ -43,8 +46,10 @@ const ID_PREFIX = "opportunity";
  * edición en el drawer "Lo que busca" y el historial en /opportunities/[id].
  *
  * Cada columna tiene scroll propio. Los datos llegan del loader de la página
- * (PostgreSQL, tenant-scoped). Lo que la fuente no trae ("sin dato") no se
- * muestra: sin NBA, señales ni matches inventados.
+ * (PostgreSQL, tenant-scoped). Desde Hito 3 (DEC-035), el Porandú Score con
+ * su desglose, la recencia y "¿Qué hacer?" los deriva el motor de
+ * inteligencia en el loader. Lo que la fuente no trae ("sin dato") no se
+ * muestra: sin señales ni matches inventados.
  *
  * "Nueva oportunidad" (H1.2) abre el alta manual en un drawer. Al crear, la
  * Server Action revalida la página, la cola trae la oportunidad nueva y la
@@ -107,12 +112,24 @@ export function OpportunitiesView({
               <ScoreStrip
                 scores={selected.scores}
                 composition={scoreComposition}
+                explanation={selected.scoreExplanation}
               />
               {selected.nba ? (
                 <NextBestActionCard
                   nba={selected.nba}
                   done={queue.done.has(selected.id)}
                   onToggleDone={() => queue.toggleDone(selected.id)}
+                  recency={
+                    selected.lastActivity.state
+                      ? {
+                          state: selected.lastActivity.state,
+                          elapsed: formatElapsedShort(
+                            selected.lastActivity.minutes,
+                            referenceMinuteOfDay,
+                          ),
+                        }
+                      : undefined
+                  }
                 />
               ) : null}
               <div className="mt-1 flex items-baseline justify-between px-0.5">
