@@ -19,9 +19,9 @@ export const MOCK_REFERENCE_MINUTE_OF_DAY = 10 * 60 + 30;
 
 /**
  * Composición de presentación con la que el mock explica el Porandú Score
- * (Porandú Ring y desglose). No es la fórmula del producto: DEC-004 la deja
- * conceptual y a recalibrar con datos de piloto. Los scores de los fixtures
- * se eligieron coherentes con estos pesos.
+ * (Porandú Ring y desglose). Los scores de los fixtures son fijos y se
+ * eligieron coherentes con estos pesos; la fórmula v0 del producto vive en
+ * domains/scoring/engine.ts (DEC-035).
  */
 export const MOCK_SCORE_COMPOSITION: ScoreComposition = [
   { key: "intent", weight: 0.4 },

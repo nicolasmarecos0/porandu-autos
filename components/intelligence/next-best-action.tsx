@@ -7,6 +7,7 @@ import {
   LockIcon,
   MapPinIcon,
   PhoneIcon,
+  StockIcon,
   SteeringIcon,
   SwapIcon,
   UndoIcon,
@@ -23,6 +24,8 @@ const NBA_ICONS: Record<NbaKind, ComponentType<IconProps>> = {
   offer: DocumentIcon,
   tradeIn: SwapIcon,
   visit: MapPinIcon,
+  note: DocumentIcon,
+  linkVehicle: StockIcon,
 };
 
 type NextBestActionCardProps = {

@@ -1,5 +1,11 @@
 import type { DemandSummary } from "@/domains/demand/presentation";
-import type { Driver, ScoreSet } from "@/domains/scoring/types";
+import type {
+  Driver,
+  NbaCode,
+  RecencyState,
+  ScoreExplanation,
+  ScoreSet,
+} from "@/domains/scoring/types";
 import type {
   AlternativeMatch,
   BodyType,
@@ -32,7 +38,14 @@ export type { Stage };
 export type Bucket = "now" | "today" | "followUp";
 
 export type NbaKind =
-  "call" | "message" | "testDrive" | "offer" | "tradeIn" | "visit";
+  | "call"
+  | "message"
+  | "testDrive"
+  | "offer"
+  | "tradeIn"
+  | "visit"
+  | "note"
+  | "linkVehicle";
 
 /** Next Best Action: 1 acción primaria con su porqué y hasta 2 secundarias. */
 export type NextBestAction = {
@@ -42,14 +55,20 @@ export type NextBestAction = {
   secondary: readonly string[];
   /** Cambia condiciones económicas: requiere aprobación humana. */
   needsApproval?: boolean;
+  /** Regla del motor que la eligió (DEC-035). Los fixtures de B1 no la traen. */
+  code?: NbaCode;
+  /** Riesgo de pérdida: la UI la destaca en rojo. */
+  urgent?: boolean;
 };
 
 /*
  * ViewModel de Opportunities (DEC-015, DEC-017). Un campo opcional que no
  * llega es "sin dato": la UI no lo muestra y nunca se completa con un valor
  * inventado. En Hito 1 la fuente real (PostgreSQL) solo trae lo persistido y
- * lo derivado; la inteligencia (scores, NBA, señales, matches, trade-in,
- * conversación en vivo) llega cuando exista su motor.
+ * lo derivado. Desde Hito 3 (DEC-035), el Porandú Score, su explicación, la
+ * recencia y la NBA los deriva el motor de `domains/scoring/engine.ts`; las
+ * señales, los matches de la cola, el trade-in y la conversación en vivo
+ * llegan cuando exista su fuente.
  */
 export type Opportunity = {
   id: string;
@@ -84,9 +103,16 @@ export type Opportunity = {
     quantity?: number;
   };
   scores: ScoreSet;
+  /**
+   * Por qué el Porandú Score vale lo que vale (DEC-035). Lo trae la fuente
+   * real; los fixtures de B1 no lo tienen.
+   */
+  scoreExplanation?: ScoreExplanation;
   lastActivity: {
     /** Minutos desde la última actividad. */
     minutes: number;
+    /** Estado de recencia del motor (DEC-035): activa, enfriándose, inactiva. */
+    state?: RecencyState;
     summary?: string;
   };
   owner?: Advisor;
