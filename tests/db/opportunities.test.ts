@@ -220,16 +220,35 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
         vehicle: { title: "Toyota Hilux SRV 2.8 4x4 AT", source: "legacy" },
       }),
       interest: {},
+      // Hito 3 (DEC-035): sin demanda evaluable ni conversaciones, solo se
+      // evalúa Deal Readiness (En calificación) y la cobertura lo dice.
       scores: {
-        porandu: null,
-        coverage: 0,
+        porandu: 45,
+        coverage: 0.3,
         intent: null,
         fit: null,
-        deal: null,
+        deal: 45,
       },
-      lastActivity: { minutes: 2 },
+      scoreExplanation: {
+        factors: {
+          intent: "Sin dato: llega con las conversaciones",
+          fit: "Sin dato: falta lo que busca",
+          deal: "Etapa En calificación",
+        },
+        penalties: [],
+        outcome: null,
+      },
+      lastActivity: { minutes: 2, state: "active" },
       stage: "qualifying",
       bucket: "now",
+      nba: {
+        code: "log_contact_update",
+        kind: "note",
+        action: "Registrar actualización de contacto",
+        reason: "Todavía no hay notas en la bitácora.",
+        secondary: [],
+        urgent: false,
+      },
       drivers: [],
     });
     expect(queue.opportunities.map((op) => op.bucket)).toEqual([
