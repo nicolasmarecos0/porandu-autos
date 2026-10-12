@@ -10,6 +10,7 @@ Porandú conecta inventario, conversaciones, intención de compra y operación c
 > **H1.6 — Opportunity Stages (DEC-032):** etapas comerciales `new → qualifying → negotiating → won`, con `lost` (y su motivo) desde cualquier etapa abierta. La máquina de estados vive en el dominio y la exige la base con un trigger (`0008_opportunity_stages`); el panel "Etapa" de `/opportunities/[id]` ofrece solo los pases permitidos (ver "Opportunity Stages (H1.6)"). `0008` se aplica a staging después del merge.
 > **Hito 2 — Bitácora comercial y unidad vinculada (DEC-033):** notas append-only por oportunidad (`opportunity_notes`) y la unidad del stock que se negocia (`opportunities.vehicle_id`), que se elige desde las tarjetas de match En negociación sin cambiar el stock (`0009_opportunity_notes_vehicle_link`, ver "Bitácora y unidad vinculada (Hito 2)"). `0009` se aplica a staging después del merge.
 > **Hito 2A — Cierre comercial (DEC-034):** ganar o perder una oportunidad es un solo acto con sus metadatos: la venta (unidad vinculada, precio final con su moneda, forma de pago y entrega) o la pérdida (motivo estructurado y notas). Puerta `closeOpportunity()`, CHECKs y trigger en la base, inmutables una vez cerrada, y la tarjeta "Cierre" en `/opportunities/[id]` (`0010_opportunity_closure_metadata`, ver "Cierre comercial (DEC-034)"). `0010` se aplica a staging después del merge.
+> **Hito 3 — Motor de inteligencia (DEC-035):** recencia, Porandú Score (el Health Score de la oportunidad) con su desglose y Next Best Action, derivados en cada lectura por un motor puro (`domains/scoring/engine.ts`) y mostrados en la cola de `/opportunities`. Sin migraciones ni persistencia (ver "Motor de inteligencia (Hito 3)").
 
 ---
 
@@ -256,7 +257,7 @@ explícito por organización → RLS → ViewModel de Opportunities
 - **Loader:** `getOpportunityQueue()` (`db/queries/opportunities.ts`) pide su propio contexto con `requireTenant()`, lee dentro de `withTenant()`, filtra por `ctx.organizationId` (defensa en profundidad: con varias memberships activas, RLS deja ver todas sus organizaciones) y devuelve el ViewModel que ya usa la UI. La página no conoce Drizzle.
 - **Persistido (`0002_opportunities_persistence`):** `contacts` (nombre, teléfono, ciudad) y `opportunities` (contacto de la misma organización por FK compuesta, etapa, origen, modelo y versión buscados, última actividad). Etapa y origen se validan con un CHECK, no con un enum: esos conjuntos todavía no están cerrados por producto.
 - **Derivado:** iniciales, teléfono enmascarado, minutos desde la última actividad y urgencia de la cola.
-- **Sin dato (no se persiste ni se inventa):** Porandú Score y sub-scores, NBA, ¿Por qué ahora?, Top Match, alternativa, trade-in, responsable, `● En vivo` y el resumen de la última actividad. La UI no los muestra hasta que exista su fuente.
+- **Sin dato (no se persiste ni se inventa):** Porandú Score y sub-scores, NBA, ¿Por qué ahora?, Top Match, alternativa, trade-in, responsable, `● En vivo` y el resumen de la última actividad. La UI no los muestra hasta que exista su fuente. Desde Hito 3 (DEC-035), el Porandú Score, sus sub-scores y la NBA los deriva el motor de inteligencia (ver "Motor de inteligencia (Hito 3)"); siguen sin persistirse.
 - **Reglas temporales de presentación:** la urgencia (Actuar ahora / Durante el día / En seguimiento) sale de las bandas de recencia de B1 §3.2 (`bucketFromRecency()`); la recencia se presenta en `America/Asuncion` (las organizaciones todavía no tienen zona horaria); el anillo usa la composición conceptual del Master Context §10 (40/30/30), que no es la fórmula del producto (DEC-004).
 - **Una sola fuente:** `mocks/opportunities.ts` ya no tiene loader. Sus fixtures quedan como referencia del contrato visual de B1 para los tests, y ESLint impide importarlos fuera de `tests/`.
 - **Guardas de ESLint:** páginas y componentes no importan Drizzle, `db/schema` ni `db/tenant` (leen con los loaders de `db/queries/`); `domains/` no depende de `db/`, `mocks/`, Drizzle, React ni Next (DEC-016).
@@ -550,6 +551,42 @@ withTenant(): SELECT … FOR UPDATE (etapa y unidad) → planOpportunityClosure(
   - La tarjeta "Cierre" muestra el resultado y sus datos, de solo lectura.
 - **Fuera de este bloque:** la venta como entidad, marcar la unidad `sold` o reservarla, editar o corregir un cierre, registrar la entrega efectiva de una venta programada, reabrir, quién cerró, mostrar el cierre en la cola o en Stock, métricas, comisiones y documentos de la venta.
 - `0010` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0010_opportunity_closure_metadata` (o con las anteriores que falten delante, en orden). Si staging tuviera oportunidades cerradas que no cumplen la precondición, la migración se detiene y hay que decidir cómo corregirlas.
+
+## Motor de inteligencia (Hito 3)
+
+Recencia, Porandú Score y Next Best Action de cada oportunidad (DEC-035). Estado derivado: se calcula en cada lectura de la cola de `/opportunities` y nunca se persiste. Sin tablas, migraciones, jobs ni IA.
+
+```text
+getOpportunityQueue(now) → requireTenant() → withTenant(): cola (con
+vehicle_id), ledger de demanda, unidades disponibles (una vez) y última nota
+de cada oportunidad, con filtro por organización → RLS →
+evaluateOpportunity(): recencia → Porandú Score + explicación → NBA
+```
+
+- **Motor puro** en `domains/scoring/engine.ts`: `evaluateRecency()`, `stockFit()` (Match v0 contra el stock: Top Match, `no_match`, `no_demand` o `no_stock`), `scoreOpportunity()`, `nextBestAction()` y `evaluateOpportunity()`. Recibe `now` explícito: determinista y testeable con cualquier combinación de fechas y etapas.
+- **Recencia** desde `last_activity_at`: Activa (menos de 2 días), Enfriándose (de 2 a 5) e Inactiva (más de 5). No reemplaza los emojis de B1 (minutos) ni la urgencia de la cola.
+- **Porandú Score v0** (el Health Score del pedido, 0–100):
+
+| Sub-score | Peso | v0 |
+|---|---|---|
+| Intent | 40 % | Sin dato: llega con las conversaciones |
+| Vehicle Fit | 30 % | Unidad vinculada 100 · si no, Top Match v0 (40–100) · ninguna coincide 0 · sin demanda o sin stock, sin dato |
+| Deal Readiness | 30 % | Nueva 20 · En calificación 45 · En negociación 75 · Ganada 100 · Perdida 0 |
+
+  - Base: promedio ponderado de los sub-scores conocidos (el dato faltante no penaliza, DEC-005); la cobertura es la suma de sus pesos.
+  - Inactividad: Enfriándose −15, Inactiva −40. Resultado redondeado y acotado entre 0 y 100.
+  - Cerradas: Ganada 100, Perdida 0, sin penalización.
+  - Cada score lleva su explicación: el motivo de cada sub-score, las penalizaciones y el resultado.
+- **Next Best Action** (primera regla que se cumple; las dos siguientes son las secundarias):
+  1. Inactiva → "Retomar contacto urgente" (la única urgente, en rojo).
+  2. En negociación sin unidad vinculada → "Vincular unidad de stock".
+  3. Sin notas o con la última de hace 2 días o más → "Registrar actualización de contacto".
+  4. Enfriándose → "Hacer seguimiento".
+  5. Si no, "Sostener el seguimiento". Una cerrada no tiene NBA. Ninguna cambia condiciones económicas.
+- **UI** (columna "Decisión" de `/opportunities`): el strip con el Porandú Score real, la cobertura y la penalización; el desglose en el tooltip del anillo (también en la cola); "¿Qué hacer?" con la NBA real y la recencia en verde, ámbar o rojo. `/opportunities/[id]` no los repite (DEC-017).
+- **Solo lectura:** calcular no toca `last_activity_at`, `updated_at`, notas ni stock. La cola usa de Match v0 solo el puntaje del Top Match, sin mostrar tarjetas.
+- **Limitación conocida:** nada actualiza `last_activity_at` después del alta (ni la demanda, ni la etapa, ni las notas, ni la unidad). Toda oportunidad abierta pasa a Inactiva a los 5 días de creada, aunque el vendedor anote. Se corrige cuando las conversaciones (H2a/H2b) actualicen la actividad o con una decisión nueva.
+- **Fuera de este bloque:** persistir scores, recalcular por eventos, Intent desde conversaciones, los drivers de "¿Por qué ahora?", reemplazar la urgencia de la cola, ejecutar la NBA desde la tarjeta, notificaciones y el módulo Intelligence.
 
 ## Convenciones
 
