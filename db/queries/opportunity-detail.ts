@@ -22,7 +22,6 @@ import {
   closureSummary,
   type ClosureSummary,
 } from "@/domains/opportunities/closure";
-import { noteTimeline, type NoteEntry } from "@/domains/opportunities/notes";
 import type { Stage } from "@/domains/opportunities/stages";
 import {
   canChangeVehicleLink,
@@ -92,8 +91,6 @@ export type OpportunityDetail = Readonly<{
     canChange: boolean;
     linked: LinkedVehicleCard | null;
   }>;
-  /** Bitácora comercial, de la nota más reciente a la más vieja. */
-  notes: readonly NoteEntry[];
   /** Notas y mensajes en un solo muro, del registro más reciente al más viejo. */
   activity: readonly ActivityEntry[];
 }>;
@@ -196,7 +193,6 @@ export async function getOpportunityDetail(
       canChange: canChangeVehicleLink(stage),
       linked: linked ? linkedVehicleCard(linked) : null,
     },
-    notes: noteTimeline(notes, ctx.userId),
     activity: activityTimeline(notes, messages, ctx.userId),
   };
 }

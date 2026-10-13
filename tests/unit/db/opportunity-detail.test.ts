@@ -385,7 +385,7 @@ describe("getOpportunityDetail: muro de actividad (Hito 4)", () => {
 });
 
 describe("getOpportunityDetail: bitácora y unidad vinculada (Hito 2)", () => {
-  it("las notas llegan de la más reciente a la más vieja, con autor contra el usuario de la request y sin ids de usuario", async () => {
+  it("las notas llegan al muro de la más reciente a la más vieja, con autor contra el usuario de la request y sin ids de usuario", async () => {
     mocks.results = [
       [OPPORTUNITY_ROW],
       [],
@@ -408,15 +408,19 @@ describe("getOpportunityDetail: bitácora y unidad vinculada (Hito 2)", () => {
 
     const detail = await getOpportunityDetail(OPPORTUNITY);
 
-    expect(detail!.notes).toEqual([
+    expect(detail!.activity).toEqual([
       {
+        kind: "note",
         id: "40000000-0000-4000-8000-000000000002",
+        label: "Nota",
         body: "Pidió cuota fija.\nVuelve el lunes.",
         author: "Otro miembro",
         at: "11 oct 2026 14:32",
       },
       {
+        kind: "note",
         id: "40000000-0000-4000-8000-000000000001",
+        label: "Nota",
         body: "Primera llamada.",
         author: "Vos",
         at: "11 oct 2026 09:00",

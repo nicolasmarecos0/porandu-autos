@@ -310,13 +310,16 @@ describe("Server Action: requireTenant() → validación → withTenant() → IN
 
     request(USER_A);
     const forA = await getOpportunityDetail(id);
-    expect(forA!.notes.map((n) => [n.body, n.author])).toEqual([
+    expect(forA!.activity.map((n) => [n.body, n.author])).toEqual([
       ["Segunda llamada.", "Otro miembro"],
       ["Primera llamada.", "Vos"],
     ]);
     request(USER_C, ORG_1);
     const forC = await getOpportunityDetail(id);
-    expect(forC!.notes.map((n) => n.author)).toEqual(["Vos", "Otro miembro"]);
+    expect(forC!.activity.map((n) => n.author)).toEqual([
+      "Vos",
+      "Otro miembro",
+    ]);
     expect(JSON.stringify(forC)).not.toContain(USER_A);
     expect(JSON.stringify(forC)).not.toContain(USER_C);
   });
@@ -430,10 +433,9 @@ describe("el detalle muestra la bitácora de la organización activa", () => {
         (${ORG_1}, ${other}, 'De otra oportunidad', ${USER_A}, now())
     `;
     request(USER_A);
-    expect((await getOpportunityDetail(id))!.notes.map((n) => n.body)).toEqual([
-      "Nueva",
-      "Vieja",
-    ]);
+    expect(
+      (await getOpportunityDetail(id))!.activity.map((n) => n.body),
+    ).toEqual(["Nueva", "Vieja"]);
     request(USER_B);
     expect(await getOpportunityDetail(id)).toBeNull();
   });

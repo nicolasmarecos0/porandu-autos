@@ -4,19 +4,15 @@ import {
   NOTE_MAX_LENGTH,
   noteLength,
   normalizeNoteBody,
-  noteTimeline,
   parseNoteBody,
-  type NoteRow,
 } from "@/domains/opportunities/notes";
 
 /*
  * Bitácora comercial (Hito 2, DEC-033 §1): normalización y validación del
- * texto, y la bitácora que muestra /opportunities/[id]. La base exige lo
- * esencial con su CHECK (tests/db/opportunity-notes.test.ts).
+ * texto. La base exige lo esencial con su CHECK
+ * (tests/db/opportunity-notes.test.ts). Cómo se muestran las notas en el
+ * muro de actividad lo prueba tests/unit/domains/conversations/timeline.test.ts.
  */
-
-const VIEWER = "00000000-0000-4000-8000-00000000000a";
-const OTHER = "00000000-0000-4000-8000-00000000000c";
 
 describe("normalizeNoteBody", () => {
   it.each([
@@ -82,52 +78,5 @@ describe("parseNoteBody", () => {
   it("el largo se mide después de normalizar", () => {
     const padded = `   ${"a".repeat(NOTE_MAX_LENGTH)}   `;
     expect(parseNoteBody(padded)).toMatchObject({ ok: true });
-  });
-});
-
-describe("noteTimeline", () => {
-  const row = (id: string, at: string, recordedBy = VIEWER): NoteRow => ({
-    id,
-    body: `Nota ${id}`,
-    recordedBy,
-    recordedAt: new Date(at),
-  });
-
-  it("de la más reciente a la más vieja, con autor y fecha de Asunción", () => {
-    expect(
-      noteTimeline(
-        [
-          row("a", "2026-10-11T12:00:00Z"),
-          row("b", "2026-10-11T17:32:00Z", OTHER),
-        ],
-        VIEWER,
-      ),
-    ).toEqual([
-      {
-        id: "b",
-        body: "Nota b",
-        author: "Otro miembro",
-        at: "11 oct 2026 14:32",
-      },
-      { id: "a", body: "Nota a", author: "Vos", at: "11 oct 2026 09:00" },
-    ]);
-  });
-
-  it("a igual instante, el orden es determinista (por id)", () => {
-    const at = "2026-10-11T12:00:00Z";
-    expect(
-      noteTimeline([row("1", at), row("3", at), row("2", at)], VIEWER).map(
-        (entry) => entry.id,
-      ),
-    ).toEqual(["3", "2", "1"]);
-  });
-
-  it("no expone ids de usuario", () => {
-    const [entry] = noteTimeline(
-      [row("a", "2026-10-11T12:00:00Z", OTHER)],
-      VIEWER,
-    );
-    expect(JSON.stringify(entry)).not.toContain(OTHER);
-    expect(JSON.stringify(entry)).not.toContain(VIEWER);
   });
 });

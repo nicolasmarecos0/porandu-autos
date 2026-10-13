@@ -2,26 +2,29 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { MessageForm } from "@/components/conversations/message-form";
 import { OpportunityDetailView } from "@/components/opportunities/opportunity-detail";
+import type { ActivityEntry } from "@/domains/conversations/timeline";
 import { demandDetail, demandSummary } from "@/domains/demand/presentation";
 import { resolveDemand } from "@/domains/demand/resolver";
 import type { MatchCard, MatchRail } from "@/domains/match/presentation";
 import type { ClosureSummary } from "@/domains/opportunities/closure";
-import type { NoteEntry } from "@/domains/opportunities/notes";
 import type { Stage } from "@/domains/opportunities/stages";
 import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
 
 /*
- * /opportunities/[id] con la bitácora y la unidad vinculada (Hito 2, DEC-033
- * §8), renderizada en el servidor sin DOM:
- * - el panel "Notas" con su formulario y la bitácora, sin ids de usuario;
+ * /opportunities/[id] con el muro de actividad (Hito 4, DEC-036 §11) y la
+ * unidad vinculada (Hito 2, DEC-033 §8), renderizada en el servidor sin DOM:
+ * - el panel "Actividad" con el selector Nota / Mensaje, sus formularios y
+ *   el muro de notas y mensajes, sin ids de usuario;
  * - las tarjetas de match ofrecen "Vincular a la negociación" solo En
  *   negociación (DEC-034 §4: en Ganada la unidad queda fija), y la vinculada
  *   se marca en vez de ofrecerse;
  * - la tarjeta de la unidad vinculada ofrece quitarla solo En negociación;
  * - una oportunidad cerrada muestra la tarjeta "Cierre" (DEC-034 §11).
  * Las Server Actions no se llaman: se prueban en note-action.test.ts,
- * vehicle-link-action.test.ts y contra la base en tests/db/.
+ * message-action.test.ts, vehicle-link-action.test.ts y contra la base en
+ * tests/db/.
  */
 
 vi.mock("@/lib/opportunities/actions", () => ({
@@ -32,6 +35,7 @@ vi.mock("@/lib/opportunities/actions", () => ({
   recordDemand: vi.fn(),
   createOpportunity: vi.fn(),
 }));
+vi.mock("@/lib/conversations/actions", () => ({ addMessage: vi.fn() }));
 
 const ID = "10000000-0000-4000-8000-000000000101";
 const TOP = "20000000-0000-4000-8000-000000000101";
@@ -65,15 +69,30 @@ const LINKED: LinkedVehicleCard = {
   statusLabel: "Disponible",
 };
 
-const NOTES: readonly NoteEntry[] = [
+const ACTIVITY: readonly ActivityEntry[] = [
   {
+    kind: "message",
+    id: "50000000-0000-4000-8000-000000000001",
+    label: "Mensaje recibido",
+    channel: "whatsapp",
+    channelLabel: "WhatsApp",
+    direction: "inbound",
+    body: "¿Sigue disponible?",
+    author: "Vos",
+    at: "11 oct 2026 18:40",
+  },
+  {
+    kind: "note",
     id: "40000000-0000-4000-8000-000000000002",
+    label: "Nota",
     body: "Pidió cuota fija.\nVuelve el lunes.",
     author: "Otro miembro",
     at: "11 oct 2026 14:32",
   },
   {
+    kind: "note",
     id: "40000000-0000-4000-8000-000000000001",
+    label: "Nota",
     body: "Primera llamada.",
     author: "Vos",
     at: "11 oct 2026 09:00",
@@ -84,14 +103,14 @@ function render({
   stage = "negotiating",
   linked = null,
   canChange = stage === "negotiating",
-  notes = NOTES,
+  activity = ACTIVITY,
   matches = MATCHES,
   closure = null,
 }: {
   stage?: Stage;
   linked?: LinkedVehicleCard | null;
   canChange?: boolean;
-  notes?: readonly NoteEntry[];
+  activity?: readonly ActivityEntry[];
   matches?: MatchRail;
   closure?: ClosureSummary | null;
 } = {}): string {
@@ -109,7 +128,7 @@ function render({
       summary: demandSummary(truth, {}),
       matches,
       vehicleLink: { canChange, linked },
-      notes,
+      activity,
     }),
   );
 }
@@ -128,39 +147,100 @@ function buttons(html: string): string[] {
   );
 }
 
-describe("panel Notas", () => {
-  it("formulario con la oportunidad y el texto, y la bitácora en el orden recibido", () => {
+describe("panel Actividad", () => {
+  it("selector Nota / Mensaje, el formulario de notas por defecto y el muro en el orden recibido", () => {
     const html = render();
-    expect(html).toContain('id="notes-heading"');
-    expect(html).toContain("2 notas");
+    expect(html).toContain('id="activity-heading"');
+    expect(html).toContain("3 registros");
+    const selector = html.slice(
+      html.indexOf('aria-label="Qué registrás"'),
+      html.indexOf("</div>", html.indexOf('aria-label="Qué registrás"')),
+    );
+    expect(selector).toMatch(/aria-pressed="true"[^>]*>Nota</);
+    expect(selector).toMatch(/aria-pressed="false"[^>]*>Mensaje</);
     expect(html).toMatch(/<textarea[^>]*name="body"/);
     expect(html).toContain(`name="opportunityId" value="${ID}"`);
     expect(html).toContain("Agregar nota");
     expect(html).toContain("0 / 1.000");
-    const timeline = html.slice(
-      html.indexOf('aria-label="Bitácora de la oportunidad"'),
+    const wall = html.slice(
+      html.indexOf('aria-label="Muro de actividad de la oportunidad"'),
     );
-    expect(timeline.indexOf("Otro miembro · 11 oct 2026 14:32")).toBeLessThan(
-      timeline.indexOf("Vos · 11 oct 2026 09:00"),
-    );
-    // Los saltos de línea de la nota se respetan.
+    const positions = [
+      "Mensaje recibido",
+      "Otro miembro · 11 oct 2026 14:32",
+      "Vos · 11 oct 2026 09:00",
+    ].map((text) => wall.indexOf(text));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual(positions.toSorted((a, b) => a - b));
+    // El mensaje muestra su canal.
+    expect(wall).toContain("WhatsApp");
+    // Los saltos de línea se respetan.
     expect(html).toContain("whitespace-pre-line");
     expect(html).toContain("Pidió cuota fija.\nVuelve el lunes.");
   });
 
-  it("sin notas: un estado vacío que invita a registrar", () => {
-    const html = render({ notes: [] });
-    expect(html).toContain("0 notas");
-    expect(html).toContain("Todavía no hay notas.");
-    expect(html).not.toContain("Bitácora de la oportunidad");
+  it("sin actividad: un estado vacío que invita a registrar", () => {
+    const html = render({ activity: [] });
+    expect(html).toContain("0 registros");
+    expect(html).toContain("Todavía no hay actividad.");
+    expect(html).not.toContain("Muro de actividad de la oportunidad");
   });
 
   it.each(["new", "qualifying", "won", "lost"] as const)(
-    "en %s también se puede anotar",
+    "en %s también se puede registrar",
     (stage) => {
-      expect(render({ stage })).toContain("Agregar nota");
+      const html = render({ stage });
+      expect(html).toContain("Agregar nota");
+      expect(html).toContain('aria-label="Qué registrás"');
     },
   );
+
+  it("ningún id de usuario llega al HTML", () => {
+    const html = render();
+    expect(html).not.toMatch(/00000000-0000-4000-8000-00000000000[ac]/);
+  });
+});
+
+describe("formulario de mensajes", () => {
+  function renderForm(): string {
+    return renderToStaticMarkup(
+      createElement(MessageForm, { opportunityId: ID }),
+    );
+  }
+
+  it("envía la oportunidad, el canal (WhatsApp por defecto), la dirección a elegir y el texto", () => {
+    const html = renderForm();
+    expect(html).toContain(`name="opportunityId" value="${ID}"`);
+    const channel = html.slice(
+      html.indexOf('name="channel"'),
+      html.indexOf("</select>", html.indexOf('name="channel"')),
+    );
+    expect(channel).toMatch(/<option value="whatsapp" selected="">WhatsApp</);
+    expect(channel).toContain('<option value="email">Email</option>');
+    expect(channel).toContain('<option value="manual">Otro medio</option>');
+    const direction = html.slice(
+      html.indexOf('name="direction"'),
+      html.indexOf("</select>", html.indexOf('name="direction"')),
+    );
+    expect(direction).toMatch(
+      /<option value="" disabled="" selected="">Elegí</,
+    );
+    expect(direction).toContain(
+      '<option value="inbound">Recibido del cliente</option>',
+    );
+    expect(direction).toContain(
+      '<option value="outbound">Enviado al cliente</option>',
+    );
+    expect(html).toMatch(/<textarea[^>]*name="content"/);
+    expect(html).toContain("0 / 4.096");
+    expect(html).toContain("Registrar mensaje");
+  });
+
+  it("aclara que registrar no envía nada al cliente", () => {
+    expect(renderForm()).toContain(
+      "Registrar no envía nada al cliente: deja constancia de lo que ya pasó.",
+    );
+  });
 });
 
 describe("unidad vinculada desde las tarjetas de match", () => {
