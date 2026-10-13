@@ -22,8 +22,10 @@ import { withTenant, type TenantContext } from "../tenant";
  * - La FK compuesta (organization_id, opportunity_id) impide anotar en una
  *   oportunidad de otra organización; la lectura previa con filtro explícito
  *   lo resuelve antes como `not_found`, sin revelar si existe.
- * - Append-only: nunca se edita ni se borra una nota. No toca
- *   `last_activity_at` (DEC-033 §6), la etapa, la demanda ni el stock.
+ * - Append-only: nunca se edita ni se borra una nota. En la misma
+ *   transacción, el trigger `opportunity_notes_touch_activity` mueve el
+ *   `last_activity_at` de la oportunidad (DEC-036 §1, supersede DEC-033 §6);
+ *   la etapa, la demanda y el stock no cambian.
  */
 
 export type NoteWriteRequest = Readonly<{

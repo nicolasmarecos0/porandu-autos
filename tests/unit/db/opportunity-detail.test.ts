@@ -247,7 +247,21 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
       "opportunity_demand_facts",
       "vehicles",
       "opportunity_notes",
+      "messages",
     ]);
+  });
+
+  it("Hito 4: lee los mensajes de la oportunidad en la misma transacción, filtrados por organización", async () => {
+    mocks.results = [[OPPORTUNITY_ROW], [], [], [], []];
+
+    await getOpportunityDetail(OPPORTUNITY);
+
+    expect(mocks.withTenant).toHaveBeenCalledTimes(1);
+    const messages = mocks.queries.at(-1);
+    expect(messages?.sql).toMatch(
+      /^select "id", "channel", "direction", "content", "recorded_by", "created_at" from "messages" where \("messages"\."organization_id" = \$1 and "messages"\."opportunity_id" = \$2\) order by "messages"\."created_at" desc, "messages"\."id" desc$/,
+    );
+    expect(messages?.params).toEqual([ORG, OPPORTUNITY]);
   });
 });
 
@@ -312,6 +326,61 @@ describe("getOpportunityDetail: ViewModel", () => {
     expect(serialized).not.toContain(USER);
     expect(serialized).not.toContain(OTHER_USER);
     expect(serialized).not.toContain(ORG);
+  });
+});
+
+describe("getOpportunityDetail: muro de actividad (Hito 4)", () => {
+  it("combina notas y mensajes del más reciente al más viejo, con autor contra el usuario de la request y sin ids de usuario", async () => {
+    mocks.results = [
+      [OPPORTUNITY_ROW],
+      [],
+      [],
+      [
+        {
+          id: "40000000-0000-4000-8000-000000000001",
+          body: "Primera llamada.",
+          recordedBy: USER,
+          recordedAt: new Date("2026-10-11T12:00:00Z"),
+        },
+      ],
+      [
+        {
+          id: "50000000-0000-4000-8000-000000000001",
+          channel: "whatsapp",
+          direction: "inbound",
+          content: "¿Sigue disponible?",
+          recordedBy: OTHER_USER,
+          createdAt: new Date("2026-10-11T17:32:00Z"),
+        },
+      ],
+    ];
+
+    const detail = await getOpportunityDetail(OPPORTUNITY);
+
+    expect(detail!.activity).toEqual([
+      {
+        kind: "message",
+        id: "50000000-0000-4000-8000-000000000001",
+        label: "Mensaje recibido",
+        channel: "whatsapp",
+        channelLabel: "WhatsApp",
+        direction: "inbound",
+        body: "¿Sigue disponible?",
+        author: "Otro miembro",
+        at: "11 oct 2026 14:32",
+      },
+      {
+        kind: "note",
+        id: "40000000-0000-4000-8000-000000000001",
+        label: "Nota",
+        body: "Primera llamada.",
+        author: "Vos",
+        at: "11 oct 2026 09:00",
+      },
+    ]);
+    const serialized = JSON.stringify(detail);
+    expect(serialized).not.toContain(USER);
+    expect(serialized).not.toContain(OTHER_USER);
   });
 });
 

@@ -269,8 +269,11 @@ describe("Server Action: requireTenant() → validación → withTenant() → IN
     expect(
       await add(id, "  Pidió cuota fija.\r\n\r\n\r\nVuelve el lunes.  "),
     ).toEqual({ status: "recorded", opportunityId: id });
-    // Solo el detalle: la cola no cambia por una nota.
-    expect(mocks.revalidated).toEqual([`/opportunities/${id}`]);
+    // La nota mueve la recencia: la cola también cambia (DEC-036 §1).
+    expect(mocks.revalidated).toEqual([
+      "/opportunities",
+      `/opportunities/${id}`,
+    ]);
 
     const [note, ...rest] = await notesOf(id);
     expect(rest).toEqual([]);

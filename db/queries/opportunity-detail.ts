@@ -3,6 +3,10 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 
 import {
+  activityTimeline,
+  type ActivityEntry,
+} from "@/domains/conversations/timeline";
+import {
   demandDetail,
   demandSummary,
   type DemandDetail,
@@ -30,6 +34,7 @@ import { requireTenant } from "@/lib/tenant/session";
 import { contacts, opportunities } from "../schema";
 import { withTenant } from "../tenant";
 import { selectDemandRows } from "./demand-rows";
+import { selectOpportunityMessages } from "./messages";
 import { selectOpportunityNotes } from "./opportunity-notes";
 import { stageFromDb } from "./opportunities";
 import { selectMatchCandidates, selectVehicleById } from "./vehicles";
@@ -60,7 +65,11 @@ import { selectMatchCandidates, selectVehicleById } from "./vehicles";
  *   lee las notas de la oportunidad y la unidad vinculada (de la
  *   organización activa, en cualquier estado), y dice si la etapa admite
  *   cambiarla. Las notas llegan con autor "Vos" u "Otro miembro".
- * - Solo lee: no toca `last_activity_at`, el ledger, las notas ni el stock.
+ * - Muro de actividad (Hito 4, DEC-036 §11): en la misma transacción lee los
+ *   mensajes registrados de la oportunidad y los combina con las notas, del
+ *   más reciente al más viejo (activityTimeline()).
+ * - Solo lee: no toca `last_activity_at`, el ledger, las notas, los
+ *   mensajes ni el stock.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -85,6 +94,8 @@ export type OpportunityDetail = Readonly<{
   }>;
   /** Bitácora comercial, de la nota más reciente a la más vieja. */
   notes: readonly NoteEntry[];
+  /** Notas y mensajes en un solo muro, del registro más reciente al más viejo. */
+  activity: readonly ActivityEntry[];
 }>;
 
 /** Texto opcional del legado: vacío o en blanco no cuenta. */
@@ -148,11 +159,16 @@ export async function getOpportunityDetail(
       ctx.organizationId,
       opportunity.id,
     );
-    return { opportunity, rows, candidates, linked, notes };
+    const messages = await selectOpportunityMessages(
+      tx,
+      ctx.organizationId,
+      opportunity.id,
+    );
+    return { opportunity, rows, candidates, linked, notes, messages };
   });
   if (!found) return null;
 
-  const { opportunity, rows, candidates, linked, notes } = found;
+  const { opportunity, rows, candidates, linked, notes, messages } = found;
   const stage = stageFromDb[opportunity.stage];
   const closure = closureFromRow({ ...opportunity, stage });
   const truth = resolveDemand(rows);
@@ -181,5 +197,6 @@ export async function getOpportunityDetail(
       linked: linked ? linkedVehicleCard(linked) : null,
     },
     notes: noteTimeline(notes, ctx.userId),
+    activity: activityTimeline(notes, messages, ctx.userId),
   };
 }

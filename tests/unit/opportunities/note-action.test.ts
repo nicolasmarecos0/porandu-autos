@@ -5,9 +5,10 @@ import { addOpportunityNote } from "@/lib/opportunities/actions";
 /*
  * Server Action addOpportunityNote() (Hito 2, DEC-033 §1), sin base de
  * datos. Prueba el orden de la cadena (requireTenant() → leer y normalizar
- * el pedido → alta con ese mismo contexto → revalidar el detalle) y qué le
- * llega a la escritura. RLS, el CHECK, el append-only y el aislamiento se
- * prueban contra PostgreSQL en tests/db/opportunity-notes.test.ts.
+ * el pedido → alta con ese mismo contexto → revalidar la cola y el detalle)
+ * y qué le llega a la escritura. RLS, el CHECK, el append-only, el
+ * aislamiento y el toque de la recencia se prueban contra PostgreSQL en
+ * tests/db/opportunity-notes.test.ts y tests/db/activity-touch.test.ts.
  */
 
 vi.mock("server-only", () => ({}));
@@ -77,19 +78,27 @@ function form(fields: Record<string, string>): FormData {
 }
 
 describe("addOpportunityNote()", () => {
-  it("requireTenant() → alta con ese contexto → revalidar solo el detalle", async () => {
+  it("requireTenant() → alta con ese contexto → revalidar la cola y el detalle", async () => {
     const state = await addOpportunityNote(
       null,
       form({ opportunityId: ID, body: "Pidió una prueba de manejo." }),
     );
 
-    expect(mocks.calls).toEqual(["requireTenant", "insert", "revalidatePath"]);
+    expect(mocks.calls).toEqual([
+      "requireTenant",
+      "insert",
+      "revalidatePath",
+      "revalidatePath",
+    ]);
     expect(mocks.insertNote).toHaveBeenCalledWith(CTX, {
       opportunityId: ID,
       body: "Pidió una prueba de manejo.",
     });
-    // Una nota no cambia la cola (ni last_activity_at): solo el detalle.
-    expect(mocks.revalidatePath.mock.calls).toEqual([[`/opportunities/${ID}`]]);
+    // La nota mueve last_activity_at (DEC-036 §1): cambia la cola.
+    expect(mocks.revalidatePath.mock.calls).toEqual([
+      ["/opportunities"],
+      [`/opportunities/${ID}`],
+    ]);
     expect(state).toEqual({ status: "recorded", opportunityId: ID });
   });
 
