@@ -22,6 +22,8 @@ import { describe, expect, it } from "vitest";
  * - el cierre comercial con sus metadatos (DEC-034)
  *   (db/queries/close-opportunity), también: la Server Action
  *   closeOpportunity() (lib/opportunities/actions.ts);
+ * - el registro de mensajes (Hito 4) (db/queries/record-message), también:
+ *   la Server Action addMessage() (lib/conversations/actions.ts);
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -393,6 +395,74 @@ describe.each(HITO_2_WRITES)(
         await restrictedBy(
           "lib/opportunities/note.ts",
           `import type { ${type} } from "@/db/queries/${module}";\nexport type T = ${type};\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importMessageWrite = `import { insertOpportunityMessage } from "@/db/queries/record-message";\nexport const use = insertOpportunityMessage;\n`;
+
+/*
+ * Hito 4 (DEC-036 §6): los mensajes tienen un único módulo de escritura,
+ * que solo importa su Server Action (lib/conversations/actions.ts).
+ */
+describe(
+  "una sola puerta para el registro de mensajes (Hito 4)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/opportunities/[id]/page.tsx",
+      "components/opportunities/opportunity-detail.tsx",
+      "components/conversations/message-form.tsx",
+      "lib/conversations/message.ts",
+      "lib/opportunities/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/tenant/session.ts",
+      "lib/contacts/phone.ts",
+      "db/queries/opportunity-detail.ts",
+      "db/queries/messages.ts",
+      "db/queries/record-opportunity-note.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importMessageWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/opportunity-detail.ts",
+          `import { insertOpportunityMessage } from "./record-message";\nexport const use = insertOpportunityMessage;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en la Server Action", async () => {
+      expect(
+        await restrictedBy("lib/conversations/actions.ts", importMessageWrite),
+      ).toEqual([]);
+    });
+
+    it("la Server Action de mensajes no importa otras escrituras ni el cliente", async () => {
+      for (const code of [
+        importWrite,
+        `import { insertOpportunityNote } from "@/db/queries/record-opportunity-note";\nexport const use = insertOpportunityNote;\n`,
+        `import { getDb } from "@/db/client";\nexport const use = getDb;\n`,
+      ]) {
+        expect(
+          await restrictedBy("lib/conversations/actions.ts", code),
+        ).toContain("no-restricted-imports");
+      }
+    });
+
+    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/conversations/message.ts",
+          `import type { MessageWriteOutcome } from "@/db/queries/record-message";\nexport type T = MessageWriteOutcome;\n`,
         ),
       ).toEqual([]);
     });

@@ -14,7 +14,7 @@ import {
   type TestServer,
 } from "./support/postgres";
 import { OPPORTUNITIES, seedOpportunities } from "./support/opportunities";
-import { MEMBERSHIPS, ORG_1, seedTenants } from "./support/tenants";
+import { MEMBERSHIPS, ORG_1, seedTenants, USER_A } from "./support/tenants";
 import { seedVehicles, VEHICLES } from "./support/vehicles";
 
 /*
@@ -25,7 +25,8 @@ import { seedVehicles, VEHICLES } from "./support/vehicles";
 const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
 
 /*
- * Reversión de 0010_opportunity_closure_metadata,
+ * Reversión de 0011_conversations_and_activity_trigger,
+ * 0010_opportunity_closure_metadata,
  * 0009_opportunity_notes_vehicle_link, 0008_opportunity_stages, 0007_opportunity_demand_facts,
  * 0006_vehicle_availability,
  * 0005_vehicle_quick_create,
@@ -38,17 +39,33 @@ const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
  * default privileges de Supabase del shim.
  */
 /*
- * 0010 reemplaza la función del trigger (CREATE OR REPLACE): revertirla
- * restaura la de 0009, tal como la escribe su migración.
+ * 0010 y 0011 reemplazan la función del trigger (CREATE OR REPLACE):
+ * revertir una restaura la de la migración anterior, tal como la escribe esa
+ * migración.
  */
-async function function0009(): Promise<string> {
-  const sql = await readFile(
-    new URL("0009_opportunity_notes_vehicle_link.sql", MIGRATIONS_DIR),
-    "utf8",
-  );
+async function stageFunctionOf(file: string): Promise<string> {
+  const sql = await readFile(new URL(file, MIGRATIONS_DIR), "utf8");
   const start = sql.indexOf('CREATE OR REPLACE FUNCTION "private"');
-  return sql.slice(start, sql.indexOf("$$;", sql.indexOf("AS $$")) + 3);
+  return sql.slice(start, sql.indexOf("$$;", sql.indexOf("AS $$", start)) + 3);
 }
+
+function function0009(): Promise<string> {
+  return stageFunctionOf("0009_opportunity_notes_vehicle_link.sql");
+}
+
+function function0010(): Promise<string> {
+  return stageFunctionOf("0010_opportunity_closure_metadata.sql");
+}
+
+const REVERT_0011 = `
+  DROP TRIGGER messages_touch_activity ON public.messages;
+  DROP TRIGGER opportunity_notes_touch_activity ON public.opportunity_notes;
+  DROP FUNCTION private.touch_opportunity_activity();
+  DROP POLICY messages_insert_member ON public.messages;
+  DROP POLICY messages_select_member ON public.messages;
+  DROP TABLE public.messages;
+  ALTER TABLE public.opportunities DROP CONSTRAINT opportunities_organization_id_id_contact_id_key;
+`;
 
 const REVERT_0010 = `
   REVOKE UPDATE (loss_notes, sale_price, sale_currency, payment_method, delivery_status, delivery_date) ON public.opportunities FROM authenticated;
@@ -224,10 +241,11 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     expect(owners?.owners).toEqual(["postgres"]);
   });
 
-  it("crea solo las tablas de H0, H1.1, H1.3A, H1.4 y Hito 2 en public (H1.2 no agrega tablas)", async () => {
+  it("crea solo las tablas de H0, H1.1, H1.3A, H1.4, Hito 2 e Hito 4 en public (H1.2 no agrega tablas)", async () => {
     expect(await tableNames(db.admin, "public")).toEqual([
       "contacts",
       "memberships",
+      "messages",
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",
@@ -237,14 +255,14 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     ]);
   });
 
-  it("registra 0000 a 0010 en el historial de drizzle", async () => {
-    expect(await appliedMigrations()).toBe(11);
+  it("registra 0000 a 0011 en el historial de drizzle", async () => {
+    expect(await appliedMigrations()).toBe(12);
   });
 
   it("volver a migrar no cambia nada", async () => {
     await runMigrations(db.migrationUrl);
 
-    expect(await appliedMigrations()).toBe(11);
+    expect(await appliedMigrations()).toBe(12);
     expect(await catalogSnapshot(db.admin)).toEqual(afterMigration);
   });
 
@@ -264,6 +282,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
       "0008_opportunity_stages.sql",
       "0009_opportunity_notes_vehicle_link.sql",
       "0010_opportunity_closure_metadata.sql",
+      "0011_conversations_and_activity_trigger.sql",
     ]);
     for (const file of files) {
       const content = await readFile(new URL(file, MIGRATIONS_DIR), "utf8");
@@ -277,6 +296,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     try {
       // La reversión corre con la credencial de migración, dueña de todo.
       await revert.begin(async (tx) => {
+        await tx.unsafe(REVERT_0011);
         await tx.unsafe(REVERT_0010);
         await tx.unsafe(REVERT_0009);
         await tx.unsafe(REVERT_0008);
@@ -416,7 +436,7 @@ describe("0002 sobre una base en Foundation", () => {
     expect(await foundationCount(foundation.admin)).toEqual({
       organizations: 3,
       memberships: MEMBERSHIPS.length,
-      history: 11,
+      history: 12,
     });
     expect(await catalogSnapshot(foundation.admin)).toEqual(afterMigration);
   });
@@ -509,7 +529,7 @@ describe("0003 sobre una base en H1.1", () => {
     `;
   }
 
-  it("pnpm db:migrate aplica 0003 a 0010, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0003 a 0011, conserva los datos y deja el mismo catálogo", async () => {
     const h11 = await server.createDatabase();
     await migrateUpTo(h11.migrationUrl, "0002_opportunities_persistence");
     await seedTenants(h11.admin);
@@ -525,7 +545,7 @@ describe("0003 sobre una base en H1.1", () => {
     const [history] = await h11.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
     `;
-    expect(history?.count).toBe(11);
+    expect(history?.count).toBe(12);
     expect(await h11Snapshot(h11.admin)).toEqual(before);
     // Sin backfill: los contactos existentes quedan sin teléfono normalizado.
     const [normalized] = await h11.admin<{ count: number }[]>`
@@ -641,7 +661,7 @@ describe("0004 sobre una base en H1.2", () => {
     return row?.count ?? 0;
   }
 
-  it("pnpm db:migrate aplica 0004 a 0010, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0004 a 0011, conserva los datos y deja el mismo catálogo", async () => {
     const h12 = await server.createDatabase();
     await migrateUpTo(
       h12.migrationUrl,
@@ -660,7 +680,7 @@ describe("0004 sobre una base en H1.2", () => {
 
     await runMigrations(h12.migrationUrl);
 
-    expect(await history(h12.admin)).toBe(11);
+    expect(await history(h12.admin)).toBe(12);
     expect(await h12Snapshot(h12.admin)).toEqual(before);
     // Sin seeds: vehicles nace vacía.
     const [vehicles] = await h12.admin<{ count: number }[]>`
@@ -790,7 +810,7 @@ describe("0005 sobre una base en H1.3A", () => {
     return rows.map((row) => row.name);
   }
 
-  it("pnpm db:migrate aplica 0005 a 0010, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0005 a 0011, conserva los datos y deja el mismo catálogo", async () => {
     const h13a = await server.createDatabase();
     await migrateUpTo(h13a.migrationUrl, "0004_vehicles_stock_persistence");
     await seedTenants(h13a.admin);
@@ -804,7 +824,7 @@ describe("0005 sobre una base en H1.3A", () => {
 
     await runMigrations(h13a.migrationUrl);
 
-    expect(await history(h13a.admin)).toBe(11);
+    expect(await history(h13a.admin)).toBe(12);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13aSnapshot(h13a.admin)).toEqual(before);
     expect(await vehiclePolicies(h13a.admin)).toEqual([
@@ -954,7 +974,7 @@ describe("0006 sobre una base en H1.3B", () => {
     return rows.map((row) => row.name);
   }
 
-  it("pnpm db:migrate aplica 0006 a 0010, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0006 a 0011, conserva los datos y deja el mismo catálogo", async () => {
     const h13b = await server.createDatabase();
     await migrateUpTo(h13b.migrationUrl, "0005_vehicle_quick_create");
     await seedTenants(h13b.admin);
@@ -970,7 +990,7 @@ describe("0006 sobre una base en H1.3B", () => {
 
     await runMigrations(h13b.migrationUrl);
 
-    expect(await history(h13b.admin)).toBe(11);
+    expect(await history(h13b.admin)).toBe(12);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13bSnapshot(h13b.admin)).toEqual(before);
     expect(await vehiclePolicies(h13b.admin)).toEqual([
@@ -1130,7 +1150,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
     return row?.count ?? 0;
   }
 
-  it("pnpm db:migrate aplica 0007 a 0010, conserva los datos (sin backfill del legado) y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0007 a 0011, conserva los datos (sin backfill del legado) y deja el mismo catálogo", async () => {
     const h13c = await server.createDatabase();
     await migrateUpTo(h13c.migrationUrl, "0006_vehicle_availability");
     await seedTenants(h13c.admin);
@@ -1144,7 +1164,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
 
     await runMigrations(h13c.migrationUrl);
 
-    expect(await history(h13c.admin)).toBe(11);
+    expect(await history(h13c.admin)).toBe(12);
     // Ninguna fila cambia: interest_model e interest_version quedan como
     // legado de solo lectura.
     expect(await h13cSnapshot(h13c.admin)).toEqual(before);
@@ -1287,7 +1307,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
     return row?.definition ?? "";
   }
 
-  it("pnpm db:migrate aplica 0008 a 0010, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0008 a 0011, conserva los datos y deja el mismo catálogo", async () => {
     const h14 = await server.createDatabase();
     await migrateUpTo(h14.migrationUrl, "0007_opportunity_demand_facts");
     await seedTenants(h14.admin);
@@ -1300,7 +1320,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
 
     await runMigrations(h14.migrationUrl);
 
-    expect(await history(h14.admin)).toBe(11);
+    expect(await history(h14.admin)).toBe(12);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia.
     expect(await h14Snapshot(h14.admin)).toEqual(before);
     const [reasons] = await h14.admin<{ count: number }[]>`
@@ -1357,7 +1377,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
       UPDATE public.opportunities SET stage = 'new' WHERE id = ${OPPORTUNITIES[0]!.id}
     `;
     await runMigrations(h14.migrationUrl);
-    expect(await history(h14.admin)).toBe(11);
+    expect(await history(h14.admin)).toBe(12);
     expect(await catalogSnapshot(h14.admin)).toEqual(afterMigration);
   });
 
@@ -1576,7 +1596,7 @@ describe("0009 sobre una base en H1.6", () => {
     return row;
   }
 
-  it("pnpm db:migrate aplica 0009 y 0010, conserva los datos (en todas las etapas abiertas) y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0009 a 0011, conserva los datos (en todas las etapas abiertas) y deja el mismo catálogo", async () => {
     const h16 = await server.createDatabase();
     await migrateUpTo(h16.migrationUrl, "0008_opportunity_stages");
     await seedTenants(h16.admin);
@@ -1592,7 +1612,7 @@ describe("0009 sobre una base en H1.6", () => {
 
     await runMigrations(h16.migrationUrl);
 
-    expect(await history(h16.admin)).toBe(11);
+    expect(await history(h16.admin)).toBe(12);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia, ni stock.
     expect(await h16Snapshot(h16.admin)).toEqual(before);
     const [linked] = await h16.admin<{ count: number }[]>`
@@ -1837,7 +1857,7 @@ describe("0010 sobre una base en el Hito 2", () => {
     return base;
   }
 
-  it("pnpm db:migrate aplica solo 0010, conserva los datos (también las perdidas con motivos que siguen) y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0010 y 0011, conserva los datos (también las perdidas con motivos que siguen) y deja el mismo catálogo", async () => {
     const hito2 = await hito2Base();
     const before = await hito2Snapshot(hito2.admin);
     expect(await history(hito2.admin)).toBe(10);
@@ -1846,7 +1866,7 @@ describe("0010 sobre una base en el Hito 2", () => {
 
     await runMigrations(hito2.migrationUrl);
 
-    expect(await history(hito2.admin)).toBe(11);
+    expect(await history(hito2.admin)).toBe(12);
     // Ninguna fila cambia: ni etapas, ni motivos, ni timestamps, ni stock.
     expect(await hito2Snapshot(hito2.admin)).toEqual(before);
     const [metadata] = await hito2.admin<{ count: number }[]>`
@@ -1889,7 +1909,7 @@ describe("0010 sobre una base en el Hito 2", () => {
     // Quien lo decide la corrige a mano (acá, la descarta) y 0010 se aplica.
     await hito2.admin`DELETE FROM public.opportunities WHERE id = ${won}`;
     await runMigrations(hito2.migrationUrl);
-    expect(await history(hito2.admin)).toBe(11);
+    expect(await history(hito2.admin)).toBe(12);
     expect(await catalogSnapshot(hito2.admin)).toEqual(afterMigration);
   });
 
@@ -1925,7 +1945,7 @@ describe("0010 sobre una base en el Hito 2", () => {
         await tx`ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_stage_transition`;
       });
       await runMigrations(hito2.migrationUrl);
-      expect(await history(hito2.admin)).toBe(11);
+      expect(await history(hito2.admin)).toBe(12);
       expect(await catalogSnapshot(hito2.admin)).toEqual(afterMigration);
     },
   );
@@ -2011,9 +2031,11 @@ describe("0010 sobre una base en el Hito 2", () => {
     const block = sql.split("--> statement-breakpoint").at(-1)!.trim();
     expect(block).toMatch(/^-- Custom SQL · postcondiciones[\s\S]*DO \$\$/);
 
+    // Sobre una base en el Hito 2A: 0011 amplía las altas que esta
+    // postcondición admite.
     const fresh = await server.createDatabase();
-    await runMigrations(fresh.migrationUrl);
-    // Control: sobre el catálogo real, la postcondición pasa.
+    await migrateUpTo(fresh.migrationUrl, "0010_opportunity_closure_metadata");
+    // Control: sobre el catálogo del Hito 2A, la postcondición pasa.
     await fresh.admin.begin(async (tx) => {
       await tx.unsafe(block);
     });
@@ -2073,7 +2095,7 @@ describe("0010 sobre una base en el Hito 2", () => {
 
       await runMigrations(hito2.migrationUrl);
 
-      expect(await history(hito2.admin)).toBe(11);
+      expect(await history(hito2.admin)).toBe(12);
       expect(
         await hito2.admin`
           SELECT to_jsonb(op) AS row FROM public.opportunities op ORDER BY op.id
@@ -2106,7 +2128,7 @@ describe("0010 sobre una base en el Hito 2", () => {
       // La transacción se revirtió: el CHECK de motivos que la segunda
       // pasada borró antes de fallar sigue ahí, igual que todo lo demás.
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(11);
+      expect(await history(fresh.admin)).toBe(12);
     });
 
     it("se revierte sola al catálogo del Hito 2 y se vuelve a aplicar idéntica", async () => {
@@ -2114,8 +2136,12 @@ describe("0010 sobre una base en el Hito 2", () => {
       await migrateUpTo(reference.migrationUrl, HITO_2);
       const hito2Catalog = await catalogSnapshot(reference.admin);
 
+      // Sobre una base en el Hito 2A (0011 se revierte en su propio bloque).
       const fresh = await server.createDatabase();
-      await runMigrations(fresh.migrationUrl);
+      await migrateUpTo(
+        fresh.migrationUrl,
+        "0010_opportunity_closure_metadata",
+      );
       const owner = postgres(fresh.migrationUrl, {
         max: 1,
         onnotice: () => {},
@@ -2137,7 +2163,337 @@ describe("0010 sobre una base en el Hito 2", () => {
       expect(await history(fresh.admin)).toBe(10);
 
       await runMigrations(fresh.migrationUrl);
+      expect(await history(fresh.admin)).toBe(12);
+      expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+    });
+  });
+});
+
+/*
+ * Una base en el Hito 2A (0000 a 0010, DEC-034) recibe 0011 (DEC-036): la
+ * tabla `messages`, la unique de opportunities que es destino de su FK, la
+ * función del toque de actividad con sus dos triggers y la función del
+ * trigger de la oportunidad ampliada. No toca ninguna fila: las notas que ya
+ * existían no mueven la recencia (sin backfill).
+ */
+describe("0011 sobre una base en el Hito 2A", () => {
+  const HITO_2A = "0010_opportunity_closure_metadata";
+
+  /** Todo lo que puede tener staging, fila por fila. */
+  async function hito2aSnapshot(sql: TestDatabase["admin"]) {
+    const [snapshot] = await sql<{ data: unknown }[]>`
+      SELECT jsonb_build_object(
+        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
+        'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
+        'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
+        'opportunities', (SELECT jsonb_agg(op ORDER BY op.id) FROM public.opportunities op),
+        'vehicles', (SELECT jsonb_agg(v ORDER BY v.id) FROM public.vehicles v),
+        'demand_facts', (SELECT jsonb_agg(f ORDER BY f.id) FROM public.opportunity_demand_facts f),
+        'notes', (SELECT jsonb_agg(n ORDER BY n.id) FROM public.opportunity_notes n)
+      ) AS data
+    `;
+    return snapshot?.data;
+  }
+
+  async function history(sql: TestDatabase["admin"]): Promise<number> {
+    const [row] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+    `;
+    return row?.count ?? 0;
+  }
+
+  /** Si existen la tabla de mensajes y la función del toque. */
+  async function hito4Objects(sql: TestDatabase["admin"]) {
+    const [row] = await sql<{ messages: boolean; touch: boolean }[]>`
+      SELECT
+        to_regclass('public.messages') IS NOT NULL AS messages,
+        to_regprocedure('private.touch_opportunity_activity()') IS NOT NULL AS touch
+    `;
+    return row;
+  }
+
+  /** Una base en el Hito 2A con datos y notas anteriores a 0011. */
+  async function hito2aBase(): Promise<TestDatabase> {
+    const base = await server.createDatabase();
+    await migrateUpTo(base.migrationUrl, HITO_2A);
+    await seedTenants(base.admin);
+    await seedOpportunities(base.admin);
+    await seedVehicles(base.admin);
+    const [first] = OPPORTUNITIES;
+    await base.admin`
+      INSERT INTO public.opportunity_notes (organization_id, opportunity_id,
+        body, recorded_by)
+      VALUES (${first!.organizationId}, ${first!.id}, 'Nota del Hito 2',
+        ${USER_A})
+    `;
+    return base;
+  }
+
+  it("pnpm db:migrate aplica solo 0011, conserva los datos (sin backfill de la recencia desde las notas) y deja el mismo catálogo", async () => {
+    const hito2a = await hito2aBase();
+    const before = await hito2aSnapshot(hito2a.admin);
+    expect(await history(hito2a.admin)).toBe(11);
+    expect(await hito4Objects(hito2a.admin)).toEqual({
+      messages: false,
+      touch: false,
+    });
+
+    await runMigrations(hito2a.migrationUrl);
+
+    expect(await history(hito2a.admin)).toBe(12);
+    // Ninguna fila cambia: ni la recencia, ni updated_at, ni las notas.
+    expect(await hito2aSnapshot(hito2a.admin)).toEqual(before);
+    const [messages] = await hito2a.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.messages
+    `;
+    expect(messages?.count).toBe(0);
+    expect(await catalogSnapshot(hito2a.admin)).toEqual(afterMigration);
+  });
+
+  /*
+   * Postcondiciones de 0011: las de 0010, con messages entre las altas
+   * aprobadas y los ledgers append-only. Si la base no las cumple, 0011
+   * falla y no aplica nada.
+   */
+  const INSERT_MESSAGE =
+    /may only insert into contacts, opportunities, vehicles, opportunity_demand_facts \(H1\.4\), opportunity_notes \(Hito 2\) and messages \(Hito 4\)/;
+  const SERVICE_ROLE_MESSAGE =
+    /service_role must not update, delete or truncate opportunity_demand_facts, opportunity_notes or messages/;
+  const UPDATE_COLUMNS_MESSAGE =
+    /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\) and opportunities\.stage, loss_reason, vehicle_id, updated_at and the closure metadata \(H1\.6, Hito 2, DEC-034\)/;
+  const unsafeStates: [string, string, string, RegExp][] = [
+    [
+      "authenticated con UPDATE sobre opportunities.last_activity_at (el toque no abre una edición)",
+      "GRANT UPDATE (last_activity_at) ON public.opportunities TO authenticated",
+      "REVOKE UPDATE (last_activity_at) ON public.opportunities FROM authenticated",
+      UPDATE_COLUMNS_MESSAGE,
+    ],
+    [
+      "authenticated con INSERT fuera de las altas aprobadas (aun con policy y WITH CHECK)",
+      `GRANT INSERT ON public.memberships TO authenticated;
+       CREATE POLICY probe_insert ON public.memberships FOR INSERT TO authenticated
+         WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
+      `DROP POLICY probe_insert ON public.memberships;
+       REVOKE INSERT ON public.memberships FROM authenticated`,
+      INSERT_MESSAGE,
+    ],
+    [
+      "service_role con DELETE sobre la bitácora",
+      "GRANT DELETE ON public.opportunity_notes TO service_role",
+      "REVOKE DELETE ON public.opportunity_notes FROM service_role",
+      SERVICE_ROLE_MESSAGE,
+    ],
+    [
+      "el trigger de transiciones deshabilitado",
+      "ALTER TABLE public.opportunities DISABLE TRIGGER opportunities_stage_transition",
+      "ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_stage_transition",
+      /^DEC-032: opportunities need the enabled BEFORE UPDATE stage transition trigger/,
+    ],
+  ];
+
+  it.each(unsafeStates)(
+    "0011 falla cerrada ante %s",
+    async (_, unsafe, restore, reason) => {
+      const hito2a = await server.createDatabase();
+      await migrateUpTo(hito2a.migrationUrl, HITO_2A);
+      await hito2a.admin.unsafe(unsafe);
+      try {
+        await expect(runMigrations(hito2a.migrationUrl)).rejects.toThrow(
+          "pnpm db:migrate failed",
+        );
+        await expect(
+          migrateReportingErrors(hito2a.migrationUrl),
+        ).rejects.toMatchObject({
+          cause: { message: expect.stringMatching(reason) },
+        });
+        // Nada se aplicó: ni la tabla, ni la función, ni los triggers.
+        expect(await history(hito2a.admin)).toBe(11);
+        expect(await hito4Objects(hito2a.admin)).toEqual({
+          messages: false,
+          touch: false,
+        });
+      } finally {
+        await hito2a.admin.unsafe(restore);
+      }
+      // Corregido el estado, 0011 se aplica.
+      await runMigrations(hito2a.migrationUrl);
+      expect(await catalogSnapshot(hito2a.admin)).toEqual(afterMigration);
+    },
+  );
+
+  /*
+   * Las postcondiciones que dependen de lo que crea la misma migración (la
+   * función del toque, sus triggers, la función ampliada y los mensajes) se
+   * corren contra una base ya migrada: pasan sobre el catálogo real y fallan
+   * cerradas ante cada mutación.
+   */
+  it("la postcondición de 0011 exige el toque de actividad (función, triggers y regla), las FKs de los mensajes y los mensajes append-only", async () => {
+    const sql = await readFile(
+      new URL("0011_conversations_and_activity_trigger.sql", MIGRATIONS_DIR),
+      "utf8",
+    );
+    const block = sql.split("--> statement-breakpoint").at(-1)!.trim();
+    expect(block).toMatch(/^-- Custom SQL · postcondiciones[\s\S]*DO \$\$/);
+
+    const fresh = await server.createDatabase();
+    await runMigrations(fresh.migrationUrl);
+    // Control: sobre el catálogo real, la postcondición pasa.
+    await fresh.admin.begin(async (tx) => {
+      await tx.unsafe(block);
+    });
+
+    const TOUCH_FUNCTION =
+      /^DEC-036: private\.touch_opportunity_activity\(\) must be SECURITY DEFINER owned by postgres/;
+    const TOUCH_TRIGGERS =
+      /^DEC-036: opportunity_notes and messages need the enabled AFTER INSERT activity triggers/;
+    const broken: [string, RegExp][] = [
+      [
+        await function0010(),
+        /^DEC-036: the stage transition trigger must validate the activity touch/,
+      ],
+      [
+        "ALTER TABLE public.opportunity_notes DISABLE TRIGGER opportunity_notes_touch_activity",
+        TOUCH_TRIGGERS,
+      ],
+      [
+        "DROP TRIGGER messages_touch_activity ON public.messages",
+        TOUCH_TRIGGERS,
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION private.touch_opportunity_activity() TO authenticated",
+        TOUCH_FUNCTION,
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION private.touch_opportunity_activity() TO PUBLIC",
+        TOUCH_FUNCTION,
+      ],
+      [
+        "ALTER FUNCTION private.touch_opportunity_activity() SECURITY INVOKER",
+        TOUCH_FUNCTION,
+      ],
+      [
+        "ALTER FUNCTION private.touch_opportunity_activity() RESET search_path",
+        TOUCH_FUNCTION,
+      ],
+      [
+        "ALTER FUNCTION private.touch_opportunity_activity() OWNER TO service_role",
+        TOUCH_FUNCTION,
+      ],
+      [
+        "ALTER TABLE public.messages DROP CONSTRAINT messages_opportunity_fk",
+        /^DEC-036: messages need the composite contact and opportunity foreign keys/,
+      ],
+      [
+        `ALTER TABLE public.messages DROP CONSTRAINT messages_contact_fk;
+         ALTER TABLE public.messages ADD CONSTRAINT messages_contact_fk
+           FOREIGN KEY (organization_id, contact_id) REFERENCES public.contacts (organization_id, id)
+           ON DELETE RESTRICT NOT VALID`,
+        /^DEC-036: messages need the composite contact and opportunity foreign keys/,
+      ],
+      [
+        `CREATE POLICY probe ON public.messages FOR DELETE TO authenticated
+           USING (organization_id IN (SELECT private.user_org_ids()))`,
+        /opportunity_demand_facts, opportunity_notes and messages are append-only: no UPDATE, DELETE or ALL policies/,
+      ],
+      [
+        `GRANT UPDATE (content) ON public.messages TO authenticated;
+         CREATE POLICY probe ON public.messages FOR UPDATE TO authenticated
+           USING (organization_id IN (SELECT private.user_org_ids()))
+           WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
+        UPDATE_COLUMNS_MESSAGE,
+      ],
+      ["GRANT DELETE ON public.messages TO service_role", SERVICE_ROLE_MESSAGE],
+      [
+        "GRANT UPDATE (content) ON public.messages TO service_role",
+        SERVICE_ROLE_MESSAGE,
+      ],
+      ["ALTER TABLE public.messages DISABLE ROW LEVEL SECURITY", /RLS enabled/],
+      [
+        "GRANT UPDATE (last_activity_at) ON public.opportunities TO authenticated",
+        UPDATE_COLUMNS_MESSAGE,
+      ],
+    ];
+    for (const [statement, reason] of broken) {
+      await expect(
+        fresh.admin.begin(async (tx) => {
+          await tx.unsafe(statement);
+          await tx.unsafe(block);
+        }),
+        statement.slice(0, 80),
+      ).rejects.toMatchObject({ message: expect.stringMatching(reason) });
+    }
+  });
+
+  describe("idempotencia", () => {
+    it("pnpm db:migrate dos veces: la segunda no aplica nada, ni toca los datos", async () => {
+      const hito2a = await hito2aBase();
+      await runMigrations(hito2a.migrationUrl);
+      const rows = await hito2aSnapshot(hito2a.admin);
+      const catalog = await catalogSnapshot(hito2a.admin);
+
+      await runMigrations(hito2a.migrationUrl);
+
+      expect(await history(hito2a.admin)).toBe(12);
+      expect(await hito2aSnapshot(hito2a.admin)).toEqual(rows);
+      expect(await catalogSnapshot(hito2a.admin)).toEqual(catalog);
+    });
+
+    it("volver a ejecutar su SQL fuera del historial falla entero y no deja nada a medias", async () => {
+      const sql = await readFile(
+        new URL("0011_conversations_and_activity_trigger.sql", MIGRATIONS_DIR),
+        "utf8",
+      );
+      const statements = sql.split("--> statement-breakpoint");
+      const fresh = await server.createDatabase();
+      await runMigrations(fresh.migrationUrl);
+      const owner = postgres(fresh.migrationUrl, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        // La unique de opportunities ya existe: 42P07 en el primer statement.
+        await expect(
+          owner.begin(async (tx) => {
+            for (const statement of statements) await tx.unsafe(statement);
+          }),
+        ).rejects.toMatchObject({ code: "42P07" });
+      } finally {
+        await owner.end();
+      }
+      expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+      expect(await history(fresh.admin)).toBe(12);
+    });
+
+    it("se revierte sola al catálogo del Hito 2A y se vuelve a aplicar idéntica", async () => {
+      const reference = await server.createDatabase();
+      await migrateUpTo(reference.migrationUrl, HITO_2A);
+      const hito2aCatalog = await catalogSnapshot(reference.admin);
+
+      const fresh = await server.createDatabase();
+      await runMigrations(fresh.migrationUrl);
+      const owner = postgres(fresh.migrationUrl, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        // La reversión corre con la credencial de migración, dueña de todo.
+        await owner.begin(async (tx) => {
+          await tx.unsafe(REVERT_0011);
+          await tx.unsafe(await function0010());
+          await tx.unsafe(`
+            DELETE FROM drizzle.__drizzle_migrations
+            WHERE created_at = (SELECT max(created_at) FROM drizzle.__drizzle_migrations)
+          `);
+        });
+      } finally {
+        await owner.end();
+      }
+      expect(await catalogSnapshot(fresh.admin)).toEqual(hito2aCatalog);
       expect(await history(fresh.admin)).toBe(11);
+
+      await runMigrations(fresh.migrationUrl);
+      expect(await history(fresh.admin)).toBe(12);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });

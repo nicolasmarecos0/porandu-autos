@@ -11,6 +11,11 @@ import {
 import { describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
+import {
+  MESSAGE_CHANNELS,
+  MESSAGE_DIRECTIONS,
+  MESSAGE_MAX_LENGTH,
+} from "@/domains/conversations/messages";
 import { DEMAND_FACTS, PURCHASE_TYPES } from "@/domains/demand/facts";
 import {
   DEMAND_FACT_STATUSES,
@@ -64,10 +69,11 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts) y la del Hito 2 (opportunity_notes)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes) y la del Hito 4 (messages)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "memberships",
+      "messages",
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",
@@ -154,7 +160,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles, opportunity_demand_facts y opportunity_notes, la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes y messages, la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -202,6 +208,25 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using:
           '"memberships"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "messages",
+        name: "messages_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck: `"messages"."organization_id" IN (SELECT private.user_org_ids()) AND "messages"."recorded_by" = (select auth.uid()) AND "messages"."created_at" = now()`,
+      },
+      {
+        table: "messages",
+        name: "messages_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"messages"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
       },
       {
@@ -804,7 +829,79 @@ describe("db/schema", () => {
     );
   });
 
-  it("opportunities: unique (organization_id, id), destino de la FK de la demanda (H1.4)", () => {
+  it("messages: append-only, del contacto y opcionalmente de una oportunidad de ese contacto, con canal, dirección y texto acotados (Hito 4)", () => {
+    expect(
+      table("messages").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", "PgUUID", true, true],
+      ["organization_id", "PgUUID", true, false],
+      ["contact_id", "PgUUID", true, false],
+      ["opportunity_id", "PgUUID", false, false],
+      ["channel", "PgText", true, false],
+      ["direction", "PgText", true, false],
+      ["content", "PgText", true, false],
+      ["recorded_by", "PgUUID", true, false],
+      ["created_at", "PgTimestamp", true, true],
+    ]);
+    // Reloj de la base, nunca de la aplicación.
+    expect(column("messages", "created_at").defaultFn).toBeUndefined();
+    expect(foreignKeys("messages")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,contact_id -> public.contacts(organization_id,id) ON DELETE restrict",
+      "organization_id,opportunity_id,contact_id -> public.opportunities(organization_id,id,contact_id) ON DELETE restrict",
+      "recorded_by -> public.profiles(id) ON DELETE restrict",
+    ]);
+    const dialect = new PgDialect();
+    expect(
+      table("messages").checks.map((c) => ({
+        name: c.name,
+        sql: dialect.sqlToQuery(c.value).sql,
+      })),
+    ).toEqual([
+      {
+        name: "messages_channel_check",
+        sql: `"messages"."channel" IN ('whatsapp', 'email', 'manual')`,
+      },
+      {
+        name: "messages_direction_check",
+        sql: `"messages"."direction" IN ('inbound', 'outbound')`,
+      },
+      {
+        name: "messages_content_check",
+        sql: `char_length("messages"."content") BETWEEN 1 AND 4096 AND "messages"."content" = btrim("messages"."content", ' ' || chr(10)) AND translate("messages"."content", chr(10), '') !~ '[[:cntrl:]]'`,
+      },
+    ]);
+    // Las listas y el largo máximo de la base son los del dominio.
+    expect(schema.messageChannels).toEqual(MESSAGE_CHANNELS);
+    expect(schema.messageDirections).toEqual(MESSAGE_DIRECTIONS);
+    expect(schema.messageMaxLength).toBe(MESSAGE_MAX_LENGTH);
+    expect(
+      table("messages").indexes.map((i) => ({
+        name: i.config.name,
+        columns: i.config.columns.map((c) => ("name" in c ? c.name : c)),
+      })),
+    ).toEqual([
+      {
+        name: "messages_organization_id_opportunity_id_idx",
+        columns: ["organization_id", "opportunity_id", "created_at"],
+      },
+      {
+        name: "messages_organization_id_contact_id_idx",
+        columns: ["organization_id", "contact_id", "created_at"],
+      },
+    ]);
+    // Append-only: no hay updated_at ni nada que se edite.
+    expect(table("messages").columns.map((c) => c.name)).not.toContain(
+      "updated_at",
+    );
+  });
+
+  it("opportunities: unique (organization_id, id), destino de la FK de la demanda (H1.4), y (organization_id, id, contact_id), destino de la de los mensajes (Hito 4)", () => {
     expect(
       table("opportunities").uniqueConstraints.map((u) => ({
         name: u.getName(),
@@ -814,6 +911,10 @@ describe("db/schema", () => {
       {
         name: "opportunities_organization_id_id_key",
         columns: ["organization_id", "id"],
+      },
+      {
+        name: "opportunities_organization_id_id_contact_id_key",
+        columns: ["organization_id", "id", "contact_id"],
       },
     ]);
   });
@@ -825,6 +926,7 @@ describe("db/schema", () => {
     expect(tenantScoped.map((t) => t.name).sort()).toEqual([
       "contacts",
       "memberships",
+      "messages",
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",

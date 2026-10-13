@@ -132,6 +132,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0008_opportunity_stages",
       "0009_opportunity_notes_vehicle_link",
       "0010_opportunity_closure_metadata",
+      "0011_conversations_and_activity_trigger",
     ]);
   });
 
@@ -354,6 +355,8 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.demand-facts-chain",
         "schema.opportunity-stages",
         "schema.opportunity-notes",
+        "schema.messages",
+        "schema.activity-touch",
         "private.schema",
         "private.user_org_ids",
         "app_runtime.attributes",
@@ -366,6 +369,7 @@ describe("migración oficial y verificación post-migración", () => {
         "privileges.policy-coverage",
         "privileges.service_role-demand-facts",
         "privileges.service_role-opportunity-notes",
+        "privileges.service_role-messages",
         "privileges.create",
         "public.security-definer",
         "privileges.default-acl",
@@ -676,6 +680,92 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta un mensaje sin CHECK de canal, un trigger de actividad deshabilitado, una función del toque ejecutable y un service_role que puede borrar mensajes (Hito 4)", async () => {
+    await migrated.admin.unsafe(`
+      ALTER TABLE public.messages DROP CONSTRAINT messages_channel_check;
+      ALTER TABLE public.opportunity_notes DISABLE TRIGGER opportunity_notes_touch_activity;
+      GRANT DELETE ON public.messages TO service_role;
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "schema.messages",
+        "schema.activity-touch",
+        "privileges.service_role-messages",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(`
+        ALTER TABLE public.messages ADD CONSTRAINT messages_channel_check
+          CHECK (channel IN ('whatsapp', 'email', 'manual'));
+        ALTER TABLE public.opportunity_notes ENABLE TRIGGER opportunity_notes_touch_activity;
+        REVOKE DELETE ON public.messages FROM service_role;
+      `);
+    }
+    // EXECUTE para authenticated sobre la función SECURITY DEFINER.
+    await migrated.admin.unsafe(
+      "GRANT EXECUTE ON FUNCTION private.touch_opportunity_activity() TO authenticated",
+    );
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "schema.activity-touch",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(
+        "REVOKE EXECUTE ON FUNCTION private.touch_opportunity_activity() FROM authenticated",
+      );
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
+  it("la verificación detecta la función de transiciones de 0010 sin la regla del toque de actividad (DEC-036)", async () => {
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef('private.enforce_opportunity_stage_transition()'::regprocedure) AS definition
+    `;
+    const v0010 = await readFile(
+      new URL(
+        "../../db/migrations/0010_opportunity_closure_metadata.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const function0010 = v0010.slice(
+      v0010.indexOf('CREATE OR REPLACE FUNCTION "private"'),
+      v0010.indexOf("$$;", v0010.indexOf("AS $$")) + 3,
+    );
+    expect(function0010).toContain("opportunities_closure_immutable");
+    expect(function0010).not.toContain("opportunities_activity_touch");
+
+    await migrated.admin.unsafe(function0010);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "schema.opportunity-stages",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(current!.definition);
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -686,11 +776,12 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-034): 0010 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 2 (0000 a 0009) si
- * 0009 ya se aplicó; si no, en H1.6 (0000 a 0008), H1.4 (0000 a 0007) o
- * todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
- * exactamente lo pendiente en cada caso. Esta rama no aplica nada a staging.
+ * El próximo rollout real (DEC-036): 0011 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 2A (0000 a 0010) si
+ * 0010 ya se aplicó; si no, en el Hito 2 (0000 a 0009), H1.6 (0000 a 0008),
+ * H1.4 (0000 a 0007) o todavía en H1.3C (0000 a 0006, DEC-028):
+ * expected_migrations declara exactamente lo pendiente en cada caso. Esta
+ * rama no aplica nada a staging.
  */
 describe.each([
   {
@@ -702,6 +793,7 @@ describe.each([
       "0008_opportunity_stages",
       "0009_opportunity_notes_vehicle_link",
       "0010_opportunity_closure_metadata",
+      "0011_conversations_and_activity_trigger",
     ],
   },
   {
@@ -712,6 +804,7 @@ describe.each([
       "0008_opportunity_stages",
       "0009_opportunity_notes_vehicle_link",
       "0010_opportunity_closure_metadata",
+      "0011_conversations_and_activity_trigger",
     ],
   },
   {
@@ -721,16 +814,26 @@ describe.each([
     expected: [
       "0009_opportunity_notes_vehicle_link",
       "0010_opportunity_closure_metadata",
+      "0011_conversations_and_activity_trigger",
     ],
   },
   {
     stagingAt: "0009_opportunity_notes_vehicle_link",
     label: "Hito 2",
     applied: 10,
-    expected: ["0010_opportunity_closure_metadata"],
+    expected: [
+      "0010_opportunity_closure_metadata",
+      "0011_conversations_and_activity_trigger",
+    ],
+  },
+  {
+    stagingAt: "0010_opportunity_closure_metadata",
+    label: "Hito 2A",
+    applied: 11,
+    expected: ["0011_conversations_and_activity_trigger"],
   },
 ])(
-  "staging en $label: rollout hasta 0010",
+  "staging en $label: rollout hasta 0011",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

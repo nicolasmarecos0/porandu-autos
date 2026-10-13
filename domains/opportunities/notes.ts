@@ -1,5 +1,3 @@
-import { authorLabel, formatDemandDate } from "@/domains/demand/presentation";
-
 /*
  * Bitácora comercial de una oportunidad (Hito 2, DEC-033 §1): notas libres
  * del vendedor sobre la negociación, append-only. Módulo puro y apto para el
@@ -60,43 +58,14 @@ export function parseNoteBody(raw: string): ParsedNoteBody {
   return { ok: true, body };
 }
 
-/** Una nota tal como la lee la capa de datos. */
+/**
+ * Una nota tal como la lee la capa de datos. Desde el Hito 4 se muestra en
+ * el muro de actividad, junto con los mensajes (activityTimeline() de
+ * domains/conversations/timeline.ts).
+ */
 export type NoteRow = Readonly<{
   id: string;
   body: string;
   recordedBy: string;
   recordedAt: Date;
 }>;
-
-/** Una nota en la bitácora de /opportunities/[id]: sin ids de usuario. */
-export type NoteEntry = Readonly<{
-  id: string;
-  body: string;
-  /** "Vos" u "Otro miembro", contra el usuario que mira. */
-  author: string;
-  /** Fecha y hora de Asunción: "11 oct 2026 14:32". */
-  at: string;
-}>;
-
-/**
- * Bitácora para mostrar: de la nota más reciente a la más vieja (a igual
- * instante, por id, para que el orden sea determinista), con el autor
- * presentado contra el usuario que mira.
- */
-export function noteTimeline(
-  rows: readonly NoteRow[],
-  viewerUserId: string,
-): readonly NoteEntry[] {
-  return rows
-    .toSorted(
-      (a, b) =>
-        b.recordedAt.getTime() - a.recordedAt.getTime() ||
-        b.id.localeCompare(a.id),
-    )
-    .map((row) => ({
-      id: row.id,
-      body: row.body,
-      author: authorLabel(row.recordedBy, viewerUserId),
-      at: formatDemandDate(row.recordedAt),
-    }));
-}

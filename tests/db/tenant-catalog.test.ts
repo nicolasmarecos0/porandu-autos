@@ -16,10 +16,10 @@ import {
  * 0002_opportunities_persistence, 0003_contact_identity_opportunity_create,
  * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
- * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link y
- * 0010_opportunity_closure_metadata, leídos del
- * catálogo de PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2, C3 y C9).
- * El acceso a datos se prueba en tenant-isolation.test.ts,
+ * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
+ * 0010_opportunity_closure_metadata y 0011_conversations_and_activity_trigger,
+ * leídos del catálogo de PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2,
+ * C3 y C9). El acceso a datos se prueba en tenant-isolation.test.ts,
  * opportunities.test.ts, vehicles.test.ts, demand-facts.test.ts y los tests
  * de cada escritura.
  */
@@ -27,6 +27,7 @@ import {
 const TABLES = [
   "contacts",
   "memberships",
+  "messages",
   "opportunities",
   "opportunity_demand_facts",
   "opportunity_notes",
@@ -171,7 +172,7 @@ describe("rol de runtime app_runtime (ADR-001 §2)", () => {
 });
 
 describe("policies (ADR-001 §4)", () => {
-  it("lectura para authenticated, alta de contacts, opportunities, vehicles, opportunity_demand_facts y opportunity_notes con WITH CHECK, y las ediciones de vehicles y opportunities con USING y WITH CHECK, con la forma de referencia", async () => {
+  it("lectura para authenticated, alta de contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes y messages con WITH CHECK, y las ediciones de vehicles y opportunities con USING y WITH CHECK, con la forma de referencia", async () => {
     expect(await policies(db.admin)).toEqual([
       {
         table: "contacts",
@@ -196,6 +197,26 @@ describe("policies (ADR-001 §4)", () => {
       {
         table: "memberships",
         name: "memberships_select_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
+      },
+      {
+        table: "messages",
+        name: "messages_insert_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "INSERT",
+        using: null,
+        withCheck:
+          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (recorded_by = ( SELECT auth.uid() AS uid)) AND (created_at = now()))",
+      },
+      {
+        table: "messages",
+        name: "messages_select_member",
         permissive: "PERMISSIVE",
         roles: ["authenticated"],
         command: "SELECT",
@@ -337,9 +358,10 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles, opportunity_demand_facts y opportunity_notes, y UPDATE solo sobre opportunities y vehicles", async () => {
+  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes y messages, y UPDATE solo sobre opportunities y vehicles", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
       "authenticated INSERT contacts",
+      "authenticated INSERT messages",
       "authenticated INSERT opportunities",
       "authenticated INSERT opportunity_demand_facts",
       "authenticated INSERT opportunity_notes",
@@ -395,6 +417,7 @@ describe("grants (ADR-001 §3.6)", () => {
     );
     expect(writePolicies.map((policy) => policy.name)).toEqual([
       "contacts_insert_member",
+      "messages_insert_member",
       "opportunities_insert_member",
       "opportunities_update_stage",
       "opportunity_demand_facts_insert_member",
@@ -604,6 +627,99 @@ describe("grants (ADR-001 §3.6)", () => {
     `;
     expect(fn?.source).toContain("opportunities_vehicle_link");
     expect(fn?.source).toContain("opportunities_stage_transition");
+    // Y desde 0011, la del toque de actividad (DEC-036 §3).
+    expect(fn?.source).toContain("opportunities_activity_touch");
+    expect(fn?.source).toContain("pg_trigger_depth()");
+  });
+
+  it("messages (Hito 4): append-only. SELECT e INSERT de tabla para authenticated (diseño A), policies de lectura y alta; sin UPDATE ni DELETE para nadie de la app, tampoco service_role", async () => {
+    expect(
+      (
+        await tablePrivileges(db.admin, [
+          "anon",
+          "authenticated",
+          "app_runtime",
+          "service_role",
+        ])
+      ).filter((grant) => grant.endsWith(" messages")),
+    ).toEqual([
+      "authenticated INSERT messages",
+      "authenticated SELECT messages",
+      "service_role INSERT messages",
+      "service_role MAINTAIN messages",
+      "service_role REFERENCES messages",
+      "service_role SELECT messages",
+      "service_role TRIGGER messages",
+    ]);
+    const [insert] = await db.admin<{ table: boolean }[]>`
+      SELECT has_table_privilege('authenticated', 'public.messages', 'INSERT') AS table
+    `;
+    expect(insert?.table).toBe(true);
+    expect(
+      (await policies(db.admin))
+        .filter((policy) => policy.table === "messages")
+        .map((policy) => `${policy.name} ${policy.command}`),
+    ).toEqual([
+      "messages_insert_member INSERT",
+      "messages_select_member SELECT",
+    ]);
+  });
+
+  it("recencia (Hito 4, DEC-036 §1 y §2): una nota o un mensaje nuevos la mueven con un trigger AFTER INSERT de fila, habilitado, cuya función es SECURITY DEFINER de postgres, de search_path vacío y sin EXECUTE para nadie", async () => {
+    const triggers = await db.admin<
+      { table: string; definition: string; enabled: string }[]
+    >`
+      SELECT t.tgrelid::regclass::text AS table,
+        pg_get_triggerdef(t.oid) AS definition, t.tgenabled::text AS enabled
+      FROM pg_trigger t
+      WHERE t.tgfoid = to_regprocedure('private.touch_opportunity_activity()')
+        AND NOT t.tgisinternal
+      ORDER BY 1
+    `;
+    expect(triggers).toEqual([
+      {
+        table: "messages",
+        definition:
+          "CREATE TRIGGER messages_touch_activity AFTER INSERT ON public.messages FOR EACH ROW EXECUTE FUNCTION private.touch_opportunity_activity()",
+        enabled: "O",
+      },
+      {
+        table: "opportunity_notes",
+        definition:
+          "CREATE TRIGGER opportunity_notes_touch_activity AFTER INSERT ON public.opportunity_notes FOR EACH ROW EXECUTE FUNCTION private.touch_opportunity_activity()",
+        enabled: "O",
+      },
+    ]);
+    const [fn] = await db.admin<
+      {
+        securityDefiner: boolean;
+        config: string[] | null;
+        owner: string;
+        returns: string;
+        acl: string[] | null;
+      }[]
+    >`
+      SELECT p.prosecdef AS "securityDefiner", p.proconfig AS config,
+        p.proowner::regrole::text AS owner, p.prorettype::regtype::text AS returns,
+        p.proacl::text[] AS acl
+      FROM pg_proc p
+      WHERE p.oid = to_regprocedure('private.touch_opportunity_activity()')
+    `;
+    expect(fn).toEqual({
+      securityDefiner: true,
+      config: ['search_path=""'],
+      owner: "postgres",
+      returns: "trigger",
+      // Solo su owner: ni PUBLIC, ni authenticated, ni anon, ni app_runtime.
+      acl: ["postgres=X/postgres"],
+    });
+    const executors = await db.admin<{ role: string }[]>`
+      SELECT rolname AS role FROM pg_roles
+      WHERE has_function_privilege(oid, 'private.touch_opportunity_activity()', 'EXECUTE')
+        AND NOT rolsuper
+      ORDER BY 1
+    `;
+    expect(executors.map((r) => r.role)).toEqual(["postgres"]);
   });
 
   /*

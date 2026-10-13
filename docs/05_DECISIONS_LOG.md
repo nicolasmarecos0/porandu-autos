@@ -49,6 +49,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-033 | Bitácora comercial y unidad vinculada a la negociación (Hito 2) | Aceptada en principio | 2026-10-11 |
 | DEC-034 | Formalización y metadatos de cierre comercial Won/Lost | Aceptada en principio | 2026-10-11 |
 | DEC-035 | Motor de Scoring, Recency y NBA | Aceptada en principio | 2026-10-12 |
+| DEC-036 | Módulo de Conversaciones y Actualización Automática de Actividad | Aceptada en principio | 2026-10-13 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -704,6 +705,74 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - **`last_activity_at` todavía no se mueve después del alta.** Ni la demanda, ni la etapa, ni las notas, ni la unidad vinculada lo modifican (DEC-030 §10, DEC-032 §7, DEC-033 §6). Con la regla de §2, toda oportunidad abierta pasa a Enfriándose a los 2 días de creada y a Inactiva a los 5, aunque el vendedor anote todos los días: −40 y "Retomar contacto urgente". Se corrige cuando las conversaciones (H2a/H2b) actualicen `last_activity_at`, o antes con una decisión nueva que defina qué acto del vendedor cuenta como interacción con el cliente. Esta DEC no reinterpreta DEC-033 §6.
   - Intent queda sin dato y la cobertura nunca supera 60 % hasta que haya conversaciones.
   - La cola lee el stock disponible una vez por request y evalúa Match v0 contra cada oportunidad en memoria (O(oportunidades × unidades)). Si el volumen del piloto lo exige, se revisa con una decisión nueva (índices, límites o materialización).
+
+## DEC-036 — Módulo de Conversaciones y Actualización Automática de Actividad
+- **Estado:** Aceptada en principio · 2026-10-13. Formaliza el pedido del fundador "Hito 4: Módulo de Conversaciones y Tracking de Actividad (CRM WhatsApp)". Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** DEC-035 dejó documentado que `last_activity_at` no se mueve después del alta: toda oportunidad abierta pasa a Enfriándose a los 2 días y a Inactiva a los 5, aunque el vendedor anote todos los días. Tampoco hay dónde registrar los mensajes que se cruzan con el cliente. El fundador decide que toda interacción real "toque" la oportunidad y pide la estructura base de las conversaciones. Lo llama "Hito 4": no es el Hito 4 del Master Context §34 (Reactivación + Agenda) ni el H2a/H2b de DEC-029 §9. No hay integración con WhatsApp: los mensajes los registra un miembro.
+- **Decisión:**
+  1. **Recencia.** `last_activity_at` es la última interacción registrada con el cliente: el alta de la oportunidad (DEC-024 §7), una nota de la bitácora o un mensaje asociado a la oportunidad. La demanda, la etapa, el cierre, la unidad vinculada y los matches siguen sin moverla (DEC-030 §10, DEC-032 §7, DEC-034 §9, DEC-033 §6, DEC-031 §7).
+     - La mueve la base, no la aplicación: un trigger `AFTER INSERT FOR EACH ROW` sobre `opportunity_notes` y otro sobre `messages` llaman a `private.touch_opportunity_activity()`. Ninguna puerta de escritura, presente o futura (H2a/H2b), puede olvidarse de tocarla.
+     - El valor es `now()`, el mismo reloj de `recorded_at` y `created_at`. Solo avanza (`WHERE last_activity_at < now()`): dos registros en la misma transacción tocan una vez, y una transacción más vieja no la hace retroceder.
+     - *Propuesta de implementación:* un mensaje sin oportunidad no toca ninguna, tampoco las demás oportunidades del contacto.
+     - *Propuesta de implementación:* toca en cualquier etapa, también en una cerrada, porque un registro es un registro (DEC-033 §1). `last_activity_at` no es un metadato del cierre (DEC-034 §4).
+     - *Propuesta de implementación:* el toque no cambia `updated_at`. `updated_at` es la última edición de la oportunidad (etapa, unidad, cierre) y `last_activity_at`, la última interacción.
+  2. **Función del toque.** `private.touch_opportunity_activity()` es `SECURITY DEFINER` (owner `postgres`), con `search_path = ''` y sin EXECUTE para nadie. Vive en `private`: ADR-001 §3.6 prohíbe `SECURITY DEFINER` solo en `public`, y `private.user_org_ids()` es el precedente.
+     - Corre como dueño porque `authenticated` no tiene ni recibe UPDATE sobre `last_activity_at`. El toque no abre una edición nueva para los miembros.
+     - Solo actualiza la oportunidad de la fila recién insertada (`organization_id` y `opportunity_id` de `NEW`). Esa fila ya pasó la policy de INSERT (membership activa) y la FK compuesta, así que no puede cruzar organizaciones.
+  3. **Trigger de la oportunidad (amplía DEC-032 §4, DEC-033 §3 y DEC-034 §5).** `private.enforce_opportunity_stage_transition()` (misma función, mismo trigger) acepta una cuarta clase de UPDATE: el toque de actividad. Solo cambia `last_activity_at`, avanza, vale `now()` y viene del trigger de actividad (`pg_trigger_depth() > 1`).
+     - Un UPDATE directo de `last_activity_at`, también del rol dueño, se rechaza con `23514` y la constraint nueva `opportunities_activity_touch`. Lo mismo pasa con un pase de etapa o un cambio de unidad que la toque.
+     - Sigue habiendo una sola policy de UPDATE y los grants de `opportunities` no cambian.
+  4. **Mensajes (`messages`).** Una fila inmutable por mensaje registrado.
+     - `organization_id` es el `tenant_id` del pedido: la columna de tenant de todo el schema (ADR-001 §3.6, DEC-011). Las invariantes de catálogo y las postcondiciones la reconocen por ese nombre, y otro nombre las salteaba.
+     - `contact_id` es obligatorio: con quién es el mensaje.
+     - `opportunity_id` es opcional: el negocio al que se asocia.
+     - `channel` admite `whatsapp`, `email` o `manual`, y `direction` admite `inbound` (recibido del cliente) u `outbound` (enviado al cliente). Las dos usan `text` + CHECK reemplazable, como `stage` y `source` (DEC-023), y no un enum de Postgres.
+     - `content` tiene de 1 a 4096 caracteres y se normaliza como las notas (DEC-033 §1). 4096 es el máximo de un mensaje de texto de WhatsApp.
+     - `created_at` lo pone el reloj de la base (la policy exige `now()`).
+     - *Propuesta de implementación:* `recorded_by` es el miembro que registró el mensaje, con FK RESTRICT a `profiles`, como la bitácora y la demanda. La policy exige `auth.uid()`. El pedido fijaba campos mínimos y este agrega la autoría.
+     - FKs compuestas RESTRICT: `(organization_id, contact_id)` → `contacts` y `(organization_id, opportunity_id, contact_id)` → `opportunities (organization_id, id, contact_id)`, sobre una unique nueva. Un mensaje asociado a una oportunidad es siempre con su contacto y de la misma organización. Sin oportunidad, la segunda FK no aplica (`MATCH SIMPLE`).
+     - Índices `(organization_id, opportunity_id, created_at DESC)` para el muro y `(organization_id, contact_id, created_at DESC)` para la FK y la conversación del contacto.
+     - En el Hito 4 la única fuente es el miembro que registra un mensaje recibido o enviado. `channel = 'whatsapp'` dice por dónde ocurrió, no que haya integración. Registrar un mensaje "enviado" no envía nada: no hay acción económica ni irreversible (CLAUDE.md §2).
+  5. **Inmutables (RLS).**
+     - SELECT con membership activa. INSERT con membership activa, `recorded_by = auth.uid()` y `created_at = now()`.
+     - Sin policies de UPDATE, DELETE ni ALL. `authenticated` recibe SELECT e INSERT de tabla (diseño A, DEC-030 §9).
+     - `service_role` no tiene UPDATE, DELETE ni TRUNCATE (C-11). `anon` y `app_runtime` no reciben nada.
+     - La limitación C-14 (PII inmutable, sin redacción) también aplica.
+  6. **Puerta única.** La Server Action `addMessage()` (`lib/conversations/actions.ts`) escribe por `db/queries/record-message.ts`, y ESLint impide importar ese módulo desde otro lado: `requireTenant()` → leer y validar el pedido → `withTenant()` → la oportunidad en la organización activa (de ahí sale el contacto) → INSERT → RLS + FKs + CHECKs → trigger de actividad → revalidar `/opportunities` y `/opportunities/[id]`.
+     - El cliente solo envía la oportunidad, el canal, la dirección y el texto. Organización, contacto, autor y reloj no salen del pedido.
+     - Resultados: `recorded`, `invalid` (errores por campo y lo cargado), `not_found` (inexistente o de otra organización, sin distinguir) y `failed`.
+     - *Propuesta de implementación:* en el Hito 4 la única entrada es el Opportunity Workspace. El schema admite mensajes sin oportunidad (la futura superficie Conversations y la ingesta de H2b), pero no hay una acción para registrarlos.
+  7. **Validación con Zod.** El pedido se valida en `domains/conversations` con Zod (DEC-009), en el servidor siempre y en el navegador para avisar antes de enviar. Es el segundo uso, después de DEC-034 §7.
+  8. **Autorización.** La de DEC-027 §4: membership activa AND role IN (`admin`, `seller`). Cualquier miembro registra mensajes en la oportunidad de otro (DEC-023: sin responsable asignado).
+  9. **Notas.** `addOpportunityNote()` no cambia de forma. Como una nota ahora mueve la recencia y el orden de la cola, revalida también `/opportunities`.
+  10. **Migración `0011_conversations_and_activity_trigger`.**
+      - `opportunities` recibe la unique `(organization_id, id, contact_id)`, destino de la FK compuesta de los mensajes.
+      - La tabla `messages` llega con sus FKs, CHECKs, índices, RLS, policies y grants. También la función del toque, los dos triggers y la función del trigger de la oportunidad ampliada (`CREATE OR REPLACE`).
+      - Postcondiciones: las de 0010, con `messages` entre las altas aprobadas y entre los ledgers append-only. Además, la función del toque es `SECURITY DEFINER` de `postgres`, con `search_path` vacío y sin EXECUTE para nadie. Los dos triggers existen, están habilitados y son `AFTER INSERT FOR EACH ROW`, y la función del trigger de la oportunidad contiene la regla del toque.
+      - No toca ninguna fila existente: no hay backfill de `last_activity_at` desde las notas que ya existen.
+  11. **UI de `/opportunities/[id]`.** El panel "Notas" pasa a ser "Actividad": un muro que combina notas y mensajes, del registro más reciente al más viejo (el orden de la bitácora, DEC-033 §8).
+      - Cada entrada muestra su tipo ("Nota", "Mensaje recibido" o "Mensaje enviado", con el canal), el autor ("Vos" u "Otro miembro") y la fecha de Asunción.
+      - La combinación es una función pura del dominio, con desempate determinista.
+      - Arriba, un selector "Nota / Mensaje" elige qué se registra. El mensaje lleva canal, dirección, texto y contador.
+  12. **Fuera de este bloque:**
+      - Enviar o recibir por WhatsApp o email (webhooks, Cloud API, BSP: H2b, previa ADR-002), la extracción asistida (H2a) e IA.
+      - La superficie `/conversations` (inbox), registrar mensajes sin oportunidad, adjuntos y media, plantillas, estados de entrega o lectura, y editar o borrar mensajes.
+      - Intent desde conversaciones (sigue sin dato, DEC-035 §3) y que la NBA `log_contact_update` cuente mensajes además de notas (DEC-035 §5).
+      - Porandú Memory, notificaciones, omnicanalidad y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-033 §6: una nota sí modifica `last_activity_at`, por el trigger. La unidad vinculada sigue sin modificarla.
+  - DEC-024 §7: `last_activity_at = now()` ya no es solo la regla del alta manual. También la fijan las notas y los mensajes.
+  - DEC-035, Consecuencias: corrige "`last_activity_at` todavía no se mueve después del alta" con la decisión nueva que esa DEC preveía.
+  - DEC-032 §4, DEC-033 §3 y DEC-034 §5: el trigger de la oportunidad admite el toque de actividad como cuarta clase de UPDATE.
+  - DEC-017: `/opportunities/[id]` suma la conversación (ya prevista entre sus profundidades) en el mismo muro que la bitácora.
+  - DEC-029 (secuencia) y MC §34: bloque agregado por el fundador como "Hito 4". No reemplaza H2a, ADR-002 ni H2b. `messages` es la tabla que DEC-030 §12 prevé referenciar con `message_id`.
+  - DEC-001: la ruta Conversations sigue como placeholder.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: la función `SECURITY DEFINER` vive en `private` y cumple ADR-001 §3.6.
+- **Consecuencias:**
+  - `0011_conversations_and_activity_trigger` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0011_conversations_and_activity_trigger` si staging ya tiene `0010`, o con las anteriores que falten delante, en orden.
+  - La verificación de staging suma `schema.messages` y `schema.activity-touch` y amplía `schema.opportunity-stages` con la regla del toque.
+  - Una oportunidad con notas o mensajes recientes queda Activa y sube en la cola. Las penalizaciones de recencia de DEC-035 reflejan la interacción registrada.
+  - La ingesta de H2b escribirá en `messages` con la identidad de sistema de ADR-002, que no puede satisfacer la policy de INSERT de miembros. El trigger tocará la oportunidad sin cambios.
 
 ---
 

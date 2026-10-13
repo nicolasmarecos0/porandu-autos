@@ -213,6 +213,18 @@ const linkOpportunityVehicleImport = {
   message: LINK_OPPORTUNITY_VEHICLE_MESSAGE,
 };
 
+// Hito 4 (DEC-036 §6): los mensajes tienen una sola puerta, la Server Action
+// addMessage() (lib/conversations/actions.ts), que obtiene el contexto con
+// requireTenant() y valida el pedido antes de escribir.
+const RECORD_MESSAGE_MESSAGE =
+  "Messages are recorded only through the addMessage() Server Action (lib/conversations/actions.ts): requireTenant(), server-side validation, then withTenant().";
+const recordMessageImport = {
+  regex: "(^|/)db/queries/record-message$|^\\.{1,2}/record-message$",
+  // Los tipos del resultado (MessageWriteOutcome) no escriben nada.
+  allowTypeImports: true,
+  message: RECORD_MESSAGE_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -258,6 +270,7 @@ const basePatterns = [
   closeOpportunityImport,
   recordOpportunityNoteImport,
   linkOpportunityVehicleImport,
+  recordMessageImport,
   demandFactsImport,
   phoneLibraryImport,
 ];
@@ -413,6 +426,7 @@ const eslintConfig = defineConfig([
             closeOpportunityImport,
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
+            recordMessageImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -438,6 +452,7 @@ const eslintConfig = defineConfig([
             closeOpportunityImport,
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
+            recordMessageImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -460,8 +475,23 @@ const eslintConfig = defineConfig([
             opportunitiesMockImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            recordMessageImport,
             phoneLibraryImport,
           ],
+        },
+      ],
+    },
+  },
+  // Única puerta del registro de mensajes (Hito 4, DEC-036 §6).
+  {
+    files: ["lib/conversations/actions.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== recordMessageImport,
+          ),
         },
       ],
     },
@@ -484,6 +514,7 @@ const eslintConfig = defineConfig([
             closeOpportunityImport,
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
+            recordMessageImport,
             demandFactsImport,
             phoneLibraryImport,
             stockMockImport,
@@ -511,6 +542,7 @@ const eslintConfig = defineConfig([
             closeOpportunityImport,
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
+            recordMessageImport,
             demandFactsImport,
           ],
         },
@@ -536,6 +568,7 @@ const eslintConfig = defineConfig([
             closeOpportunityImport,
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
+            recordMessageImport,
             demandFactsImport,
             phoneLibraryImport,
           ],

@@ -127,12 +127,17 @@ export const opportunitySources = [
  *   se backfillean y solo se muestran mientras `desired_vehicle` nunca se
  *   cargó.
  * - `last_activity_at`: última interacción significativa (recencia, MC §12),
- *   no la última actualización técnica (`updated_at`).
+ *   no la última actualización técnica (`updated_at`). Nace con el alta y la
+ *   mueve la base al registrar una nota o un mensaje de la oportunidad
+ *   (Hito 4, DEC-036 §1: triggers de actividad de la migración 0011). Nadie
+ *   la edita directamente.
  * - Índice (organization_id, last_activity_at DESC): la cola de una
  *   organización, de la actividad más reciente a la más vieja.
  * - unique (organization_id, id) (H1.4): destino de la FK compuesta de
  *   `opportunity_demand_facts`, que impide apuntar a una oportunidad de otra
  *   organización.
+ * - unique (organization_id, id, contact_id) (Hito 4): destino de la FK
+ *   compuesta de `messages`, que además exige el contacto de la oportunidad.
  *
  * No se persisten scores, urgencia, NBA, señales, matches, trade-in ni
  * responsable: no tienen fuente todavía (H1.1).
@@ -153,8 +158,9 @@ export const opportunitySources = [
  * máquina que no toca la unidad (los metadatos de cierre solo cambian si el
  * pase cierra), o un cambio de unidad en `negotiating` sin pase. Como las
  * policies permisivas de un mismo comando se combinan con OR (DEC-028 §5),
- * esas reglas viven en el trigger y no en policies por transición. Sin
- * DELETE (default deny).
+ * esas reglas viven en el trigger y no en policies por transición. El mismo
+ * trigger admite el toque de actividad (DEC-036 §3): solo `last_activity_at`
+ * avanza a `now()`, desde el trigger de actividad. Sin DELETE (default deny).
  */
 export const opportunities = pgTable(
   "opportunities",
@@ -212,6 +218,13 @@ export const opportunities = pgTable(
       .on(t.organizationId, t.vehicleId)
       .where(sql`${t.vehicleId} IS NOT NULL`),
     unique("opportunities_organization_id_id_key").on(t.organizationId, t.id),
+    // Destino de la FK compuesta de `messages` (Hito 4, DEC-036 §4): un
+    // mensaje asociado a una oportunidad es con su contacto.
+    unique("opportunities_organization_id_id_contact_id_key").on(
+      t.organizationId,
+      t.id,
+      t.contactId,
+    ),
     check("opportunities_stage_check", oneOf(t.stage, opportunityStages)),
     check("opportunities_source_check", oneOf(t.source, opportunitySources)),
     // Un NULL pasa el CHECK de valores; la coherencia con la etapa la da el

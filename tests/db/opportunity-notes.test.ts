@@ -134,7 +134,7 @@ let sequence = 0;
 
 /**
  * Una oportunidad propia del caso, en `stage`, creada (y actualizada por
- * última vez) hace un día: así se ve que una nota no toca la oportunidad.
+ * última vez) hace un día: así se ve que una nota solo mueve su recencia.
  * Cerrada, trae metadatos de cierre válidos, y `won`, su unidad (DEC-034).
  */
 async function opportunity(
@@ -261,7 +261,7 @@ function directInsert(
 const ctxA = () => tenantContext(USER_A, ORG_1);
 
 describe("Server Action: requireTenant() → validación → withTenant() → INSERT", () => {
-  it("admin (A) anota: una fila con su autor, el reloj de la base y el texto normalizado; la oportunidad no cambia", async () => {
+  it("admin (A) anota: una fila con su autor, el reloj de la base y el texto normalizado; la oportunidad solo mueve su recencia", async () => {
     const id = await opportunity(ORG_1);
     const before = await opportunityRow(id);
     request(USER_A);
@@ -269,8 +269,11 @@ describe("Server Action: requireTenant() → validación → withTenant() → IN
     expect(
       await add(id, "  Pidió cuota fija.\r\n\r\n\r\nVuelve el lunes.  "),
     ).toEqual({ status: "recorded", opportunityId: id });
-    // Solo el detalle: la cola no cambia por una nota.
-    expect(mocks.revalidated).toEqual([`/opportunities/${id}`]);
+    // La nota mueve la recencia: la cola también cambia (DEC-036 §1).
+    expect(mocks.revalidated).toEqual([
+      "/opportunities",
+      `/opportunities/${id}`,
+    ]);
 
     const [note, ...rest] = await notesOf(id);
     expect(rest).toEqual([]);
@@ -285,8 +288,13 @@ describe("Server Action: requireTenant() → validación → withTenant() → IN
       FROM public.opportunity_notes WHERE id = ${note!.id}
     `;
     expect(delta!.seconds).toBeLessThan(60);
-    // DEC-033 §6: ni la recencia ni la oportunidad cambian por una nota.
-    expect(await opportunityRow(id)).toEqual(before);
+    // DEC-036 §1 (supersede DEC-033 §6): la nota mueve la recencia al reloj
+    // de su alta. Etapa, unidad y updated_at no cambian.
+    const after = await opportunityRow(id);
+    expect(after).toEqual({ ...before, lastActivityAt: note!.recordedAt });
+    expect(after!.lastActivityAt.getTime()).toBeGreaterThan(
+      before!.lastActivityAt.getTime(),
+    );
   });
 
   it("seller (C con ORG_1 activa) anota en la oportunidad de otro; el detalle presenta los autores contra quien mira", async () => {
@@ -302,13 +310,16 @@ describe("Server Action: requireTenant() → validación → withTenant() → IN
 
     request(USER_A);
     const forA = await getOpportunityDetail(id);
-    expect(forA!.notes.map((n) => [n.body, n.author])).toEqual([
+    expect(forA!.activity.map((n) => [n.body, n.author])).toEqual([
       ["Segunda llamada.", "Otro miembro"],
       ["Primera llamada.", "Vos"],
     ]);
     request(USER_C, ORG_1);
     const forC = await getOpportunityDetail(id);
-    expect(forC!.notes.map((n) => n.author)).toEqual(["Vos", "Otro miembro"]);
+    expect(forC!.activity.map((n) => n.author)).toEqual([
+      "Vos",
+      "Otro miembro",
+    ]);
     expect(JSON.stringify(forC)).not.toContain(USER_A);
     expect(JSON.stringify(forC)).not.toContain(USER_C);
   });
@@ -422,10 +433,9 @@ describe("el detalle muestra la bitácora de la organización activa", () => {
         (${ORG_1}, ${other}, 'De otra oportunidad', ${USER_A}, now())
     `;
     request(USER_A);
-    expect((await getOpportunityDetail(id))!.notes.map((n) => n.body)).toEqual([
-      "Nueva",
-      "Vieja",
-    ]);
+    expect(
+      (await getOpportunityDetail(id))!.activity.map((n) => n.body),
+    ).toEqual(["Nueva", "Vieja"]);
     request(USER_B);
     expect(await getOpportunityDetail(id)).toBeNull();
   });

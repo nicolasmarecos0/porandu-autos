@@ -42,6 +42,7 @@ describe("readRepoMigrations", () => {
       [8, "0008_opportunity_stages"],
       [9, "0009_opportunity_notes_vehicle_link"],
       [10, "0010_opportunity_closure_metadata"],
+      [11, "0011_conversations_and_activity_trigger"],
     ]);
   });
 
@@ -70,25 +71,31 @@ describe("compareHistory", () => {
       applied: [REPO[0]],
       pending: REPO.slice(1),
     });
-    // Staging con H1.4/H1.5: 0008, 0009 y 0010 pendientes.
+    // Staging con H1.4/H1.5: 0008 a 0011 pendientes.
     expect(compareHistory(REPO, applied(8))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 8),
-      pending: [REPO[8], REPO[9], REPO[10]],
+      pending: [REPO[8], REPO[9], REPO[10], REPO[11]],
     });
-    // Staging con H1.6: 0009 y 0010 pendientes.
+    // Staging con H1.6: 0009 a 0011 pendientes.
     expect(compareHistory(REPO, applied(9))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 9),
-      pending: [REPO[9], REPO[10]],
+      pending: [REPO[9], REPO[10], REPO[11]],
     });
-    // Staging con el Hito 2: solo 0010 pendiente (DEC-034).
+    // Staging con el Hito 2: 0010 y 0011 pendientes.
     expect(compareHistory(REPO, applied(10))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 10),
-      pending: [REPO[10]],
+      pending: [REPO[10], REPO[11]],
     });
-    expect(compareHistory(REPO, [...applied(11)].reverse())).toMatchObject({
+    // Staging con el Hito 2A: solo 0011 pendiente (DEC-036).
+    expect(compareHistory(REPO, applied(11))).toEqual({
+      kind: "consistent",
+      applied: REPO.slice(0, 11),
+      pending: [REPO[11]],
+    });
+    expect(compareHistory(REPO, [...applied(12)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -108,8 +115,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(11), { id: 12, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 11",
+      [...applied(12), { id: 13, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 12",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -268,6 +275,18 @@ describe("expectedFootprint", () => {
     expect(expectedFootprint(REPO.slice(0, 10))).toEqual(hito2);
     // 0010 no crea tablas ni policies: columnas, CHECKs y el trigger
     // ampliado sobre opportunities (DEC-034).
-    expect(expectedFootprint(REPO)).toEqual(hito2);
+    expect(expectedFootprint(REPO.slice(0, 11))).toEqual(hito2);
+    // 0011 suma los mensajes, con sus policies de lectura y alta (Hito 4).
+    // Los triggers de actividad y su función son SQL custom: no figuran.
+    const hito4 = {
+      ...hito2,
+      tables: [...hito2.tables, "messages"].sort(),
+      policies: [
+        ...hito2.policies,
+        "messages.messages_insert_member",
+        "messages.messages_select_member",
+      ].sort(),
+    };
+    expect(expectedFootprint(REPO)).toEqual(hito4);
   });
 });

@@ -9,13 +9,15 @@
  * 0001_tenant_isolation, y los grants de `authenticated`, SQL custom de la
  * migración que crea cada tabla (0001 para las de H0, 0002 para contacts y
  * opportunities, 0004 para vehicles, 0007 para opportunity_demand_facts,
- * 0009 para opportunity_notes) o que habilita una escritura (0003: alta de
- * contacts y opportunities; 0005: alta de vehicles; 0006: UPDATE de
- * vehicles.status, por columna; 0007: alta append-only de
- * opportunity_demand_facts; 0008: UPDATE de la etapa de opportunities, por
- * columna; 0009: UPDATE de opportunities.vehicle_id, por columna, y alta
- * append-only de opportunity_notes; 0010: UPDATE de los metadatos del cierre
- * de opportunities, por columna).
+ * 0009 para opportunity_notes, 0011 para messages) o que habilita una
+ * escritura (0003: alta de contacts y opportunities; 0005: alta de
+ * vehicles; 0006: UPDATE de vehicles.status, por columna; 0007: alta
+ * append-only de opportunity_demand_facts; 0008: UPDATE de la etapa de
+ * opportunities, por columna; 0009: UPDATE de opportunities.vehicle_id, por
+ * columna, y alta append-only de opportunity_notes; 0010: UPDATE de los
+ * metadatos del cierre de opportunities, por columna; 0011: alta
+ * append-only de messages). Los triggers y sus funciones (0008 a 0011) son
+ * SQL custom: drizzle-kit no los modela.
  */
 export * from "./organizations";
 export * from "./profiles";
@@ -25,3 +27,4 @@ export * from "./opportunities";
 export * from "./vehicles";
 export * from "./opportunity-demand-facts";
 export * from "./opportunity-notes";
+export * from "./messages";

@@ -390,7 +390,8 @@ export async function closeOpportunity(
  *
  *   requireTenant() → normalizar y validar el texto → insertOpportunityNote()
  *   (withTenant(), la oportunidad en la organización activa, INSERT
- *   append-only, RLS) → revalidar /opportunities/[id]
+ *   append-only, RLS, trigger de actividad) → revalidar /opportunities y
+ *   /opportunities/[id]
  *
  * 1. El TenantContext sale de requireTenant(). Autorización: membership
  *    activa AND role IN ('admin', 'seller') (DEC-027 §4), hoy todo contexto
@@ -404,9 +405,10 @@ export async function closeOpportunity(
  *    corregirlo. Un error inesperado no expone detalles de la base ni el
  *    texto (los logs no lo registran) y lo devuelve para reintentar.
  *
- * Una nota no modifica `last_activity_at` (DEC-033 §6) ni la cola: solo se
- * revalida el detalle. El estado previo (`_previous`) lo envía el cliente: no
- * se usa.
+ * Una nota mueve el `last_activity_at` de la oportunidad (trigger de la
+ * base, DEC-036 §1, supersede DEC-033 §6): cambian la recencia y el orden de
+ * la cola, así que se revalidan las dos páginas. El estado previo
+ * (`_previous`) lo envía el cliente: no se usa.
  */
 export async function addOpportunityNote(
   _previous: AddNoteState,
@@ -433,6 +435,7 @@ export async function addOpportunityNote(
 
   switch (outcome.outcome) {
     case "recorded":
+      revalidatePath(OPPORTUNITIES_PATH);
       revalidatePath(`${OPPORTUNITIES_PATH}/${outcome.opportunityId}`);
       return { status: "recorded", opportunityId: outcome.opportunityId };
     case "not_found":

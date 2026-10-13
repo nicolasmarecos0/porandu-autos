@@ -47,11 +47,11 @@ vi.mock("server-only", () => ({}));
 /*
  * Las postcondiciones del ledger append-only (0007) viajan en cada migración
  * posterior junto con las de toda la base: se corren las de la última
- * (0010_opportunity_closure_metadata, DEC-034), que son las que describen
- * el catálogo real de hoy.
+ * (0011_conversations_and_activity_trigger, DEC-036), que son las que
+ * describen el catálogo real de hoy.
  */
 const MIGRATION = new URL(
-  "../../db/migrations/0010_opportunity_closure_metadata.sql",
+  "../../db/migrations/0011_conversations_and_activity_trigger.sql",
   import.meta.url,
 );
 
@@ -727,7 +727,7 @@ describe("autores (C-9): RESTRICT hacia profiles", () => {
   });
 });
 
-describe("postcondiciones del ledger (0007, vigentes en 0010) sobre catálogos mutados (DB5)", () => {
+describe("postcondiciones del ledger (0007, vigentes en 0011) sobre catálogos mutados (DB5)", () => {
   let postconditions: string;
 
   beforeAll(async () => {
@@ -794,7 +794,7 @@ describe("postcondiciones del ledger (0007, vigentes en 0010) sobre catálogos m
       `GRANT INSERT ON public.memberships TO authenticated;
        CREATE POLICY probe ON public.memberships FOR INSERT TO authenticated
          WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
-      /may only insert into contacts, opportunities, vehicles, opportunity_demand_facts \(H1\.4\) and opportunity_notes \(Hito 2\)/,
+      /may only insert into contacts, opportunities, vehicles, opportunity_demand_facts \(H1\.4\), opportunity_notes \(Hito 2\) and messages \(Hito 4\)/,
     ],
     [
       "privilegios de app_runtime sobre la tabla",
