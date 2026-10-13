@@ -294,6 +294,9 @@ describe("opportunities (H1.1)", () => {
         "CHECK ((((stage = 'lost'::text) AND (loss_reason IS NOT NULL)) OR ((stage <> 'lost'::text) AND (loss_reason IS NULL))))",
       // H1.4: destino de la FK compuesta de opportunity_demand_facts.
       opportunities_organization_id_id_key: "UNIQUE (organization_id, id)",
+      // Hito 4: destino de la FK compuesta de messages (con el contacto).
+      opportunities_organization_id_id_contact_id_key:
+        "UNIQUE (organization_id, id, contact_id)",
       // Hito 2: la unidad vinculada es de la misma organización y solo existe
       // desde la negociación.
       opportunities_vehicle_fk:
@@ -331,6 +334,8 @@ describe("opportunities (H1.1)", () => {
         "CREATE INDEX opportunities_organization_id_contact_id_idx ON public.opportunities USING btree (organization_id, contact_id)",
       opportunities_organization_id_id_key:
         "CREATE UNIQUE INDEX opportunities_organization_id_id_key ON public.opportunities USING btree (organization_id, id)",
+      opportunities_organization_id_id_contact_id_key:
+        "CREATE UNIQUE INDEX opportunities_organization_id_id_contact_id_key ON public.opportunities USING btree (organization_id, id, contact_id)",
       opportunities_organization_id_vehicle_id_idx:
         "CREATE INDEX opportunities_organization_id_vehicle_id_idx ON public.opportunities USING btree (organization_id, vehicle_id) WHERE (vehicle_id IS NOT NULL)",
     });
@@ -544,6 +549,63 @@ describe("opportunity_notes (Hito 2)", () => {
         "CREATE UNIQUE INDEX opportunity_notes_pkey ON public.opportunity_notes USING btree (id)",
       opportunity_notes_organization_id_opportunity_id_idx:
         "CREATE INDEX opportunity_notes_organization_id_opportunity_id_idx ON public.opportunity_notes USING btree (organization_id, opportunity_id, recorded_at DESC)",
+    });
+  });
+});
+
+describe("messages (Hito 4)", () => {
+  it("columnas: mensajes append-only con el contacto, la oportunidad opcional, canal, dirección, texto, autor y reloj de la base", async () => {
+    expect(await columns(db.admin, "messages")).toEqual([
+      {
+        name: "id",
+        type: "uuid",
+        notNull: true,
+        default: "gen_random_uuid()",
+      },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "contact_id", type: "uuid", notNull: true, default: null },
+      { name: "opportunity_id", type: "uuid", notNull: false, default: null },
+      { name: "channel", type: "text", notNull: true, default: null },
+      { name: "direction", type: "text", notNull: true, default: null },
+      { name: "content", type: "text", notNull: true, default: null },
+      { name: "recorded_by", type: "uuid", notNull: true, default: null },
+      {
+        name: "created_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+    ]);
+  });
+
+  it("PK, FKs RESTRICT (organización, contacto y oportunidad de la misma organización y del mismo contacto, autor) y CHECKs de canal, dirección y texto", async () => {
+    expect(await constraints(db.admin, "messages")).toEqual({
+      messages_pkey: "PRIMARY KEY (id)",
+      messages_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      messages_contact_fk:
+        "FOREIGN KEY (organization_id, contact_id) REFERENCES contacts(organization_id, id) ON DELETE RESTRICT",
+      messages_opportunity_fk:
+        "FOREIGN KEY (organization_id, opportunity_id, contact_id) REFERENCES opportunities(organization_id, id, contact_id) ON DELETE RESTRICT",
+      messages_recorded_by_profiles_id_fk:
+        "FOREIGN KEY (recorded_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+      messages_channel_check:
+        "CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'email'::text, 'manual'::text])))",
+      messages_direction_check:
+        "CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text])))",
+      messages_content_check:
+        "CHECK ((((char_length(content) >= 1) AND (char_length(content) <= 4096)) AND (content = btrim(content, (' '::text || chr(10)))) AND (translate(content, chr(10), ''::text) !~ '[[:cntrl:]]'::text)))",
+    });
+  });
+
+  it("índices: el muro por organización, oportunidad y fecha, y la conversación del contacto", async () => {
+    expect(await indexes(db.admin, "messages")).toEqual({
+      messages_pkey:
+        "CREATE UNIQUE INDEX messages_pkey ON public.messages USING btree (id)",
+      messages_organization_id_opportunity_id_idx:
+        "CREATE INDEX messages_organization_id_opportunity_id_idx ON public.messages USING btree (organization_id, opportunity_id, created_at DESC)",
+      messages_organization_id_contact_id_idx:
+        "CREATE INDEX messages_organization_id_contact_id_idx ON public.messages USING btree (organization_id, contact_id, created_at DESC)",
     });
   });
 });
@@ -924,6 +986,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
     expect(tenantScoped.map((t) => t.table)).toEqual([
       "contacts",
       "memberships",
+      "messages",
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",

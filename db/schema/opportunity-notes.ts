@@ -45,6 +45,10 @@ export const opportunityNoteMaxLength = 1000;
  *   de una oportunidad, de la nota más reciente a la más vieja.
  * - Todas las FKs son RESTRICT.
  *
+ * Insertar una nota mueve el `last_activity_at` de su oportunidad (Hito 4,
+ * DEC-036 §1): lo hace el trigger `opportunity_notes_touch_activity` de la
+ * migración 0011 (drizzle-kit no modela triggers).
+ *
  * Lectura: las notas de las organizaciones con membership activa. Alta: un
  * miembro activo, como autor de la request y con el reloj de la base. Sin
  * policies ni grants de UPDATE o DELETE: append-only (también para

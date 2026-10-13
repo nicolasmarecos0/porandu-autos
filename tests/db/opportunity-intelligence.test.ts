@@ -134,14 +134,21 @@ beforeAll(async () => {
       (organization_id, opportunity_id, fact, status, source_kind, recorded_by, amount, currency)
     VALUES (${ORG_1}, ${RAMON}, 'budget_max', 'confirmed', 'member', ${USER_A}, '45000', 'USD')
   `;
-  await db.admin`
-    INSERT INTO public.opportunity_notes
-      (organization_id, opportunity_id, body, recorded_by, recorded_at)
-    VALUES
-      (${ORG_1}, ${CELESTE}, 'Primera llamada.', ${USER_A}, ${new Date(NOW.getTime() - 3 * DAY)}),
-      (${ORG_1}, ${CELESTE}, 'Pidió fotos.', ${USER_C}, ${new Date(NOW.getTime() - HOUR)}),
-      (${ORG_3}, ${AGROGANADERA}, 'Confirmó la visita.', ${USER_C}, ${new Date(NOW.getTime() - 10 * MINUTE)})
-  `;
+  // La escena se fecha contra NOW, no contra el reloj real: estas notas no
+  // mueven la recencia que fija la seed. Desde DEC-036 §1 el trigger de
+  // actividad la pasaría a now(); se deshabilita solo para esta carga.
+  await db.admin.begin(async (tx) => {
+    await tx`ALTER TABLE public.opportunity_notes DISABLE TRIGGER opportunity_notes_touch_activity`;
+    await tx`
+      INSERT INTO public.opportunity_notes
+        (organization_id, opportunity_id, body, recorded_by, recorded_at)
+      VALUES
+        (${ORG_1}, ${CELESTE}, 'Primera llamada.', ${USER_A}, ${new Date(NOW.getTime() - 3 * DAY)}),
+        (${ORG_1}, ${CELESTE}, 'Pidió fotos.', ${USER_C}, ${new Date(NOW.getTime() - HOUR)}),
+        (${ORG_3}, ${AGROGANADERA}, 'Confirmó la visita.', ${USER_C}, ${new Date(NOW.getTime() - 10 * MINUTE)})
+    `;
+    await tx`ALTER TABLE public.opportunity_notes ENABLE TRIGGER opportunity_notes_touch_activity`;
+  });
   // Vincular es la única UPDATE que el trigger admite sin pase de etapa,
   // y solo En negociación (DEC-033, DEC-034).
   await db.admin`
