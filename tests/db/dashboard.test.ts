@@ -120,8 +120,11 @@ const DAY = 24 * HOUR;
 
 /** 10:30 del 14 de octubre de 2026 en Asunción. */
 const NOW = new Date("2026-10-14T13:30:00Z");
-/** 20:00 del 30 de septiembre de 2026 en Asunción: todavía septiembre. */
-const NOW_SEPTEMBER = new Date("2026-09-30T23:00:00Z");
+/**
+ * 23:00 del 30 de septiembre de 2026 en Asunción: todavía septiembre, aunque
+ * en UTC ya es octubre (el mes y su nombre tienen que ser los de Asunción).
+ */
+const NOW_SEPTEMBER = new Date("2026-10-01T02:00:00Z");
 /** 00:00 del 1 de octubre de 2026 en Asunción: primer instante del mes. */
 const OCTOBER_START = new Date("2026-10-01T03:00:00.000Z");
 /** 23:59:59.999 del 30 de septiembre en Asunción: último instante del mes. */

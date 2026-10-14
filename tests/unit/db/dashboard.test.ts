@@ -207,6 +207,18 @@ describe("el mes y la recencia llegan a la base como instantes", () => {
   });
 });
 
+describe("el mes y su nombre son los de Asunción", () => {
+  it("a las 23:00 del 30 de septiembre en Asunción (octubre en UTC), septiembre", async () => {
+    const dashboard = await getExecutiveDashboard(
+      new Date("2026-10-01T02:00:00Z"),
+    );
+    expect(dashboard.periodLabel).toBe("septiembre de 2026");
+    const [counts] = mocks.queries;
+    expect(counts?.params).toContain("2026-09-01T03:00:00.000Z");
+    expect(counts?.params).toContain("2026-10-01T03:00:00.000Z");
+  });
+});
+
 describe("conteos → ViewModel", () => {
   it("arma el dashboard con el win rate y los días sin actividad", async () => {
     expect(await getExecutiveDashboard(NOW)).toEqual({

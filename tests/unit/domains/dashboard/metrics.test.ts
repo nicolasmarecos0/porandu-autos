@@ -202,6 +202,8 @@ describe("formato es-PY", () => {
 
   it("singular y plural", () => {
     expect(countLabel(1, "oportunidad", "oportunidades")).toBe("1 oportunidad");
+    // Cero es plural: "0 perdidas", el estado de cada principio de mes.
+    expect(countLabel(0, "perdida", "perdidas")).toBe("0 perdidas");
     expect(countLabel(1500, "oportunidad", "oportunidades")).toBe(
       "1.500 oportunidades",
     );

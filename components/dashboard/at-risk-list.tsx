@@ -64,7 +64,7 @@ export function AtRiskList({
             Mostrando {formatCount(items.length)} de {formatCount(total)}.{" "}
             <Link
               href="/opportunities"
-              className="rounded-sm text-brand hover:text-brand-strong hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+              className="rounded-sm text-brand underline underline-offset-2 hover:text-brand-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
             >
               Ver todas en la cola
             </Link>

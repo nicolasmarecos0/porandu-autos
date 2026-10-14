@@ -196,6 +196,10 @@ describe("win rate sin cierres (DEC-005)", () => {
     pipeline: { open: 3, won: 0, lost: 0, winRate: null },
   });
 
+  it("cero perdidas va en plural", () => {
+    expect(kpi(html, "Ganadas en el mes").hint).toBe("0 perdidas en el mes");
+  });
+
   it("dice Sin dato, atenuado, y explica por qué", () => {
     expect(kpi(html, "Win rate")).toMatchObject({
       value: "Sin dato",
@@ -321,6 +325,12 @@ describe("oportunidades en riesgo", () => {
 
     expect(list.match(/<li\b/g)).toHaveLength(10);
     expect(list).toContain("Mostrando 10 de 12.");
+    // El total del encabezado es el de todas las Inactivas, no el de la lista.
+    expect(list).toMatch(/Oportunidades en riesgo<\/h2><span[^>]*>12<\/span>/);
+    // Dentro de la frase, el enlace se distingue también por el subrayado,
+    // siempre y no solo al pasar el mouse.
+    const queueLink = /<a class="([^"]*)" href="\/opportunities">/.exec(list);
+    expect(queueLink?.[1]?.split(" ")).toContain("underline");
     expect(list).toContain('href="/opportunities"');
   });
 
