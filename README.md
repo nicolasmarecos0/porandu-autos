@@ -650,12 +650,23 @@ buildExecutiveDashboard(): win rate, días sin actividad → ViewModel
 | | Vendidas en el mes | Vinculadas a una oportunidad ganada que se cerró en el mes |
 | Atención | Enfriándose · Inactivas | Abiertas de 2 a 5 días · de más de 5 días sin actividad del cliente (DEC-035 §2) |
 
-- **Período:** el mes calendario de Asunción que contiene `now`, de su primer instante (incluido) al del mes siguiente (excluido). Lo calcula el dominio (`monthWindow()`), también cuando un cambio de horario se come la medianoche, y la base solo compara instantes. Ganadas, perdidas, win rate y vendidas son del mes; activas, stock, reservadas y atención son el estado actual.
-- **Fecha de cierre:** no hay `closed_at`. Una oportunidad cerrada no vuelve a cambiar `updated_at` (DEC-034 §4 y §9, DEC-036 §1: el toque de actividad no lo toca), así que esa es su fecha de cierre. Habilitar la edición de una cerrada exige agregar antes `closed_at`.
-- **Inventario derivado de los vínculos (decisión del fundador):** una unidad vinculada a una ganada es vendida; a una en negociación, reservada; el resto, en stock. Vendida tiene precedencia y cada unidad cuenta una vez. `vehicles.status` no se consulta ni se cambia: no son los grupos "Reservadas" y "Vendidas" de la Stock List, y vincular sigue sin reservar ni vender la unidad (DEC-033 §2).
-- **Recencia sin repetir umbrales:** `recencyCutoffs()` (`domains/scoring/engine.ts`, junto a `recencyState()`) convierte la regla de DEC-035 §2 en dos instantes de corte que la base usa en `count(*) FILTER`. Un test los cruza con `evaluateRecency()` en los bordes y otro compara el dashboard con la cola.
+- **Período (propuesta de implementación, DEC-037 §4):** el mes calendario de Asunción que contiene `now`, de su primer instante (incluido) al del mes siguiente (excluido). Lo calcula el dominio (`monthWindow()`), también cuando un cambio de horario se come la medianoche, y la base solo compara instantes. Ganadas, perdidas, win rate y vendidas son del mes; activas, stock, reservadas y atención son el estado actual.
+- **Fecha de cierre:** no hay `closed_at`. Una oportunidad cerrada no vuelve a cambiar `updated_at`, así que esa es su fecha de cierre:
+  - el trigger lo fija al cerrar (DEC-034 §9);
+  - una cerrada solo admite el toque de actividad (DEC-034 §4 y §5, DEC-036 §3);
+  - el toque no cambia `updated_at` (DEC-036 §1).
+  - Habilitar la edición de una cerrada, o que el toque cambie `updated_at`, exige agregar antes `closed_at`.
+- **Inventario derivado de los vínculos:**
+  - Clasificación del fundador: una unidad vinculada a una ganada es vendida; a una en negociación, reservada; el resto, en stock.
+  - `vehicles.status` no se consulta ni se cambia: no son los grupos "Reservadas" y "Vendidas" de la Stock List, y vincular sigue sin reservar ni vender la unidad (DEC-033 §2).
+  - Propuestas de implementación (DEC-037 §7):
+    - vendida tiene precedencia sobre reservada, y cada unidad está en una sola categoría;
+    - "Vendidas en el mes" es del mes. Una unidad vendida antes no vuelve al stock ni aparece en el mes, así que los tres indicadores no suman el total de unidades.
+- **Recencia sin repetir umbrales:** `recencyCutoffs()` (`domains/scoring/engine.ts`, junto a `recencyState()`) convierte la regla de DEC-035 §2 en dos instantes de corte que la base usa en `count(*) FILTER`.
+  - Son límites exclusivos, un milisegundo después del borde: `last_activity_at` guarda microsegundos y el motor ve la fecha truncada al milisegundo, así que `last_activity_at < corte` clasifica igual que la cola.
+  - Un test los cruza con `evaluateRecency()` en los bordes y otros comparan el dashboard con la cola, también con microsegundos.
 - **Dominio puro** en `domains/dashboard/`: `period.ts` (mes de Asunción y su nombre), `metrics.ts` (tipos, `OPEN_STAGES`, `winRate()` exacto sobre enteros y `buildExecutiveDashboard()`) y `presentation.ts` (formato es-PY: "1.234", "66,7%", "Sin dato").
-- **Capa de datos** (`db/queries/dashboard.ts`): tres lecturas en la misma transacción `withTenant()`, todas con filtro por `organization_id` sobre RLS: conteos de oportunidades, unidades con un `LEFT JOIN` al agregado de sus vínculos (`bool_or`, también filtrado) y la lista en riesgo con su total (`count(*) over ()`). Los instantes se ligan con operadores de columna (`gte`, `lt`, `lte`, `gt`) para que viajen como `timestamptz`.
+- **Capa de datos** (`db/queries/dashboard.ts`): tres lecturas en la misma transacción `withTenant()`, todas con filtro por `organization_id` sobre RLS: conteos de oportunidades, unidades con un `LEFT JOIN` al agregado de sus vínculos (`bool_or`, también filtrado y unido por organización y unidad, como la FK compuesta) y la lista en riesgo con su total (`count(*) over ()`). Los instantes se ligan con operadores de columna (`gte`, `lt`, `lte`, `gt`) para que viajen como `timestamptz`.
 - **UI** (Server Components en `components/dashboard/`, tokens de DEC-013): tres bloques de tarjetas en una grilla CSS ("Pipeline comercial", "Salud del inventario" y "Atención"), el win rate con un medidor de marca, Enfriándose e Inactivas en ámbar y rojo solo cuando hay alguna, y en el rail "Oportunidades en riesgo": las Inactivas de la más vieja a la más reciente, con contacto, etapa, días sin actividad y enlace a `/opportunities/[id]`. Muestra a lo sumo 10 y, si hay más, enlaza a la cola.
 - **Autorización:** la lectura de cualquier membership activa (`admin` o `seller`). Restringirla a `admin` requiere una decisión nueva.
 - **Solo lectura:** no hay migración, policies, grants ni escrituras nuevas, y leer no modifica `last_activity_at`, `updated_at` ni el estado de las unidades.
