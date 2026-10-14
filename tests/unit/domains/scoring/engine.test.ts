@@ -178,18 +178,18 @@ describe("recencia: días y horas desde last_activity_at", () => {
 });
 
 describe("recencyCutoffs: la misma regla como instantes de corte (DEC-037 §8)", () => {
-  /** El estado según los cortes, como lo cuenta la base. */
+  /** El estado según los cortes exclusivos, como lo cuenta la base. */
   function stateByCutoffs(lastActivityAt: Date): string {
     const cutoffs = recencyCutoffs(NOW);
-    if (lastActivityAt <= cutoffs.stale) return "stale";
-    if (lastActivityAt <= cutoffs.warning) return "warning";
+    if (lastActivityAt < cutoffs.staleBefore) return "stale";
+    if (lastActivityAt < cutoffs.warningBefore) return "warning";
     return "active";
   }
 
-  it("fija los cortes en 2 días exactos y en 5 días y 1 minuto", () => {
+  it("cuenta como Enfriándose desde 2 días exactos y como Inactiva desde 5 días y 1 minuto, con límites exclusivos un milisegundo después", () => {
     expect(recencyCutoffs(NOW)).toEqual({
-      warning: ago(RECENCY_STATE_DAYS.warning * DAY),
-      stale: ago(RECENCY_STATE_DAYS.stale * DAY + MINUTE),
+      warningBefore: ago(RECENCY_STATE_DAYS.warning * DAY - 1),
+      staleBefore: ago(RECENCY_STATE_DAYS.stale * DAY + MINUTE - 1),
     });
   });
 

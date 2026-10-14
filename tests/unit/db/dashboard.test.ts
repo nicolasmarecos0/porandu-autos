@@ -7,10 +7,13 @@ import { getExecutiveDashboard } from "@/db/queries/dashboard";
  * Loader del Dashboard Directivo (Hito 5, DEC-037), sin base de datos:
  * - la cadena requireTenant() → withTenant() con ese mismo contexto, en una
  *   sola transacción;
- * - el filtro explícito por organización en cada lectura, también dentro
- *   del agregado de vínculos del inventario (RLS no alcanza para detectar si
- *   falta: lo prueba tests/db/dashboard.test.ts con un usuario de varias
- *   organizaciones);
+ * - el filtro explícito por organización en cada lectura (RLS no alcanza
+ *   para detectar si falta: tests/db/dashboard.test.ts lo prueba con un
+ *   usuario de varias organizaciones para los conteos de oportunidades, las
+ *   unidades y la lista en riesgo). Dentro del agregado de vínculos el filtro
+ *   no cambia ningún resultado, porque la FK compuesta ya ata cada vínculo a
+ *   la organización de su unidad: lo vigilan solo las aserciones sobre el SQL
+ *   de este archivo;
  * - el mes de Asunción y los cortes de recencia ligados como timestamptz;
  * - el mapping de los conteos al ViewModel.
  */
@@ -140,9 +143,16 @@ describe("cada lectura filtra por la organización del contexto", () => {
     const inventory = mocks.queries[1];
 
     expect(inventory?.sql).toContain("bool_or(");
-    expect(inventory?.sql).toContain('left join (select "vehicle_id"');
+    expect(inventory?.sql).toContain(
+      'left join (select "organization_id", "vehicle_id"',
+    );
+    // Único guardián del filtro dentro del agregado: ver el encabezado.
     expect(inventory?.sql).toMatch(
-      /where \("opportunities"\."organization_id" = \$\d+ and "opportunities"\."vehicle_id" is not null\) group by "opportunities"\."vehicle_id"/,
+      /where \("opportunities"\."organization_id" = \$\d+ and "opportunities"\."vehicle_id" is not null\) group by "opportunities"\."organization_id", "opportunities"\."vehicle_id"/,
+    );
+    // El join iguala organización y unidad, como la FK compuesta.
+    expect(inventory?.sql).toContain(
+      'on ("vehicle_links"."organization_id" = "vehicles"."organization_id" and "vehicle_links"."vehicle_id" = "vehicles"."id")',
     );
     expect(inventory?.sql).toMatch(
       /where "vehicles"\."organization_id" = \$\d+$/,
@@ -157,7 +167,7 @@ describe("cada lectura filtra por la organización del contexto", () => {
     const atRisk = mocks.queries[2];
 
     expect(atRisk?.sql).toContain(
-      'where ("opportunities"."organization_id" = $1 and "opportunities"."stage" in ($2, $3, $4) and "opportunities"."last_activity_at" <= $5)',
+      'where ("opportunities"."organization_id" = $1 and "opportunities"."stage" in ($2, $3, $4) and "opportunities"."last_activity_at" < $5)',
     );
     expect(atRisk?.sql).toContain(
       'order by "opportunities"."last_activity_at" asc, "opportunities"."id" asc limit $6',
@@ -168,8 +178,8 @@ describe("cada lectura filtra por la organización del contexto", () => {
       "new",
       "qualifying",
       "negotiating",
-      // 5 días y 1 minuto antes de NOW (DEC-035 §2).
-      "2026-10-09T13:29:00.000Z",
+      // Antes de 5 días y 1 minuto, con el límite exclusivo 1 ms después.
+      "2026-10-09T13:29:00.001Z",
       10,
     ]);
   });
@@ -184,9 +194,12 @@ describe("el mes y la recencia llegan a la base como instantes", () => {
       expect(query?.params).toContain("2026-10-01T03:00:00.000Z");
       expect(query?.params).toContain("2026-11-01T03:00:00.000Z");
     }
-    // Enfriándose desde 2 días exactos; Inactiva desde 5 días y 1 minuto.
-    expect(counts?.params).toContain("2026-10-12T13:30:00.000Z");
-    expect(counts?.params).toContain("2026-10-09T13:29:00.000Z");
+    // Enfriándose desde 2 días exactos; Inactiva desde 5 días y 1 minuto
+    // (límites exclusivos, 1 ms después: DEC-037 §8).
+    expect(counts?.params).toContain("2026-10-12T13:30:00.001Z");
+    expect(counts?.params).toContain("2026-10-09T13:29:00.001Z");
+    expect(counts?.sql).toContain('"opportunities"."last_activity_at" < $');
+    expect(counts?.sql).not.toMatch(/last_activity_at" (<=|>) /);
     // Ningún Date crudo: el driver no lo serializaría (ver el loader).
     expect(
       mocks.queries.flatMap((q) => q.params).some((p) => p instanceof Date),

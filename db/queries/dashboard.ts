@@ -1,17 +1,6 @@
 import "server-only";
 
-import {
-  and,
-  asc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  lt,
-  lte,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 
 import {
   AT_RISK_LIST_LIMIT,
@@ -51,12 +40,13 @@ import { stageFromDb } from "./opportunities";
  *   `authenticated`: RLS deja ver solo organizaciones con membership activa.
  * - Cada una filtra por `ctx.organizationId` (defensa en profundidad, ADR-001
  *   §2): con varias memberships activas, RLS deja ver todas sus
- *   organizaciones y el filtro deja solo la activa. Los joins también
- *   igualan la organización.
+ *   organizaciones y el filtro deja solo la activa. Los joins (contactos y
+ *   el agregado de vínculos de cada unidad) también igualan la organización.
  * - El mes (DEC-037 §4) y los cortes de recencia (DEC-037 §8) los calcula el
- *   dominio con `now`; la base solo compara instantes. Se ligan con
- *   operadores de columna (`gte`, `lt`, `lte`, `gt`) para que Drizzle los
- *   serialice como timestamptz.
+ *   dominio con `now`; la base solo compara instantes, con límites
+ *   exclusivos (`<`). Se ligan con operadores de columna (`gte`, `lt`) para
+ *   que Drizzle los serialice como timestamptz: un Date crudo dentro de
+ *   sql`` no se serializa con este driver.
  *
  * Solo lectura: no escribe nada, ni `last_activity_at`, ni `updated_at`, ni
  * el estado de las unidades.
@@ -91,12 +81,12 @@ async function selectOpportunityCounts(
         ),
       warning: sql<number>`count(*) filter (where ${and(
         open,
-        lte(opportunities.lastActivityAt, cutoffs.warning),
-        gt(opportunities.lastActivityAt, cutoffs.stale),
+        lt(opportunities.lastActivityAt, cutoffs.warningBefore),
+        gte(opportunities.lastActivityAt, cutoffs.staleBefore),
       )})`.mapWith(Number),
       stale: sql<number>`count(*) filter (where ${and(
         open,
-        lte(opportunities.lastActivityAt, cutoffs.stale),
+        lt(opportunities.lastActivityAt, cutoffs.staleBefore),
       )})`.mapWith(Number),
     })
     .from(opportunities)
@@ -123,6 +113,7 @@ async function selectInventoryCounts(
 ): Promise<InventoryCounts> {
   const links = tx
     .select({
+      organizationId: opportunities.organizationId,
       vehicleId: opportunities.vehicleId,
       sold: sql<boolean>`bool_or(${eq(opportunities.stage, "won")})`.as("sold"),
       soldInMonth: sql<boolean>`bool_or(${and(
@@ -142,9 +133,10 @@ async function selectInventoryCounts(
         isNotNull(opportunities.vehicleId),
       ),
     )
-    .groupBy(opportunities.vehicleId)
+    .groupBy(opportunities.organizationId, opportunities.vehicleId)
     .as("vehicle_links");
-  // Sin vínculos, el LEFT JOIN deja NULL: `is not true` lo cuenta en stock.
+  // El join iguala organización y unidad, como la FK compuesta. Sin
+  // vínculos, el LEFT JOIN deja NULL: `is not true` lo cuenta en stock.
   const [row] = await tx
     .select({
       inStock:
@@ -161,7 +153,13 @@ async function selectInventoryCounts(
         ),
     })
     .from(vehicles)
-    .leftJoin(links, eq(links.vehicleId, vehicles.id))
+    .leftJoin(
+      links,
+      and(
+        eq(links.organizationId, vehicles.organizationId),
+        eq(links.vehicleId, vehicles.id),
+      ),
+    )
     .where(eq(vehicles.organizationId, organizationId));
   return {
     inStock: row?.inStock ?? 0,
@@ -200,7 +198,7 @@ async function selectAtRiskOpportunities(
       and(
         eq(opportunities.organizationId, organizationId),
         inArray(opportunities.stage, [...OPEN_STAGES]),
-        lte(opportunities.lastActivityAt, cutoffs.stale),
+        lt(opportunities.lastActivityAt, cutoffs.staleBefore),
       ),
     )
     .orderBy(asc(opportunities.lastActivityAt), asc(opportunities.id))

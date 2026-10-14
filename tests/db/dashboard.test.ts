@@ -64,7 +64,8 @@ import {
  *   Nueva Enfriándose, X4 libre.
  * ORG_3 (C con ORG_3 activa): Ganada en octubre (W1), 2 perdidas en octubre,
  *   En negociación Inactiva sin unidad, W2 libre.
- * ORG_4 (F): ninguna oportunidad ni unidad.
+ * ORG_4 (F): ninguna oportunidad ni unidad, hasta el caso de microsegundos
+ *   (que agrega dos en los bordes de la recencia).
  * ORG_5 (G): 12 oportunidades Inactivas, para el tope de la lista.
  */
 
@@ -662,6 +663,52 @@ describe("la atención usa la misma regla de recencia que la cola", () => {
       O.negotiatingStale,
       O.negotiatingWarning,
     ]);
+  });
+
+  it("con microsegundos en last_activity_at, la base clasifica igual que el motor", async () => {
+    // timestamptz guarda microsegundos (now() los tiene) y JavaScript ve la
+    // fecha truncada al milisegundo: en los bordes, 500 µs después del corte
+    // siguen siendo Inactiva y Enfriándose para el motor (DEC-037 §8). El
+    // valor viaja como texto: postgres.js trunca un parámetro timestamptz.
+    // Se verifica abajo que la base guardó los microsegundos.
+    const micro = (date: Date) => date.toISOString().replace("Z", "500Z");
+    const edges = [
+      [id(4001), "Borde Inactiva", micro(ago(5 * DAY + MINUTE))],
+      [id(4002), "Borde Enfriándose", micro(ago(2 * DAY))],
+    ] as const;
+    for (const [opportunityId, name, lastActivityAt] of edges) {
+      const contactId = id(Number(opportunityId.slice(-4)) + 4000);
+      await db.admin`
+        INSERT INTO public.contacts (id, organization_id, name)
+        VALUES (${contactId}, ${ORG_4}, ${name})
+      `;
+      await db.admin`
+        INSERT INTO public.opportunities
+          (id, organization_id, contact_id, stage, source, last_activity_at)
+        VALUES (${opportunityId}, ${ORG_4}, ${contactId}, 'qualifying', 'web', ${lastActivityAt}::text::timestamptz)
+      `;
+    }
+
+    expect(
+      (
+        await db.admin<{ at: string }[]>`
+          SELECT last_activity_at::text AS at FROM public.opportunities
+          WHERE organization_id = ${ORG_4} ORDER BY id
+        `
+      ).map((row) => row.at),
+    ).toEqual(["2026-10-09 13:29:00.0005+00", "2026-10-12 13:30:00.0005+00"]);
+
+    request(USER_F);
+    const { opportunities: queue } = await getOpportunityQueue(NOW);
+    expect(
+      queue.map((op) => [op.prospect.name, op.lastActivity?.state]).sort(),
+    ).toEqual([
+      ["Borde Enfriándose", "warning"],
+      ["Borde Inactiva", "stale"],
+    ]);
+    const dashboard = await getExecutiveDashboard(NOW);
+    expect(dashboard.attention).toEqual({ warning: 1, stale: 1 });
+    expect(dashboard.atRisk.items.map((item) => item.id)).toEqual([id(4001)]);
   });
 });
 
