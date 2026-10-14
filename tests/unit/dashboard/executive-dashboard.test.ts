@@ -82,11 +82,12 @@ type Kpi = {
 /** Una tarjeta de indicador por su rótulo. */
 function kpi(html: string, label: string): Kpi {
   const match = new RegExp(
-    `(?:<span aria-hidden="true" class="([^"]*)"></span>)?<dt class="[^"]*">${escape(label)}</dt><dd class="([^"]*)">([^<]*)</dd><dd class="[^"]*">(.*?)</dd>`,
+    `<div class="([^"]*)"><dt class="[^"]*">${escape(label)}</dt><dd class="([^"]*)">([^<]*)</dd><dd class="[^"]*">(.*?)</dd></div>`,
   ).exec(html);
   if (!match) throw new Error(`kpi "${label}" not rendered`);
+  const edge = /before:bg-(warning|danger)/.exec(match[1]!);
   return {
-    edge: match[1],
+    edge: edge?.[0],
     valueClasses: match[2]!,
     value: match[3]!,
     hint: match[4]!.replace(/<[^>]+>/g, ""),
@@ -228,14 +229,14 @@ describe("atención: el color acompaña al texto", () => {
       hint: "De 2 a 5 días sin actividad del cliente",
     });
     expect(kpi(html, "Enfriándose").valueClasses).toContain("text-warning");
-    expect(kpi(html, "Enfriándose").edge).toContain("bg-warning");
+    expect(kpi(html, "Enfriándose").edge).toBe("before:bg-warning");
 
     expect(kpi(html, "Inactivas")).toMatchObject({
       value: "1",
       hint: "Más de 5 días sin actividad del cliente",
     });
     expect(kpi(html, "Inactivas").valueClasses).toContain("text-danger");
-    expect(kpi(html, "Inactivas").edge).toContain("bg-danger");
+    expect(kpi(html, "Inactivas").edge).toBe("before:bg-danger");
 
     expect(html).toContain("3 requieren atención");
   });
@@ -337,6 +338,22 @@ describe("oportunidades en riesgo", () => {
     expect(list).toContain(
       "Ninguna oportunidad abierta lleva más de 5 días sin actividad del cliente.",
     );
+  });
+});
+
+describe("HTML válido de las listas de definición", () => {
+  it("cada grupo de la dl contiene solo su dt y sus dd", () => {
+    const html = render();
+    const groups = [...html.matchAll(/<dl class="[^"]*">(.*?)<\/dl>/g)].flatMap(
+      (dl) => [...dl[1]!.matchAll(/<div class="[^"]*">(.*?)<\/div>/g)],
+    );
+    expect(groups).toHaveLength(8);
+    for (const group of groups) {
+      const children = [...group[1]!.matchAll(/<(\w+)[\s>][^]*?<\/\1>/g)].map(
+        (child) => child[1],
+      );
+      expect(children).toEqual(["dt", "dd", "dd"]);
+    }
   });
 });
 

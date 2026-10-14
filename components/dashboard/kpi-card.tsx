@@ -10,9 +10,16 @@ const VALUE_TONES: Readonly<Record<KpiTone, string>> = {
   danger: "text-danger",
 };
 
-const EDGE_TONES: Readonly<Record<Exclude<KpiTone, "neutral">, string>> = {
-  warning: "bg-warning",
-  danger: "bg-danger",
+/*
+ * Filete lateral como pseudo-elemento: dentro de una `dl`, el `div` que
+ * agrupa un par solo puede contener `dt` y `dd`.
+ */
+const EDGE_TONES: Readonly<Record<KpiTone, string>> = {
+  neutral: "",
+  warning:
+    "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-warning",
+  danger:
+    "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-danger",
 };
 
 type KpiCardProps = {
@@ -43,13 +50,12 @@ export function KpiCard({
   children,
 }: KpiCardProps) {
   return (
-    <div className="relative flex min-h-28 flex-col gap-1 overflow-hidden rounded-lg border border-border-subtle bg-surface-1 px-4 py-3 shadow-card">
-      {tone === "neutral" ? null : (
-        <span
-          aria-hidden="true"
-          className={cn("absolute inset-y-0 left-0 w-1", EDGE_TONES[tone])}
-        />
+    <div
+      className={cn(
+        "relative flex min-h-28 flex-col gap-1 overflow-hidden rounded-lg border border-border-subtle bg-surface-1 px-4 py-3 shadow-card",
+        EDGE_TONES[tone],
       )}
+    >
       <dt className="text-label text-text-secondary">{label}</dt>
       <dd
         className={cn(
