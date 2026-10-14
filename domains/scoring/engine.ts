@@ -124,6 +124,35 @@ export function recencyState(minutes: number): RecencyState {
   return "stale";
 }
 
+/** Instantes que separan los estados de recencia en un momento dado. */
+export type RecencyCutoffs = Readonly<{
+  /** `last_activity_at` igual o anterior: al menos Enfriándose. */
+  warning: Date;
+  /** `last_activity_at` igual o anterior: Inactiva. */
+  stale: Date;
+}>;
+
+/**
+ * La regla de `recencyState()` expresada como instantes de corte para `now`,
+ * para que la base cuente estados sin repetir los umbrales (Hito 5,
+ * DEC-037 §8). Como `minutesSince()` trunca a minutos enteros:
+ *
+ * - Enfriándose desde 2 días exactos: `minutos ≥ 2880` ⇔ `last ≤ now − 2880 min`;
+ * - Inactiva desde que pasa los 5 días: `minutos > 7200` ⇔ `minutos ≥ 7201`
+ *   ⇔ `last ≤ now − 7201 min`.
+ *
+ * Una fecha futura queda después de los dos cortes: Activa, como en
+ * `evaluateRecency()`.
+ */
+export function recencyCutoffs(now: Date): RecencyCutoffs {
+  assertValidDate(now, "now");
+  const at = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
+  return {
+    warning: at(RECENCY_STATE_DAYS.warning * MINUTES_PER_DAY),
+    stale: at(RECENCY_STATE_DAYS.stale * MINUTES_PER_DAY + 1),
+  };
+}
+
 /**
  * Recencia desde `lastActivityAt` hasta `now`: minutos, horas y días
  * enteros, y su estado. Una fecha futura (reloj desfasado) cuenta como 0.
