@@ -225,6 +225,20 @@ const recordMessageImport = {
   message: RECORD_MESSAGE_MESSAGE,
 };
 
+// Hito 6 (DEC-038 §5): la configuración del concesionario y el equipo
+// tienen una sola puerta, las Server Actions de lib/settings/actions.ts
+// (updateOrganization(), inviteMember(), updateMemberRole() y
+// removeMember()), que obtienen el contexto con requireTenant(), exigen rol
+// admin y validan el pedido antes de escribir.
+const SETTINGS_WRITE_MESSAGE =
+  "Organization settings and team memberships are written only through the Server Actions in lib/settings/actions.ts: requireTenant(), admin role, server-side validation, then withTenant().";
+const settingsWriteImport = {
+  regex: "(^|/)db/queries/settings-write$|^\\.{1,2}/settings-write$",
+  // Los tipos de los resultados no escriben nada.
+  allowTypeImports: true,
+  message: SETTINGS_WRITE_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -271,6 +285,7 @@ const basePatterns = [
   recordOpportunityNoteImport,
   linkOpportunityVehicleImport,
   recordMessageImport,
+  settingsWriteImport,
   demandFactsImport,
   phoneLibraryImport,
 ];
@@ -427,6 +442,7 @@ const eslintConfig = defineConfig([
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
             recordMessageImport,
+            settingsWriteImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -453,6 +469,7 @@ const eslintConfig = defineConfig([
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
             recordMessageImport,
+            settingsWriteImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -476,8 +493,23 @@ const eslintConfig = defineConfig([
             createVehicleImport,
             markVehicleAvailableImport,
             recordMessageImport,
+            settingsWriteImport,
             phoneLibraryImport,
           ],
+        },
+      ],
+    },
+  },
+  // Única puerta de la configuración y del equipo (Hito 6, DEC-038 §5).
+  {
+    files: ["lib/settings/actions.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== settingsWriteImport,
+          ),
         },
       ],
     },
@@ -515,6 +547,7 @@ const eslintConfig = defineConfig([
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
             recordMessageImport,
+            settingsWriteImport,
             demandFactsImport,
             phoneLibraryImport,
             stockMockImport,
@@ -543,6 +576,7 @@ const eslintConfig = defineConfig([
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
             recordMessageImport,
+            settingsWriteImport,
             demandFactsImport,
           ],
         },
@@ -569,6 +603,7 @@ const eslintConfig = defineConfig([
             recordOpportunityNoteImport,
             linkOpportunityVehicleImport,
             recordMessageImport,
+            settingsWriteImport,
             demandFactsImport,
             phoneLibraryImport,
           ],

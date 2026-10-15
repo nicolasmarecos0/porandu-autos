@@ -24,6 +24,8 @@ import { describe, expect, it } from "vitest";
  *   closeOpportunity() (lib/opportunities/actions.ts);
  * - el registro de mensajes (Hito 4) (db/queries/record-message), también:
  *   la Server Action addMessage() (lib/conversations/actions.ts);
+ * - la configuración y el equipo (Hito 6) (db/queries/settings-write),
+ *   también: las Server Actions de lib/settings/actions.ts;
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -612,6 +614,56 @@ describe(
     it("se permite en lib/contacts/phone.ts", async () => {
       expect(
         await restrictedBy("lib/contacts/phone.ts", importPhoneLibrary),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importSettingsWrite = `import { inviteMemberByEmail } from "@/db/queries/settings-write";\nexport const use = inviteMemberByEmail;\n`;
+
+describe(
+  "una sola puerta para la configuración y el equipo (Hito 6)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/settings/page.tsx",
+      "app/(app)/settings/team/page.tsx",
+      "components/settings/team-panel.tsx",
+      "lib/settings/requests.ts",
+      "lib/opportunities/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/conversations/actions.ts",
+      "lib/tenant/session.ts",
+      "db/queries/settings.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importSettingsWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/settings.ts",
+          `import { inviteMemberByEmail } from "./settings-write";\nexport const use = inviteMemberByEmail;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en las Server Actions de lib/settings/actions.ts", async () => {
+      expect(
+        await restrictedBy("lib/settings/actions.ts", importSettingsWrite),
+      ).toEqual([]);
+    });
+
+    it("los tipos de los resultados sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/settings/requests.ts",
+          `import type { InviteOutcome } from "@/db/queries/settings-write";\nexport type I = InviteOutcome;\n`,
+        ),
       ).toEqual([]);
     });
   },
