@@ -125,6 +125,43 @@ export function recencyState(minutes: number): RecencyState {
 }
 
 /**
+ * Instantes que separan los estados de recencia en un momento dado. Son
+ * límites exclusivos: cuenta lo que es estrictamente anterior.
+ */
+export type RecencyCutoffs = Readonly<{
+  /** `last_activity_at` anterior a este instante: al menos Enfriándose. */
+  warningBefore: Date;
+  /** `last_activity_at` anterior a este instante: Inactiva. */
+  staleBefore: Date;
+}>;
+
+/**
+ * La regla de `recencyState()` expresada como instantes de corte para `now`,
+ * para que la base cuente estados sin repetir los umbrales (Hito 5,
+ * DEC-037 §8). `minutesSince()` trunca a minutos enteros sobre la fecha que
+ * ve JavaScript, que ya viene truncada al milisegundo (`timestamptz` guarda
+ * microsegundos):
+ *
+ * - Enfriándose desde 2 días exactos: `minutos ≥ 2880` ⇔
+ *   `last_ms ≤ now − 2880 min` ⇔ `last < now − 2880 min + 1 ms`;
+ * - Inactiva desde que pasa los 5 días: `minutos > 7200` ⇔ `minutos ≥ 7201`
+ *   ⇔ `last < now − 7201 min + 1 ms`.
+ *
+ * El límite exclusivo un milisegundo después hace que la base, que compara
+ * los microsegundos, clasifique igual que el motor. Una fecha futura queda
+ * después de los dos cortes: Activa, como en `evaluateRecency()`.
+ */
+export function recencyCutoffs(now: Date): RecencyCutoffs {
+  assertValidDate(now, "now");
+  const before = (minutes: number) =>
+    new Date(now.getTime() - minutes * 60_000 + 1);
+  return {
+    warningBefore: before(RECENCY_STATE_DAYS.warning * MINUTES_PER_DAY),
+    staleBefore: before(RECENCY_STATE_DAYS.stale * MINUTES_PER_DAY + 1),
+  };
+}
+
+/**
  * Recencia desde `lastActivityAt` hasta `now`: minutos, horas y días
  * enteros, y su estado. Una fecha futura (reloj desfasado) cuenta como 0.
  */

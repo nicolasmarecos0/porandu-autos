@@ -17,6 +17,7 @@ import {
   PORANDU_SCORE_COMPOSITION,
   RECENCY_PENALTY,
   RECENCY_STATE_DAYS,
+  recencyCutoffs,
   recencyState,
   scoreOpportunity,
   stockFit,
@@ -173,6 +174,48 @@ describe("recencia: días y horas desde last_activity_at", () => {
     expect(() => evaluateRecency(NOW, new Date(Number.NaN))).toThrow(
       RangeError,
     );
+  });
+});
+
+describe("recencyCutoffs: la misma regla como instantes de corte (DEC-037 §8)", () => {
+  /** El estado según los cortes exclusivos, como lo cuenta la base. */
+  function stateByCutoffs(lastActivityAt: Date): string {
+    const cutoffs = recencyCutoffs(NOW);
+    if (lastActivityAt < cutoffs.staleBefore) return "stale";
+    if (lastActivityAt < cutoffs.warningBefore) return "warning";
+    return "active";
+  }
+
+  it("cuenta como Enfriándose desde 2 días exactos y como Inactiva desde 5 días y 1 minuto, con límites exclusivos un milisegundo después", () => {
+    expect(recencyCutoffs(NOW)).toEqual({
+      warningBefore: ago(RECENCY_STATE_DAYS.warning * DAY - 1),
+      staleBefore: ago(RECENCY_STATE_DAYS.stale * DAY + MINUTE - 1),
+    });
+  });
+
+  it.each([
+    -DAY,
+    0,
+    2 * DAY - MINUTE,
+    2 * DAY - 1,
+    2 * DAY,
+    2 * DAY + 1,
+    3 * DAY,
+    5 * DAY,
+    5 * DAY + 59_999,
+    5 * DAY + MINUTE - 1,
+    5 * DAY + MINUTE,
+    5 * DAY + MINUTE + 1,
+    30 * DAY,
+  ])("hace %i ms: los cortes coinciden con evaluateRecency()", (elapsed) => {
+    const lastActivityAt = ago(elapsed);
+    expect(stateByCutoffs(lastActivityAt)).toBe(
+      evaluateRecency(lastActivityAt, NOW).state,
+    );
+  });
+
+  it("un `now` inválido falla en vez de inventar cortes", () => {
+    expect(() => recencyCutoffs(new Date(Number.NaN))).toThrow(RangeError);
   });
 });
 

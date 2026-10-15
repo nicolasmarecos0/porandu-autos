@@ -50,6 +50,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-034 | Formalización y metadatos de cierre comercial Won/Lost | Aceptada en principio | 2026-10-11 |
 | DEC-035 | Motor de Scoring, Recency y NBA | Aceptada en principio | 2026-10-12 |
 | DEC-036 | Módulo de Conversaciones y Actualización Automática de Actividad | Aceptada en principio | 2026-10-13 |
+| DEC-037 | Dashboard Directivo y Agregación de Métricas | Aceptada en principio | 2026-10-14 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -773,6 +774,76 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - La verificación de staging suma `schema.messages` y `schema.activity-touch` y amplía `schema.opportunity-stages` con la regla del toque.
   - Una oportunidad con notas o mensajes recientes queda Activa y sube en la cola. Las penalizaciones de recencia de DEC-035 reflejan la interacción registrada.
   - La ingesta de H2b escribirá en `messages` con la identidad de sistema de ADR-002, que no puede satisfacer la policy de INSERT de miembros. El trigger tocará la oportunidad sin cambios.
+
+## DEC-037 — Dashboard Directivo y Agregación de Métricas
+- **Estado:** Aceptada en principio · 2026-10-14. Formaliza el pedido del fundador "Hito 5: Dashboard Directivo y Métricas en Tiempo Real" y sus respuestas del mismo día sobre la ruta, la dirección visual y la clasificación del inventario. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** la gerencia no tiene una vista agregada del negocio: para saber cuántas oportunidades hay abiertas, cuántas se ganaron en el mes o qué unidades están comprometidas, hay que recorrer la cola y el stock. Los datos ya existen en las tablas transaccionales: etapas y cierres (DEC-032, DEC-034), la unidad vinculada (DEC-033) y la recencia (DEC-035, DEC-036). DEC-032 §10 y DEC-034 §12 dejaron las métricas de conversión fuera de esos bloques, y `/intelligence` es un empty state desde B1 (DEC-001). El fundador lo llama "Hito 5": no es el Hito 5 del TB §15 (venta, atribución y Trade-In Loop), aunque adelanta una parte de su "dashboard mínimo de impacto".
+- **Decisión:**
+  1. **Ruta.** El Dashboard Directivo vive en `/intelligence` ("Inteligencia", DEC-001), la ruta que hoy muestra el empty state de B1. `/` sigue redirigiendo a `/cockpit` y el login sigue aterrizando ahí (DEC-020): el Action Cockpit sigue siendo el home action-first (MC §7 y §39, TB §17). No se agrega `/dashboard` ni un ítem de navegación. Decisión del fundador (2026-10-14).
+  2. **Dirección visual.** DEC-013 sin cambios (decisión del fundador, 2026-10-14): workspace claro, paneles blancos, tokens de `components/ui/tokens.css` y colores de estado solo junto a un texto. Sin glassmorphism ni dark mode.
+  3. **Tiempo real = cálculo en cada lectura.** Como pide el fundador, las métricas se calculan leyendo las tablas transaccionales: se agregan en PostgreSQL en cada request, sobre `opportunities`, `vehicles` y `contacts`. No hay tablas de métricas, snapshots, vistas materializadas, jobs ni cachés. Nada se persiste, así que no hay nada que pueda desincronizarse de los hechos (como DEC-031 y DEC-035).
+     - *Propuesta de implementación:* cada carga de la página refleja el último dato confirmado, pero la página no se actualiza sola. No hay suscripciones ni refresco automático.
+  4. **Período.** *Propuesta de implementación* (el pedido dice "mes en curso" sin precisar zona ni a qué métricas aplica):
+     - "Mes en curso" es el mes calendario de Asunción (`America/Asuncion`, la zona de presentación de P1) que contiene `now`: desde el primer instante del día 1 (incluido) hasta el primer instante del día 1 del mes siguiente (excluido). Lo calcula el dominio puro (`monthWindow()`, `domains/dashboard/period.ts`) con `now` explícito, y la base solo compara instantes. Si una medianoche no existió por un cambio de horario, el mes empieza en el cambio.
+     - El período aplica a lo que ocurre en el tiempo: ganadas, perdidas, win rate y unidades vendidas.
+     - Las existencias son el estado actual, no del mes: oportunidades activas, unidades en stock y reservadas, y atención. Una oportunidad activa nacida en un mes anterior cuenta, porque sigue abierta hoy.
+  5. **Fecha de cierre.** *Propuesta de implementación.* No existe `closed_at` (DEC-032 §10, DEC-034 §12). La fecha de cierre de una oportunidad `won` o `lost` es su `updated_at`:
+     - el trigger lo fija en el UPDATE que la cierra (DEC-034 §9);
+     - después no vuelve a cambiar, porque una oportunidad cerrada solo admite el toque de actividad (DEC-034 §4 y §5, DEC-036 §3) y el toque no cambia `updated_at` (DEC-036 §1).
+     - Esto convierte la *propuesta de implementación* de DEC-036 §1 ("el toque no cambia `updated_at`") en un requisito del dashboard: cambiarla exige agregar antes `closed_at`.
+     - Si una decisión futura habilita editar una oportunidad cerrada (corregir un cierre, registrar la entrega efectiva), primero tiene que agregar `closed_at`, o el dashboard movería esa oportunidad de mes.
+  6. **Pipeline comercial.**
+     - *Oportunidades activas:* las abiertas hoy (`new`, `qualifying` y `negotiating`), sin importar cuándo nacieron.
+     - *Ganadas en el mes:* `won` con cierre en el mes.
+     - *Win rate:* ganadas / (ganadas + perdidas) con cierre en el mes, en porcentaje con un decimal y redondeo exacto sobre enteros. *Propuesta de implementación:* se mide sobre las cerradas, porque una abierta todavía no ganó ni perdió. Sin cierres en el mes es "Sin dato" (DEC-005), nunca 0 %.
+  7. **Salud del inventario.** Clasificación del fundador (2026-10-14): "un vehículo se cuenta como Vendido si está vinculado a una oportunidad cerrada con estado Ganada (Won). Los vehículos vinculados a oportunidades en Negociación están Reservados, y el resto está En Stock." Se deriva de las oportunidades que tienen vinculada cada unidad (`vehicle_id`, DEC-033):
+     - *Vendida:* vinculada a una oportunidad `won` (la unidad vinculada es la vendida, DEC-034 §3).
+     - *Reservada:* vinculada a una oportunidad `negotiating`.
+     - *En stock:* el resto, incluidas las unidades en preparación y las vinculadas solo a oportunidades perdidas.
+     - `vehicles.status` no se consulta. Ninguna puerta escribe `reserved` ni `sold` (DEC-028 §1, DEC-034 §12), y la clasificación no cambia ni escribe el estado de la unidad: la Stock List (DEC-026) sigue mostrando `vehicles.status`.
+     - *Propuesta de implementación:* si la misma unidad está vinculada a varias oportunidades (nada lo impide, DEC-033 §2), vendida tiene precedencia sobre reservada, y cada unidad está en una sola categoría.
+     - *Propuesta de implementación:* el indicador "Vendidas en el mes" cuenta las unidades cuya oportunidad ganada se cerró en el mes (§4). "En stock" y "Reservadas" son el estado actual. Una unidad vendida en un mes anterior no vuelve al stock ni aparece en ningún indicador del mes, así que los tres indicadores no suman el total de unidades.
+  8. **Atención (recencia).** Cuántas oportunidades abiertas están Enfriándose y cuántas Inactivas, con la regla de DEC-035 §2. Las cerradas no cuentan: no tienen NBA ni penalización (DEC-035 §3 y §5).
+     - La base cuenta con dos instantes de corte que el dominio deriva de la misma regla (`recencyCutoffs()`, junto a `recencyState()` en `domains/scoring/engine.ts`): Enfriándose desde 2 días exactos, Inactiva desde 5 días y 1 minuto. El umbral no se repite en SQL.
+     - Los cortes son límites exclusivos, un milisegundo después del borde. `last_activity_at` guarda microsegundos (`now()`), y el motor ve la fecha truncada al milisegundo: comparar `last_activity_at < corte` clasifica en la base igual que en la cola.
+     - Un test cruza los cortes con `evaluateRecency()` en los bordes, y otros comparan el dashboard con la cola de `/opportunities`, también con microsegundos en los bordes.
+  9. **Oportunidades en riesgo.** Lista de las abiertas Inactivas, de la más vieja a la más reciente, con contacto, etapa, días sin actividad y enlace a `/opportunities/[id]`.
+     - *Propuesta de implementación:* muestra a lo sumo 10 y dice cuántas hay en total. La lista completa está en la cola de `/opportunities`.
+     - No muestra teléfono ni demanda: solo lo necesario para decidir a quién llamar.
+  10. **Capa de datos.** `getExecutiveDashboard()` (`db/queries/dashboard.ts`): `requireTenant()` → `withTenant()` → tres lecturas en la misma transacción, todas con filtro explícito por `organization_id` sobre RLS (ADR-001 §2):
+      - conteos de oportunidades (`count(*) FILTER`);
+      - conteos del inventario: las unidades con un `LEFT JOIN` al agregado de sus vínculos por organización y unidad (`bool_or`), también filtrado por organización y unido por los dos, como la FK compuesta;
+      - la lista en riesgo, con su total en la misma lectura (`count(*) over ()`).
+      - El dominio (`domains/dashboard`) arma la vista: win rate, días sin actividad y formato es-PY. Los instantes se ligan con operadores de columna para que viajen como `timestamptz`.
+      - Solo lectura: no hay migración, policies, grants ni escrituras nuevas, y leer no modifica `last_activity_at`, `updated_at` ni el estado de las unidades.
+  11. **Autorización.** *Propuesta de implementación:* la lectura de cualquier membership activa (`admin` o `seller`), como el resto de las superficies tenant-scoped (DEC-019, DEC-023: sin responsable asignado). El pedido enfoca el panel en el gerente o dueño, pero no pide restringirlo. Restringirlo a `admin` requiere una decisión nueva.
+  12. **UI de `/intelligence`.**
+      - Tres bloques en una grilla CSS: "Pipeline comercial", "Salud del inventario" y "Atención".
+      - Cada indicador es una tarjeta con rótulo, valor y contexto.
+      - El win rate lleva un medidor con el color de marca sobre una pista de la misma rampa.
+      - Enfriándose e Inactivas usan los tonos de advertencia y peligro cuando son más de cero, siempre junto a su texto.
+      - "Oportunidades en riesgo" va en el rail derecho: avatar de iniciales, contacto, etapa y días sin actividad. Con más de 10, aclara cuántas muestra y enlaza a la cola.
+      - Server Components, sin JavaScript de cliente. El mes se nombra en el encabezado ("Mes en curso: octubre de 2026").
+  13. **Fuera de este bloque:**
+      - Gráficos, series históricas, comparación con meses anteriores, metas, filtros por vendedor o período, exportación y refresco automático o streaming.
+      - El valor vendido (`SUM(sale_price)` por moneda, sin FX, DEC-025 §5), las ventas influenciadas y la atribución (TB §13), ingresos y comisiones.
+      - La restricción por rol, cachés o materialización, `closed_at`, reservar o vender la unidad en Stock, el Cockpit, el Morning Brief (DEC-007) y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-001 y B1 §4 y §6: `/intelligence` deja de ser un empty state y muestra el Dashboard Directivo, como Stock con DEC-026. La navegación no cambia, y Conversations, Calendar y Recovery siguen como placeholder.
+  - DEC-017: el dashboard no replica la cola de `/opportunities`. Solo cuenta, y la lista en riesgo enlaza al detalle. Además, `/intelligence` suma una vista agregada de atención (conteos y oportunidades en riesgo) para la gerencia; la priorización accionable de todo el negocio sigue siendo responsabilidad del Action Cockpit (DEC-017, MC §7), que no debe duplicarla cuando se construya.
+  - DEC-032 §10 y DEC-034 §12: las métricas de conversión entran como lectura agregada, sin `closed_at` ni historial de etapas.
+  - DEC-035 §8 ("el módulo Intelligence", fuera de ese bloque): entra acá, como dashboard directivo.
+  - DEC-036 §1: que el toque de actividad no cambie `updated_at` pasa a ser un requisito del dashboard (§5).
+  - DEC-026, DEC-028 y DEC-033 §2: las "reservadas" y "vendidas" del dashboard salen de los vínculos, no de `vehicles.status`, y no lo cambian. No son los grupos por estado de la Stock List: vincular sigue sin reservar ni vender la unidad.
+  - MC §7 y §39, TB §17 y DEC-020: sin cambios. El home sigue siendo el Action Cockpit.
+  - DEC-029 (secuencia), TB §15 (Hito 5) y MC §34: bloque agregado por el fundador como "Hito 5". No reemplaza H2a, ADR-002, H2b ni el registro de la venta.
+  - DEC-013: sin cambios (decisión del fundador).
+  - Prevalece según DEC-002. No requiere un ADR nuevo: no hay datos ni accesos nuevos, y ADR-001 alcanza.
+- **Consecuencias:**
+  - Cero drift de base de datos: no hay migración ni paso de staging.
+  - Cada request de `/intelligence` hace tres lecturas agregadas sobre las oportunidades y unidades de la organización activa (O(oportunidades + unidades)). Si el volumen del piloto lo exige, se revisa con una decisión nueva (índices, límites o materialización).
+  - El dashboard y la Stock List pueden diferir: una unidad vendida según el dashboard sigue `available` en Stock hasta que se habilite vender la unidad (DEC-034 §12). Ese flujo tiene que revisar esta DEC.
+  - Habilitar la edición de una oportunidad cerrada, o que el toque de actividad cambie `updated_at`, exige agregar antes `closed_at` (§5). Si no, el dashboard movería esas oportunidades al mes en curso.
 
 ---
 
