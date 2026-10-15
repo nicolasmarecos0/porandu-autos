@@ -228,3 +228,11 @@ export function CloseIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function MoreIcon(props: IconProps) {
+  return (
+    <Icon strokeWidth={3} {...props}>
+      <path d="M5.5 12h.01M12 12h.01M18.5 12h.01" />
+    </Icon>
+  );
+}
