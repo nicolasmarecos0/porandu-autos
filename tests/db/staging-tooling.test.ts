@@ -133,6 +133,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0009_opportunity_notes_vehicle_link",
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
+      "0012_team_settings",
     ]);
   });
 
@@ -357,6 +358,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.opportunity-notes",
         "schema.messages",
         "schema.activity-touch",
+        "schema.team-settings",
         "private.schema",
         "private.user_org_ids",
         "app_runtime.attributes",
@@ -777,8 +779,9 @@ describe("migración oficial y verificación post-migración", () => {
 
 /*
  * El próximo rollout real (DEC-036): 0011 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 2A (0000 a 0010) si
- * 0010 ya se aplicó; si no, en el Hito 2 (0000 a 0009), H1.6 (0000 a 0008),
+ * preflight → migrate → verify. Staging está en el Hito 4/5 (0000 a 0011) si
+ * 0011 ya se aplicó; si no, en el Hito 2A (0000 a 0010), el Hito 2 (0000 a
+ * 0009), H1.6 (0000 a 0008),
  * H1.4 (0000 a 0007) o todavía en H1.3C (0000 a 0006, DEC-028):
  * expected_migrations declara exactamente lo pendiente en cada caso. Esta
  * rama no aplica nada a staging.
@@ -794,6 +797,7 @@ describe.each([
       "0009_opportunity_notes_vehicle_link",
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
+      "0012_team_settings",
     ],
   },
   {
@@ -805,6 +809,7 @@ describe.each([
       "0009_opportunity_notes_vehicle_link",
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
+      "0012_team_settings",
     ],
   },
   {
@@ -815,6 +820,7 @@ describe.each([
       "0009_opportunity_notes_vehicle_link",
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
+      "0012_team_settings",
     ],
   },
   {
@@ -824,16 +830,23 @@ describe.each([
     expected: [
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
+      "0012_team_settings",
     ],
   },
   {
     stagingAt: "0010_opportunity_closure_metadata",
     label: "Hito 2A",
     applied: 11,
-    expected: ["0011_conversations_and_activity_trigger"],
+    expected: ["0011_conversations_and_activity_trigger", "0012_team_settings"],
+  },
+  {
+    stagingAt: "0011_conversations_and_activity_trigger",
+    label: "Hito 4/5",
+    applied: 12,
+    expected: ["0012_team_settings"],
   },
 ])(
-  "staging en $label: rollout hasta 0011",
+  "staging en $label: rollout hasta 0012",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

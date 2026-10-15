@@ -16,8 +16,10 @@
  * opportunities, por columna; 0009: UPDATE de opportunities.vehicle_id, por
  * columna, y alta append-only de opportunity_notes; 0010: UPDATE de los
  * metadatos del cierre de opportunities, por columna; 0011: alta
- * append-only de messages). Los triggers y sus funciones (0008 a 0011) son
- * SQL custom: drizzle-kit no los modela.
+ * append-only de messages; 0012: UPDATE de organizations y alta y UPDATE
+ * de memberships, solo para admin, por columna salvo el alta). Los
+ * triggers y sus funciones (0008 a 0012) y las funciones de equipo de 0012
+ * son SQL custom: drizzle-kit no los modela.
  */
 export * from "./organizations";
 export * from "./profiles";

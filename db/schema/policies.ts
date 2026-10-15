@@ -9,3 +9,12 @@ import { sql } from "drizzle-orm";
  * migración 0001_tenant_isolation: drizzle-kit no modela funciones.
  */
 export const userOrgIds = sql`(SELECT private.user_org_ids())`;
+
+/*
+ * Organizaciones donde el usuario de la request es `admin` con membership
+ * activa (Hito 6, DEC-038 §4). Mismo patrón que `private.user_org_ids()`:
+ * SECURITY DEFINER, STABLE y en `private`, en la migración
+ * 0012_team_settings. Las policies de escritura de `organizations` y
+ * `memberships` la usan en USING y WITH CHECK.
+ */
+export const userAdminOrgIds = sql`(SELECT private.user_admin_org_ids())`;

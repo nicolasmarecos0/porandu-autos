@@ -101,7 +101,7 @@ async function expectSqlError(
 }
 
 describe("organizations", () => {
-  it("es la raíz del tenant: UUID PK, nombre y timestamps, sin organization_id", async () => {
+  it("es la raíz del tenant: UUID PK, nombre, timestamps y moneda por defecto (DEC-038), sin organization_id", async () => {
     expect(await columns(db.admin, "organizations")).toEqual([
       {
         name: "id",
@@ -111,9 +111,20 @@ describe("organizations", () => {
       },
       { name: "name", type: "text", notNull: true, default: null },
       ...TIMESTAMPS,
+      // 0012 (Hito 6): ADD COLUMN la agrega al final.
+      {
+        name: "default_currency",
+        type: "text",
+        notNull: true,
+        default: "'PYG'::text",
+      },
     ]);
     expect(await constraints(db.admin, "organizations")).toEqual({
       organizations_pkey: "PRIMARY KEY (id)",
+      organizations_name_check:
+        "CHECK ((((char_length(name) >= 1) AND (char_length(name) <= 120)) AND (name = btrim(name)) AND (name !~ '[[:cntrl:]]'::text)))",
+      organizations_default_currency_check:
+        "CHECK ((default_currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
     });
   });
 });

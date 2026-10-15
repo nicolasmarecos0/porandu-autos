@@ -2,13 +2,16 @@
 -- Solo para tests: se ejecuta como superusuario en cada base de prueba, antes
 -- de las migraciones. No es Supabase: no hay GoTrue, PostgREST ni Supavisor.
 
--- Supabase Auth. profiles.id referencia auth.users(id).
+-- Supabase Auth. profiles.id referencia auth.users(id). El email (como en
+-- Supabase, varchar(255) nullable) lo leen las funciones de equipo de 0012
+-- (DEC-038), que corren como postgres.
 CREATE SCHEMA auth;
-CREATE TABLE auth.users (id uuid PRIMARY KEY);
--- Lo mínimo para que postgres cree la FK: si la migración funciona con esto,
--- también funciona con los privilegios más amplios que postgres tiene en Supabase.
+CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255));
+-- Lo mínimo para que postgres cree la FK y lea el email: si la migración
+-- funciona con esto, también funciona con los privilegios más amplios que
+-- postgres tiene en Supabase.
 GRANT USAGE ON SCHEMA auth TO postgres;
-GRANT REFERENCES ON auth.users TO postgres;
+GRANT REFERENCES, SELECT ON auth.users TO postgres;
 
 -- auth.uid() tal como la define Supabase Auth: el `sub` de los claims de la
 -- request, o NULL si no hay claims. EXECUTE queda en PUBLIC (default).

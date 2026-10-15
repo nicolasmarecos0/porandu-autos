@@ -12,7 +12,7 @@ import { authenticatedRole } from "drizzle-orm/supabase";
 
 import { timestamps } from "./columns";
 import { organizations } from "./organizations";
-import { userOrgIds } from "./policies";
+import { userAdminOrgIds, userOrgIds } from "./policies";
 import { profiles } from "./profiles";
 
 /*
@@ -34,7 +34,21 @@ export const membershipRole = pgEnum("membership_role", ["admin", "seller"]);
  *   usuario de `auth.users` borra su perfil y sus memberships (CASCADE).
  *
  * Lectura: las memberships de las organizaciones donde el usuario tiene
- * membership activa. Sin policies de escritura (default deny).
+ * membership activa.
+ *
+ * Gestión del equipo (Hito 6, DEC-038 §4): solo un `admin` activo de la
+ * organización escribe, y nunca sobre su propia membership.
+ * - Alta (invitar): la membership nace activa, con el reloj de la base. La
+ *   policy de INSERT exige la organización entre las del usuario como
+ *   `admin`. El usuario lo resuelve `private.find_member_candidate()` por
+ *   email (DEC-038 §3).
+ * - Edición: solo `role`, `active` y `updated_at` (grant por columna). La
+ *   policy de UPDATE exige la organización entre las del usuario como
+ *   `admin`, antes y después. El trigger `memberships_change_guard` rechaza
+ *   cambiar la membership propia, mover una membership de organización o de
+ *   usuario y dejar la organización sin `admin` activo, y fija
+ *   `updated_at`.
+ * - Revocar es `active = false` (DEC-018). Sin DELETE.
  */
 export const memberships = pgTable(
   "memberships",
@@ -62,6 +76,17 @@ export const memberships = pgTable(
       for: "select",
       to: authenticatedRole,
       using: sql`${t.organizationId} IN ${userOrgIds}`,
+    }),
+    pgPolicy("memberships_insert_admin", {
+      for: "insert",
+      to: authenticatedRole,
+      withCheck: sql`${t.organizationId} IN ${userAdminOrgIds} AND ${t.active} AND ${t.createdAt} = now() AND ${t.updatedAt} = now()`,
+    }),
+    pgPolicy("memberships_update_admin", {
+      for: "update",
+      to: authenticatedRole,
+      using: sql`${t.organizationId} IN ${userAdminOrgIds}`,
+      withCheck: sql`${t.organizationId} IN ${userAdminOrgIds}`,
     }),
   ],
 ).enableRLS();
