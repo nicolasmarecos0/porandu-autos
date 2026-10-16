@@ -461,10 +461,13 @@ export function describeAuthTenantAcceptance(
       ]);
 
       // El email llega por la función: authenticated sigue sin leer
-      // auth.users ni los perfiles ajenos.
+      // auth.users ni los perfiles ajenos. La prueba no pide columnas: si
+      // alguna vez pasara, el fallo no imprime emails de staging.
       const ctx = await resolved(browser);
       await expect(
-        withTenant(ctx, (tx) => tx.execute(sql`SELECT email FROM auth.users`)),
+        withTenant(ctx, (tx) =>
+          tx.execute(sql`SELECT 1 FROM auth.users LIMIT 0`),
+        ),
       ).rejects.toMatchObject({ cause: { code: "42501" } });
       expect((await visible(ctx)).profiles).toEqual([users.ab.id]);
     });
