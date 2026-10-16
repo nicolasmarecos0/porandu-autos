@@ -7,18 +7,21 @@ import {
   stringToBase64URL,
 } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import postgres, { type Sql } from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { getTeam } from "@/db/queries/settings";
 import { memberships, organizations, profiles } from "@/db/schema";
 import {
   withTenant,
   type ScopedTransaction,
   type TenantContext,
 } from "@/db/tenant";
+import type { TeamView } from "@/domains/team/members";
 import { signIn, signOut } from "@/lib/auth/actions";
 import { getAuthenticatedUser } from "@/lib/auth/session";
+import { inviteMember, removeMember } from "@/lib/settings/actions";
 import { selectOrganization } from "@/lib/tenant/actions";
 import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
 import { resolveTenant } from "@/lib/tenant/resolution";
@@ -44,6 +47,11 @@ import type { AuthTenantTarget } from "./target";
  *   Supabase Auth (email + password) → getClaims() → memberships activas →
  *   requireTenant() → withTenant() → RLS
  *
+ * y, desde el Hito 6 (DEC-038), el equipo: la lista (getTeam() →
+ * private.organization_members()) y la invitación por email (inviteMember()
+ * → private.find_member_candidate()) leen auth.users.email como postgres
+ * (SECURITY DEFINER), con usuarios creados por la Auth Admin API.
+ *
  * con el código de la aplicación sin cambios: las Server Actions signIn,
  * selectOrganization y signOut, requireTenant() y withTenant() por
  * RUNTIME_DATABASE_URL (app_runtime). Solo se simulan cookies() y
@@ -58,7 +66,8 @@ import type { AuthTenantTarget } from "./target";
  * schema, las migraciones y app_runtime no se tocan.
  *
  * El test file mockea server-only, next/headers y next/navigation con
- * ./request-context.ts.
+ * ./request-context.ts, y next/cache (revalidatePath() de las Server
+ * Actions de equipo) con un no-op.
  */
 
 const USER_KEYS = ["a", "b", "ab", "d", "e"] as const;
@@ -371,6 +380,166 @@ export function describeAuthTenantAcceptance(
 
     it("sin memberships: /no-access", async () => {
       expect(await tenant(await login("e"))).toBe("/no-access");
+    });
+
+    /** El equipo de la organización activa del navegador (getTeam()). */
+    async function team(browser: Browser): Promise<TeamView> {
+      const outcome = await request(browser, () => getTeam());
+      if (outcome.redirect)
+        throw new Error(`redirected to ${outcome.redirect}`);
+      return outcome.value as TeamView;
+    }
+
+    /** Lo que la UI usa de cada miembro, sin ids de membership ni fechas. */
+    function members(view: TeamView) {
+      return view.members.map(
+        ({ userId, email, fullName, role, isViewer, manageable }) => ({
+          userId,
+          email,
+          fullName,
+          role,
+          isViewer,
+          manageable,
+        }),
+      );
+    }
+
+    function member(
+      key: UserKey,
+      role: "admin" | "seller",
+      viewer: UserKey,
+      viewerIsAdmin: boolean,
+    ) {
+      return {
+        userId: users[key].id,
+        // El email de auth.users, el que guardó la Auth Admin API.
+        email: users[key].email,
+        fullName: `SYNTHETIC ${key} ${t.runId}`,
+        role,
+        isViewer: key === viewer,
+        manageable: viewerIsAdmin && key !== viewer,
+      };
+    }
+
+    it("equipo (DEC-038 §6): getTeam() lista nombre, email de auth.users y rol con private.organization_members()", async () => {
+      // a, admin de A: los miembros activos de A (la inactiva de d no).
+      const asAdmin = await team(await login("a"));
+      expect(asAdmin).toMatchObject({
+        viewerRole: "admin",
+        canInvite: true,
+        adminCount: 1,
+      });
+      expect(members(asAdmin)).toEqual([
+        member("a", "admin", "a", true),
+        member("ab", "seller", "a", true),
+      ]);
+
+      // ab con A activa: la misma lista, de solo lectura (seller).
+      const browser = await login("ab");
+      await request(browser, () =>
+        selectOrganization(null, form({ organizationId: orgs.A })),
+      );
+      const asSeller = await team(browser);
+      expect(asSeller).toMatchObject({
+        viewerRole: "seller",
+        canInvite: false,
+      });
+      expect(members(asSeller)).toEqual([
+        member("a", "admin", "ab", false),
+        member("ab", "seller", "ab", false),
+      ]);
+
+      // ab con B activa: solo los miembros de B, nunca los de A.
+      await request(browser, () =>
+        selectOrganization(null, form({ organizationId: orgs.B })),
+      );
+      const asAdminOfB = await team(browser);
+      expect(asAdminOfB.viewerRole).toBe("admin");
+      expect(members(asAdminOfB)).toEqual([
+        member("ab", "admin", "ab", true),
+        member("b", "seller", "ab", true),
+      ]);
+
+      // El email llega por la función: authenticated sigue sin leer
+      // auth.users ni los perfiles ajenos. La prueba no pide columnas: si
+      // alguna vez pasara, el fallo no imprime emails de staging.
+      const ctx = await resolved(browser);
+      await expect(
+        withTenant(ctx, (tx) =>
+          tx.execute(sql`SELECT 1 FROM auth.users LIMIT 0`),
+        ),
+      ).rejects.toMatchObject({ cause: { code: "42501" } });
+      expect((await visible(ctx)).profiles).toEqual([users.ab.id]);
+    });
+
+    it("invitar por email (DEC-038 §3): private.find_member_candidate() lee auth.users.email; un seller no puede", async () => {
+      // Seller (ab con A activa): la acción lo corta y la base también.
+      const sellerBrowser = await login("ab");
+      await request(sellerBrowser, () =>
+        selectOrganization(null, form({ organizationId: orgs.A })),
+      );
+      const asSeller = await request(sellerBrowser, () =>
+        inviteMember(null, form({ email: users.d.email, role: "admin" })),
+      );
+      expect(asSeller.value).toEqual({ status: "forbidden" });
+      const sellerCtx = await resolved(sellerBrowser);
+      await expect(
+        withTenant(sellerCtx, (tx) =>
+          tx.execute(
+            sql`SELECT private.find_member_candidate(${orgs.A}, ${users.d.email})`,
+          ),
+        ),
+      ).rejects.toMatchObject({ cause: { code: "42501" } });
+
+      // Admin (a): un email sin cuenta no cambia nada.
+      const adminBrowser = await login("a");
+      const nobody = syntheticEmail(t.runId, "nobody");
+      const missing = await request(adminBrowser, () =>
+        inviteMember(null, form({ email: nobody, role: "seller" })),
+      );
+      expect(missing.value).toEqual({
+        status: "no_account",
+        values: { email: nobody, role: "seller" },
+      });
+
+      // La cuenta de d (membership revocada en A) se encuentra por su email,
+      // sin distinguir mayúsculas, y vuelve activa.
+      const invited = await request(adminBrowser, () =>
+        inviteMember(
+          null,
+          form({ email: users.d.email.toUpperCase(), role: "seller" }),
+        ),
+      );
+      expect(invited.value).toEqual({
+        status: "reactivated",
+        invitation: { email: users.d.email, role: "seller" },
+      });
+      const withD = await team(adminBrowser);
+      expect(members(withD)).toEqual([
+        member("a", "admin", "a", true),
+        member("ab", "seller", "a", true),
+        member("d", "seller", "a", true),
+      ]);
+      const reactivated = await resolved(await login("d"));
+      expect([reactivated.organizationId, reactivated.role]).toEqual([
+        orgs.A,
+        "seller",
+      ]);
+
+      // Revocar de nuevo (deja d como estaba) y la guarda de la membership
+      // propia, con claims reales.
+      const dMembership = withD.members.find((m) => m.userId === users.d.id);
+      const aMembership = withD.members.find((m) => m.userId === users.a.id);
+      if (!dMembership || !aMembership) throw new Error("missing member");
+      const removed = await request(adminBrowser, () =>
+        removeMember(null, form({ membershipId: dMembership.membershipId })),
+      );
+      expect(removed.value).toEqual({ status: "removed" });
+      expect(await tenant(await login("d"))).toBe("/no-access");
+      const self = await request(adminBrowser, () =>
+        removeMember(null, form({ membershipId: aMembership.membershipId })),
+      );
+      expect(self.value).toEqual({ status: "self" });
     });
 
     it("revocación: rige desde el request siguiente, aunque la cookie siga ahí", async () => {
