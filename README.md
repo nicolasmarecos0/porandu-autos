@@ -158,7 +158,7 @@ El workflow manual **Staging DB** (`.github/workflows/staging-db.yml`) opera la 
 | `provision-runtime` | Preflight → password de `app_runtime` → login por 6543 → acceptance del runtime | los de `preflight` y `STAGING_RUNTIME_DB_PASSWORD` |
 | `verify` | Verificación de catálogo (roles, grants, RLS, policies, `private`) y de la Data API (ninguna respuesta expone datos ni schema de la app) | los de `preflight` y `STAGING_PUBLISHABLE_KEY` |
 | `runtime-acceptance` | `app_runtime` por Supavisor 6543 con `db/tenant.ts`: falla cerrado, contexto limpio tras COMMIT/ROLLBACK/error, no asume otros roles | `STAGING_RUNTIME_DB_PASSWORD` (sin la de `postgres`) |
-| `auth-tenant-acceptance` | Supabase Auth real → `getClaims()` → memberships → `requireTenant()` → `withTenant()` → RLS, con usuarios y organizaciones sintéticos que se borran al terminar | todos, incluida `STAGING_SECRET_KEY` (solo Auth Admin API) |
+| `auth-tenant-acceptance` | Supabase Auth real → `getClaims()` → memberships → `requireTenant()` → `withTenant()` → RLS, y el equipo del Hito 6 (lista con el email de `auth.users`, invitación por email, RBAC y la guarda de la membership propia), con usuarios y organizaciones sintéticos que se borran al terminar | todos, incluida `STAGING_SECRET_KEY` (solo Auth Admin API) |
 | `cleanup-synthetic` | Borra datos sintéticos de corridas interrumpidas | los de `preflight` y `STAGING_SECRET_KEY` |
 
 Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@porandu-synthetic.test` con `app_metadata.porandu_synthetic`, y organizaciones `SYNTHETIC H0 <corrida> · <clave>`. La limpieza solo borra filas con esas marcas, en orden explícito (memberships → organizaciones → profiles → usuarios de Auth) y nunca el schema, las migraciones ni `app_runtime`. Si una organización sintética tiene miembros reales, no borra nada.
@@ -174,7 +174,7 @@ Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@pora
 1. `preflight`: revisar el estado y las migraciones pendientes.
 2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`; H1.3A: `0004_vehicles_stock_persistence`; H1.3B: `0005_vehicle_quick_create`; H1.3C: `0006_vehicle_availability`; H1.4: `0007_opportunity_demand_facts`; H1.6: `0008_opportunity_stages`, o `0007_opportunity_demand_facts,0008_opportunity_stages` si `0007` todavía no se aplicó; Hito 2: `0009_opportunity_notes_vehicle_link`; Hito 2A: `0010_opportunity_closure_metadata`; Hito 4: `0011_conversations_and_activity_trigger`, o con las anteriores que falten, en orden). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
 3. Primer rollout o rotación: `provision-runtime`.
-4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution o el aislamiento.
+4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution, el aislamiento o la gestión del equipo.
 
 **`RUNTIME_DATABASE_URL` de staging.** `postgresql://app_runtime.<project_ref>:<password>@aws-<n>-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require`, con la password URL-encoded. El workflow la arma en memoria. Dónde se configura para el runtime desplegado (Vercel) es H0.9/E3; nunca va a un archivo del repositorio.
 

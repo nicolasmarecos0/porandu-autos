@@ -14,6 +14,9 @@ vi.mock("next/navigation", async () => {
   const context = await import("./support/request-context");
   return { redirect: context.redirect };
 });
+// revalidatePath() de las Server Actions de equipo (Hito 6): sin el cache
+// de Next en Vitest, no hay nada que revalidar.
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
 /*
  * Acceptance Auth → Tenant contra staging, con usuarios y organizaciones
