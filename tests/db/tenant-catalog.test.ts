@@ -172,7 +172,7 @@ describe("rol de runtime app_runtime (ADR-001 §2)", () => {
 });
 
 describe("policies (ADR-001 §4)", () => {
-  it("lectura para authenticated, alta de contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes y messages con WITH CHECK, y las ediciones de vehicles y opportunities con USING y WITH CHECK, con la forma de referencia", async () => {
+  it("lectura para authenticated, alta de contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages y memberships (admin, Hito 6) con WITH CHECK, y las ediciones de vehicles, opportunities, organizations y memberships (admin, Hito 6) con USING y WITH CHECK, con la forma de referencia", async () => {
     expect(await policies(db.admin)).toEqual([
       {
         table: "contacts",
@@ -196,6 +196,16 @@ describe("policies (ADR-001 §4)", () => {
       },
       {
         table: "memberships",
+        name: "memberships_insert_admin",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "INSERT",
+        using: null,
+        withCheck:
+          "((organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids)) AND active AND (created_at = now()) AND (updated_at = now()))",
+      },
+      {
+        table: "memberships",
         name: "memberships_select_member",
         permissive: "PERMISSIVE",
         roles: ["authenticated"],
@@ -203,6 +213,17 @@ describe("policies (ADR-001 §4)", () => {
         using:
           "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
         withCheck: null,
+      },
+      {
+        table: "memberships",
+        name: "memberships_update_admin",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "UPDATE",
+        using:
+          "(organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
+        withCheck:
+          "(organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
       },
       {
         table: "messages",
@@ -305,6 +326,17 @@ describe("policies (ADR-001 §4)", () => {
         withCheck: null,
       },
       {
+        table: "organizations",
+        name: "organizations_update_admin",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "UPDATE",
+        using:
+          "(id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
+        withCheck:
+          "(id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
+      },
+      {
         table: "profiles",
         name: "profiles_select_own",
         permissive: "PERMISSIVE",
@@ -358,30 +390,40 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes y messages, y UPDATE solo sobre opportunities y vehicles", async () => {
+  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages y memberships, y UPDATE solo sobre opportunities, vehicles, organizations y memberships", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
       "authenticated INSERT contacts",
+      "authenticated INSERT memberships",
       "authenticated INSERT messages",
       "authenticated INSERT opportunities",
       "authenticated INSERT opportunity_demand_facts",
       "authenticated INSERT opportunity_notes",
       "authenticated INSERT vehicles",
       ...TABLES.map((table) => `authenticated SELECT ${table}`),
+      "authenticated UPDATE memberships",
       "authenticated UPDATE opportunities",
+      "authenticated UPDATE organizations",
       "authenticated UPDATE vehicles",
     ]);
   });
 
-  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id, updated_at y los metadatos del cierre (H1.6, Hito 2, DEC-034) y vehicles.status y updated_at (H1.3C), por columna, nunca la tabla", async () => {
+  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id, updated_at y los metadatos del cierre (H1.6, Hito 2, DEC-034), vehicles.status y updated_at (H1.3C), organizations.name, default_currency y updated_at y memberships.role, active y updated_at (Hito 6), por columna, nunca la tabla", async () => {
     const writes = (await tablePrivileges(db.admin, ["authenticated"])).filter(
       (grant) => !/^authenticated (SELECT|INSERT) /.test(grant),
     );
     expect(writes).toEqual([
+      "authenticated UPDATE memberships",
       "authenticated UPDATE opportunities",
+      "authenticated UPDATE organizations",
       "authenticated UPDATE vehicles",
     ]);
 
-    for (const name of ["opportunities", "vehicles"]) {
+    for (const name of [
+      "memberships",
+      "opportunities",
+      "organizations",
+      "vehicles",
+    ]) {
       const [table] = await db.admin<{ update: boolean }[]>`
         SELECT has_table_privilege('authenticated', ${`public.${name}`}, 'UPDATE') AS update
       `;
@@ -396,6 +438,9 @@ describe("grants (ADR-001 §3.6)", () => {
       ORDER BY 1
     `;
     expect(columns.map((row) => row.column)).toEqual([
+      "memberships.active",
+      "memberships.role",
+      "memberships.updated_at",
       "opportunities.delivery_date",
       "opportunities.delivery_status",
       "opportunities.loss_notes",
@@ -406,6 +451,9 @@ describe("grants (ADR-001 §3.6)", () => {
       "opportunities.stage",
       "opportunities.updated_at",
       "opportunities.vehicle_id",
+      "organizations.default_currency",
+      "organizations.name",
+      "organizations.updated_at",
       "vehicles.status",
       "vehicles.updated_at",
     ]);
@@ -417,11 +465,14 @@ describe("grants (ADR-001 §3.6)", () => {
     );
     expect(writePolicies.map((policy) => policy.name)).toEqual([
       "contacts_insert_member",
+      "memberships_insert_admin",
+      "memberships_update_admin",
       "messages_insert_member",
       "opportunities_insert_member",
       "opportunities_update_stage",
       "opportunity_demand_facts_insert_member",
       "opportunity_notes_insert_member",
+      "organizations_update_admin",
       "vehicles_insert_member",
       "vehicles_update_mark_available",
     ]);
@@ -730,15 +781,20 @@ describe("grants (ADR-001 §3.6)", () => {
    * una sola policy de UPDATE: vehicles, el par exacto in_preparation →
    * available (DEC-028); opportunities, solo la organización, porque el par
    * etapa anterior → etapa nueva lo valida un trigger (DEC-032 §4, el
-   * mecanismo que DEC-028 §6 pedía antes de una segunda transición). Otra
-   * transición no suma una policy: pasa por el trigger de su tabla.
+   * mecanismo que DEC-028 §6 pedía antes de una segunda transición);
+   * organizations y memberships (Hito 6), solo la organización entre las del
+   * usuario como admin, y qué cambio de membership vale lo valida su trigger
+   * (DEC-038 §4). Otra transición no suma una policy: pasa por el trigger de
+   * su tabla.
    */
   it("cada tabla con edición tiene una sola policy de UPDATE: el par origen → destino no se cruza por OR", async () => {
     const updates = (await policies(db.admin)).filter((policy) =>
       ["UPDATE", "ALL"].includes(policy.command),
     );
     expect(updates.map((policy) => `${policy.table}.${policy.name}`)).toEqual([
+      "memberships.memberships_update_admin",
       "opportunities.opportunities_update_stage",
+      "organizations.organizations_update_admin",
       "vehicles.vehicles_update_mark_available",
     ]);
     expect(new Set(updates.map((policy) => policy.table)).size).toBe(

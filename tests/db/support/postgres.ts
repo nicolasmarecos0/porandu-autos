@@ -47,6 +47,11 @@ export type TestDatabase = {
 
 export type TestServer = {
   createDatabase(): Promise<TestDatabase>;
+  /**
+   * Cierra y borra una base antes del final de la suite. Las suites que
+   * crean muchas bases liberan así sus conexiones (max_connections).
+   */
+  dropDatabase(database: TestDatabase): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -175,6 +180,16 @@ export async function startTestServer(): Promise<TestServer> {
       };
       databases.push(database);
       return database;
+    },
+
+    async dropDatabase(database) {
+      const index = databases.indexOf(database);
+      if (index === -1) return;
+      databases.splice(index, 1);
+      await database.admin.end();
+      await server.unsafe(
+        `DROP DATABASE IF EXISTS "${database.name}" WITH (FORCE)`,
+      );
     },
 
     async close() {

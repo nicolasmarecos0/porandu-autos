@@ -217,7 +217,7 @@ describe("aislamiento entre tenants (C1)", () => {
     expect(await withTenant(forged, visible)).toEqual(expectedVisible(USER_A));
   });
 
-  it("nadie escribe: sin grants ni policies de escritura (42501)", async () => {
+  it("fuera de las escrituras aprobadas nadie escribe: sin grants ni policies (42501)", async () => {
     const ctx = tenantContext(USER_A, ORG_1);
     await expectSqlError(
       withTenant(ctx, (tx) =>
@@ -233,11 +233,13 @@ describe("aislamiento entre tenants (C1)", () => {
       ),
       "42501",
     );
+    // Hito 6 (DEC-038 §4): un admin edita el nombre y la moneda de su
+    // organización, nada más (grant por columna).
     await expectSqlError(
       withTenant(ctx, (tx) =>
         tx
           .update(organizations)
-          .set({ name: "Renombrada" })
+          .set({ createdAt: new Date("2000-01-01T00:00:00Z") })
           .where(eq(organizations.id, ORG_1)),
       ),
       "42501",
@@ -257,6 +259,16 @@ describe("aislamiento entre tenants (C1)", () => {
       ),
       "42501",
     );
+    // Y un seller no edita su organización: RLS no deja ver la fila para
+    // UPDATE (0 filas, DEC-038 §5).
+    const renamed = await withTenant(tenantContext(USER_C, ORG_1), (tx) =>
+      tx
+        .update(organizations)
+        .set({ name: "Renombrada" })
+        .where(eq(organizations.id, ORG_1))
+        .returning({ id: organizations.id }),
+    );
+    expect(renamed).toEqual([]);
   });
 });
 

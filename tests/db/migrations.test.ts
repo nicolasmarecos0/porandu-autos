@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { catalogSnapshot, tableNames } from "./support/catalog";
 import {
@@ -25,7 +25,7 @@ import { seedVehicles, VEHICLES } from "./support/vehicles";
 const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
 
 /*
- * Reversión de 0011_conversations_and_activity_trigger,
+ * Reversión de 0012_team_settings, 0011_conversations_and_activity_trigger,
  * 0010_opportunity_closure_metadata,
  * 0009_opportunity_notes_vehicle_link, 0008_opportunity_stages, 0007_opportunity_demand_facts,
  * 0006_vehicle_availability,
@@ -56,6 +56,25 @@ function function0009(): Promise<string> {
 function function0010(): Promise<string> {
   return stageFunctionOf("0010_opportunity_closure_metadata.sql");
 }
+
+const REVERT_0012 = `
+  REVOKE UPDATE (role, active, updated_at) ON public.memberships FROM authenticated;
+  REVOKE INSERT ON public.memberships FROM authenticated;
+  REVOKE UPDATE (name, default_currency, updated_at) ON public.organizations FROM authenticated;
+  DROP TRIGGER organizations_update_guard ON public.organizations;
+  DROP FUNCTION private.enforce_organization_update();
+  DROP TRIGGER memberships_change_guard ON public.memberships;
+  DROP FUNCTION private.enforce_membership_change();
+  DROP POLICY memberships_update_admin ON public.memberships;
+  DROP POLICY memberships_insert_admin ON public.memberships;
+  DROP POLICY organizations_update_admin ON public.organizations;
+  ALTER TABLE public.organizations DROP CONSTRAINT organizations_default_currency_check;
+  ALTER TABLE public.organizations DROP CONSTRAINT organizations_name_check;
+  ALTER TABLE public.organizations DROP COLUMN default_currency;
+  DROP FUNCTION private.organization_members(uuid);
+  DROP FUNCTION private.find_member_candidate(uuid, text);
+  DROP FUNCTION private.user_admin_org_ids();
+`;
 
 const REVERT_0011 = `
   DROP TRIGGER messages_touch_activity ON public.messages;
@@ -255,14 +274,14 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     ]);
   });
 
-  it("registra 0000 a 0011 en el historial de drizzle", async () => {
-    expect(await appliedMigrations()).toBe(12);
+  it("registra 0000 a 0012 en el historial de drizzle", async () => {
+    expect(await appliedMigrations()).toBe(13);
   });
 
   it("volver a migrar no cambia nada", async () => {
     await runMigrations(db.migrationUrl);
 
-    expect(await appliedMigrations()).toBe(12);
+    expect(await appliedMigrations()).toBe(13);
     expect(await catalogSnapshot(db.admin)).toEqual(afterMigration);
   });
 
@@ -283,6 +302,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
       "0009_opportunity_notes_vehicle_link.sql",
       "0010_opportunity_closure_metadata.sql",
       "0011_conversations_and_activity_trigger.sql",
+      "0012_team_settings.sql",
     ]);
     for (const file of files) {
       const content = await readFile(new URL(file, MIGRATIONS_DIR), "utf8");
@@ -296,6 +316,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     try {
       // La reversión corre con la credencial de migración, dueña de todo.
       await revert.begin(async (tx) => {
+        await tx.unsafe(REVERT_0012);
         await tx.unsafe(REVERT_0011);
         await tx.unsafe(REVERT_0010);
         await tx.unsafe(REVERT_0009);
@@ -436,7 +457,7 @@ describe("0002 sobre una base en Foundation", () => {
     expect(await foundationCount(foundation.admin)).toEqual({
       organizations: 3,
       memberships: MEMBERSHIPS.length,
-      history: 12,
+      history: 13,
     });
     expect(await catalogSnapshot(foundation.admin)).toEqual(afterMigration);
   });
@@ -545,7 +566,7 @@ describe("0003 sobre una base en H1.1", () => {
     const [history] = await h11.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
     `;
-    expect(history?.count).toBe(12);
+    expect(history?.count).toBe(13);
     expect(await h11Snapshot(h11.admin)).toEqual(before);
     // Sin backfill: los contactos existentes quedan sin teléfono normalizado.
     const [normalized] = await h11.admin<{ count: number }[]>`
@@ -644,7 +665,7 @@ describe("0004 sobre una base en H1.2", () => {
   async function h12Snapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
       SELECT jsonb_build_object(
-        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
@@ -680,7 +701,7 @@ describe("0004 sobre una base en H1.2", () => {
 
     await runMigrations(h12.migrationUrl);
 
-    expect(await history(h12.admin)).toBe(12);
+    expect(await history(h12.admin)).toBe(13);
     expect(await h12Snapshot(h12.admin)).toEqual(before);
     // Sin seeds: vehicles nace vacía.
     const [vehicles] = await h12.admin<{ count: number }[]>`
@@ -783,7 +804,7 @@ describe("0005 sobre una base en H1.3A", () => {
   async function h13aSnapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
       SELECT jsonb_build_object(
-        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
@@ -824,7 +845,7 @@ describe("0005 sobre una base en H1.3A", () => {
 
     await runMigrations(h13a.migrationUrl);
 
-    expect(await history(h13a.admin)).toBe(12);
+    expect(await history(h13a.admin)).toBe(13);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13aSnapshot(h13a.admin)).toEqual(before);
     expect(await vehiclePolicies(h13a.admin)).toEqual([
@@ -935,7 +956,7 @@ describe("0006 sobre una base en H1.3B", () => {
   async function h13bSnapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
       SELECT jsonb_build_object(
-        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
@@ -990,7 +1011,7 @@ describe("0006 sobre una base en H1.3B", () => {
 
     await runMigrations(h13b.migrationUrl);
 
-    expect(await history(h13b.admin)).toBe(12);
+    expect(await history(h13b.admin)).toBe(13);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13bSnapshot(h13b.admin)).toEqual(before);
     expect(await vehiclePolicies(h13b.admin)).toEqual([
@@ -1132,7 +1153,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
   async function h13cSnapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
       SELECT jsonb_build_object(
-        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
@@ -1164,7 +1185,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
 
     await runMigrations(h13c.migrationUrl);
 
-    expect(await history(h13c.admin)).toBe(12);
+    expect(await history(h13c.admin)).toBe(13);
     // Ninguna fila cambia: interest_model e interest_version quedan como
     // legado de solo lectura.
     expect(await h13cSnapshot(h13c.admin)).toEqual(before);
@@ -1268,7 +1289,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
   async function h14Snapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
       SELECT jsonb_build_object(
-        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
@@ -1320,7 +1341,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
 
     await runMigrations(h14.migrationUrl);
 
-    expect(await history(h14.admin)).toBe(12);
+    expect(await history(h14.admin)).toBe(13);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia.
     expect(await h14Snapshot(h14.admin)).toEqual(before);
     const [reasons] = await h14.admin<{ count: number }[]>`
@@ -1377,7 +1398,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
       UPDATE public.opportunities SET stage = 'new' WHERE id = ${OPPORTUNITIES[0]!.id}
     `;
     await runMigrations(h14.migrationUrl);
-    expect(await history(h14.admin)).toBe(12);
+    expect(await history(h14.admin)).toBe(13);
     expect(await catalogSnapshot(h14.admin)).toEqual(afterMigration);
   });
 
@@ -1563,7 +1584,7 @@ describe("0009 sobre una base en H1.6", () => {
   async function h16Snapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
       SELECT jsonb_build_object(
-        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
@@ -1612,7 +1633,7 @@ describe("0009 sobre una base en H1.6", () => {
 
     await runMigrations(h16.migrationUrl);
 
-    expect(await history(h16.admin)).toBe(12);
+    expect(await history(h16.admin)).toBe(13);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia, ni stock.
     expect(await h16Snapshot(h16.admin)).toEqual(before);
     const [linked] = await h16.admin<{ count: number }[]>`
@@ -1786,7 +1807,7 @@ describe("0010 sobre una base en el Hito 2", () => {
   async function hito2Snapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
       SELECT jsonb_build_object(
-        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
@@ -1866,7 +1887,7 @@ describe("0010 sobre una base en el Hito 2", () => {
 
     await runMigrations(hito2.migrationUrl);
 
-    expect(await history(hito2.admin)).toBe(12);
+    expect(await history(hito2.admin)).toBe(13);
     // Ninguna fila cambia: ni etapas, ni motivos, ni timestamps, ni stock.
     expect(await hito2Snapshot(hito2.admin)).toEqual(before);
     const [metadata] = await hito2.admin<{ count: number }[]>`
@@ -1909,7 +1930,7 @@ describe("0010 sobre una base en el Hito 2", () => {
     // Quien lo decide la corrige a mano (acá, la descarta) y 0010 se aplica.
     await hito2.admin`DELETE FROM public.opportunities WHERE id = ${won}`;
     await runMigrations(hito2.migrationUrl);
-    expect(await history(hito2.admin)).toBe(12);
+    expect(await history(hito2.admin)).toBe(13);
     expect(await catalogSnapshot(hito2.admin)).toEqual(afterMigration);
   });
 
@@ -1945,7 +1966,7 @@ describe("0010 sobre una base en el Hito 2", () => {
         await tx`ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_stage_transition`;
       });
       await runMigrations(hito2.migrationUrl);
-      expect(await history(hito2.admin)).toBe(12);
+      expect(await history(hito2.admin)).toBe(13);
       expect(await catalogSnapshot(hito2.admin)).toEqual(afterMigration);
     },
   );
@@ -2095,7 +2116,7 @@ describe("0010 sobre una base en el Hito 2", () => {
 
       await runMigrations(hito2.migrationUrl);
 
-      expect(await history(hito2.admin)).toBe(12);
+      expect(await history(hito2.admin)).toBe(13);
       expect(
         await hito2.admin`
           SELECT to_jsonb(op) AS row FROM public.opportunities op ORDER BY op.id
@@ -2128,7 +2149,7 @@ describe("0010 sobre una base en el Hito 2", () => {
       // La transacción se revirtió: el CHECK de motivos que la segunda
       // pasada borró antes de fallar sigue ahí, igual que todo lo demás.
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(12);
+      expect(await history(fresh.admin)).toBe(13);
     });
 
     it("se revierte sola al catálogo del Hito 2 y se vuelve a aplicar idéntica", async () => {
@@ -2163,7 +2184,7 @@ describe("0010 sobre una base en el Hito 2", () => {
       expect(await history(fresh.admin)).toBe(10);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(12);
+      expect(await history(fresh.admin)).toBe(13);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -2183,7 +2204,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
   async function hito2aSnapshot(sql: TestDatabase["admin"]) {
     const [snapshot] = await sql<{ data: unknown }[]>`
       SELECT jsonb_build_object(
-        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
         'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
         'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
         'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
@@ -2230,7 +2251,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
     return base;
   }
 
-  it("pnpm db:migrate aplica solo 0011, conserva los datos (sin backfill de la recencia desde las notas) y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0011 y 0012, conserva los datos (sin backfill de la recencia desde las notas) y deja el mismo catálogo", async () => {
     const hito2a = await hito2aBase();
     const before = await hito2aSnapshot(hito2a.admin);
     expect(await history(hito2a.admin)).toBe(11);
@@ -2241,7 +2262,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
 
     await runMigrations(hito2a.migrationUrl);
 
-    expect(await history(hito2a.admin)).toBe(12);
+    expect(await history(hito2a.admin)).toBe(13);
     // Ninguna fila cambia: ni la recencia, ni updated_at, ni las notas.
     expect(await hito2aSnapshot(hito2a.admin)).toEqual(before);
     const [messages] = await hito2a.admin<{ count: number }[]>`
@@ -2336,9 +2357,14 @@ describe("0011 sobre una base en el Hito 2A", () => {
     const block = sql.split("--> statement-breakpoint").at(-1)!.trim();
     expect(block).toMatch(/^-- Custom SQL · postcondiciones[\s\S]*DO \$\$/);
 
+    // Sobre una base en el Hito 4/5: 0012 amplía las altas y las ediciones
+    // que esta postcondición admite.
     const fresh = await server.createDatabase();
-    await runMigrations(fresh.migrationUrl);
-    // Control: sobre el catálogo real, la postcondición pasa.
+    await migrateUpTo(
+      fresh.migrationUrl,
+      "0011_conversations_and_activity_trigger",
+    );
+    // Control: sobre el catálogo del Hito 4/5, la postcondición pasa.
     await fresh.admin.begin(async (tx) => {
       await tx.unsafe(block);
     });
@@ -2434,7 +2460,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
 
       await runMigrations(hito2a.migrationUrl);
 
-      expect(await history(hito2a.admin)).toBe(12);
+      expect(await history(hito2a.admin)).toBe(13);
       expect(await hito2aSnapshot(hito2a.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito2a.admin)).toEqual(catalog);
     });
@@ -2462,7 +2488,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(12);
+      expect(await history(fresh.admin)).toBe(13);
     });
 
     it("se revierte sola al catálogo del Hito 2A y se vuelve a aplicar idéntica", async () => {
@@ -2479,11 +2505,16 @@ describe("0011 sobre una base en el Hito 2A", () => {
       try {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
+          // 0012 se revierte antes: depende de lo que deja 0011.
+          await tx.unsafe(REVERT_0012);
           await tx.unsafe(REVERT_0011);
           await tx.unsafe(await function0010());
           await tx.unsafe(`
             DELETE FROM drizzle.__drizzle_migrations
-            WHERE created_at = (SELECT max(created_at) FROM drizzle.__drizzle_migrations)
+            WHERE created_at >= (
+              SELECT created_at FROM drizzle.__drizzle_migrations
+              ORDER BY created_at DESC OFFSET 1 LIMIT 1
+            )
           `);
         });
       } finally {
@@ -2493,7 +2524,355 @@ describe("0011 sobre una base en el Hito 2A", () => {
       expect(await history(fresh.admin)).toBe(11);
 
       await runMigrations(fresh.migrationUrl);
+      expect(await history(fresh.admin)).toBe(13);
+      expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+    });
+  });
+});
+
+/*
+ * Una base en el Hito 5 (0000 a 0011; el Hito 5 no tiene migración,
+ * DEC-037) recibe 0012 (DEC-038): la moneda por defecto (PYG en las
+ * organizaciones existentes), las escrituras de admin sobre organizations y
+ * memberships, sus funciones de soporte y sus triggers de guarda, sin tocar
+ * ninguna fila existente.
+ */
+describe("0012 sobre una base en el Hito 5", () => {
+  const HITO_5 = "0011_conversations_and_activity_trigger";
+
+  /*
+   * Esta suite crea más de cien bases: las de este bloque se borran al
+   * terminar cada caso para no agotar max_connections (100 por defecto,
+   * también en CI).
+   */
+  const created: TestDatabase[] = [];
+  async function createDatabase(): Promise<TestDatabase> {
+    const database = await server.createDatabase();
+    created.push(database);
+    return database;
+  }
+  afterEach(async () => {
+    for (const database of created.splice(0)) {
+      await server.dropDatabase(database);
+    }
+  });
+
+  async function history(sql: TestDatabase["admin"]): Promise<number> {
+    const [row] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+    `;
+    return row?.count ?? 0;
+  }
+
+  /** Organizaciones, perfiles y memberships tal como están, fila por fila. */
+  async function teamSnapshot(sql: TestDatabase["admin"]) {
+    const [snapshot] = await sql<{ data: unknown }[]>`
+      SELECT jsonb_build_object(
+        'organizations', (SELECT jsonb_agg(to_jsonb(o) - 'default_currency' ORDER BY o.id) FROM public.organizations o),
+        'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
+        'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m)
+      ) AS data
+    `;
+    return snapshot?.data;
+  }
+
+  /** Si existen las funciones y los triggers de 0012. */
+  async function hito6Objects(sql: TestDatabase["admin"]) {
+    const [row] = await sql<{ functions: number; triggers: number }[]>`
+      SELECT
+        (SELECT count(*)::int FROM pg_proc
+          WHERE pronamespace = 'private'::regnamespace
+            AND proname IN ('user_admin_org_ids', 'find_member_candidate',
+              'organization_members', 'enforce_membership_change',
+              'enforce_organization_update')) AS functions,
+        (SELECT count(*)::int FROM pg_trigger
+          WHERE tgname IN ('memberships_change_guard', 'organizations_update_guard')) AS triggers
+    `;
+    return row;
+  }
+
+  async function hito5Base(): Promise<TestDatabase> {
+    const base = await createDatabase();
+    await migrateUpTo(base.migrationUrl, HITO_5);
+    await seedTenants(base.admin);
+    return base;
+  }
+
+  it("pnpm db:migrate aplica solo 0012, conserva los datos (las organizaciones existentes quedan en PYG) y deja el mismo catálogo", async () => {
+    const hito5 = await hito5Base();
+    const before = await teamSnapshot(hito5.admin);
+    expect(await history(hito5.admin)).toBe(12);
+    expect(await hito6Objects(hito5.admin)).toEqual({
+      functions: 0,
+      triggers: 0,
+    });
+
+    await runMigrations(hito5.migrationUrl);
+
+    expect(await history(hito5.admin)).toBe(13);
+    // Ninguna fila cambia: ni nombres, ni roles, ni timestamps.
+    expect(await teamSnapshot(hito5.admin)).toEqual(before);
+    const currencies = await hito5.admin<{ currency: string }[]>`
+      SELECT DISTINCT default_currency AS currency FROM public.organizations
+    `;
+    expect(currencies).toEqual([{ currency: "PYG" }]);
+    expect(await catalogSnapshot(hito5.admin)).toEqual(afterMigration);
+  });
+
+  it("un nombre de organización fuera del CHECK detiene 0012 en vez de reescribirlo, y no aplica nada", async () => {
+    const hito5 = await hito5Base();
+    await hito5.admin`UPDATE public.organizations SET name = ' Con espacios ' WHERE id = ${ORG_1}`;
+
+    await expect(runMigrations(hito5.migrationUrl)).rejects.toThrow(
+      "pnpm db:migrate failed",
+    );
+    await expect(
+      migrateReportingErrors(hito5.migrationUrl),
+    ).rejects.toMatchObject({
+      cause: { code: "23514", constraint_name: "organizations_name_check" },
+    });
+    expect(await history(hito5.admin)).toBe(12);
+    expect(await hito6Objects(hito5.admin)).toEqual({
+      functions: 0,
+      triggers: 0,
+    });
+
+    // Corregido a mano (decisión humana, no de la migración), se aplica.
+    await hito5.admin`UPDATE public.organizations SET name = 'Con espacios' WHERE id = ${ORG_1}`;
+    await runMigrations(hito5.migrationUrl);
+    expect(await history(hito5.admin)).toBe(13);
+  });
+
+  /*
+   * Postcondiciones de 0012: las de 0011, con memberships entre las altas
+   * aprobadas y organizations (name, default_currency, updated_at) y
+   * memberships (role, active, updated_at) entre las ediciones aprobadas. Si
+   * la base no las cumple, 0012 falla y no aplica nada.
+   */
+  const INSERT_0012 =
+    /may only insert into contacts, opportunities, vehicles, opportunity_demand_facts \(H1\.4\), opportunity_notes \(Hito 2\), messages \(Hito 4\) and memberships \(Hito 6\)/;
+  const UPDATE_0012 =
+    /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\), opportunities\.stage, loss_reason, vehicle_id, updated_at and the closure metadata \(H1\.6, Hito 2, DEC-034\), organizations\.name, default_currency, updated_at and memberships\.role, active, updated_at \(Hito 6, DEC-038\)/;
+  const SERVICE_ROLE_0012 =
+    /service_role must not update, delete or truncate opportunity_demand_facts, opportunity_notes or messages/;
+  const unsafeStates: [string, string, string, RegExp][] = [
+    [
+      "authenticated con UPDATE sobre organizations.created_at",
+      "GRANT UPDATE (created_at) ON public.organizations TO authenticated",
+      "REVOKE UPDATE (created_at) ON public.organizations FROM authenticated",
+      UPDATE_0012,
+    ],
+    [
+      "authenticated con INSERT sobre profiles (aun con policy y WITH CHECK)",
+      `GRANT INSERT ON public.profiles TO authenticated;
+       CREATE POLICY probe_insert ON public.profiles FOR INSERT TO authenticated
+         WITH CHECK (id = (SELECT auth.uid()))`,
+      `DROP POLICY probe_insert ON public.profiles;
+       REVOKE INSERT ON public.profiles FROM authenticated`,
+      INSERT_0012,
+    ],
+    [
+      "service_role con DELETE sobre los mensajes",
+      "GRANT DELETE ON public.messages TO service_role",
+      "REVOKE DELETE ON public.messages FROM service_role",
+      SERVICE_ROLE_0012,
+    ],
+  ];
+
+  it.each(unsafeStates)(
+    "0012 falla cerrada ante %s",
+    async (_, unsafe, restore, reason) => {
+      const hito5 = await createDatabase();
+      await migrateUpTo(hito5.migrationUrl, HITO_5);
+      await hito5.admin.unsafe(unsafe);
+      try {
+        await expect(runMigrations(hito5.migrationUrl)).rejects.toThrow(
+          "pnpm db:migrate failed",
+        );
+        await expect(
+          migrateReportingErrors(hito5.migrationUrl),
+        ).rejects.toMatchObject({
+          cause: { message: expect.stringMatching(reason) },
+        });
+        // Nada se aplicó: ni la columna, ni las funciones, ni los triggers.
+        expect(await history(hito5.admin)).toBe(12);
+        expect(await hito6Objects(hito5.admin)).toEqual({
+          functions: 0,
+          triggers: 0,
+        });
+      } finally {
+        await hito5.admin.unsafe(restore);
+      }
+      // Corregido el estado, 0012 se aplica.
+      await runMigrations(hito5.migrationUrl);
+      expect(await catalogSnapshot(hito5.admin)).toEqual(afterMigration);
+    },
+  );
+
+  /*
+   * Las postcondiciones que dependen de lo que crea la misma migración (las
+   * funciones de equipo y los triggers de guarda) se corren contra una base
+   * ya migrada: pasan sobre el catálogo real y fallan cerradas ante cada
+   * mutación.
+   */
+  it("la postcondición de 0012 exige los triggers de guarda y las funciones de equipo SECURITY DEFINER con EXECUTE solo para authenticated", async () => {
+    const sql = await readFile(
+      new URL("0012_team_settings.sql", MIGRATIONS_DIR),
+      "utf8",
+    );
+    const block = sql.split("--> statement-breakpoint").at(-1)!.trim();
+    expect(block).toMatch(/^-- Custom SQL · postcondiciones[\s\S]*DO \$\$/);
+
+    const fresh = await createDatabase();
+    await runMigrations(fresh.migrationUrl);
+    // Control: sobre el catálogo real, la postcondición pasa.
+    await fresh.admin.begin(async (tx) => {
+      await tx.unsafe(block);
+    });
+
+    const GUARD_TRIGGERS =
+      /^DEC-038: memberships and organizations need their enabled BEFORE UPDATE guard triggers/;
+    const GUARD_FUNCTION =
+      /^DEC-038: private\.enforce_membership_change\(\) must be SECURITY DEFINER owned by postgres/;
+    const TEAM_FUNCTIONS =
+      /^DEC-038: private\.user_admin_org_ids\(\), find_member_candidate\(\) and organization_members\(\) must be SECURITY DEFINER/;
+    const broken: [string, RegExp][] = [
+      [
+        "ALTER TABLE public.memberships DISABLE TRIGGER memberships_change_guard",
+        GUARD_TRIGGERS,
+      ],
+      [
+        "DROP TRIGGER organizations_update_guard ON public.organizations",
+        GUARD_TRIGGERS,
+      ],
+      [
+        "ALTER FUNCTION private.enforce_membership_change() SECURITY INVOKER",
+        GUARD_FUNCTION,
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION private.enforce_membership_change() TO authenticated",
+        GUARD_FUNCTION,
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION private.find_member_candidate(uuid, text) TO anon",
+        TEAM_FUNCTIONS,
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION private.organization_members(uuid) TO PUBLIC",
+        TEAM_FUNCTIONS,
+      ],
+      [
+        "GRANT EXECUTE ON FUNCTION private.user_admin_org_ids() TO app_runtime",
+        TEAM_FUNCTIONS,
+      ],
+      [
+        "ALTER FUNCTION private.user_admin_org_ids() SECURITY INVOKER",
+        TEAM_FUNCTIONS,
+      ],
+      [
+        "ALTER FUNCTION private.organization_members(uuid) RESET search_path",
+        TEAM_FUNCTIONS,
+      ],
+      [
+        "REVOKE EXECUTE ON FUNCTION private.find_member_candidate(uuid, text) FROM authenticated",
+        TEAM_FUNCTIONS,
+      ],
+      [
+        "GRANT UPDATE (user_id) ON public.memberships TO authenticated",
+        UPDATE_0012,
+      ],
+      [
+        "GRANT UPDATE (id) ON public.organizations TO authenticated",
+        UPDATE_0012,
+      ],
+      [
+        "GRANT DELETE ON public.memberships TO authenticated",
+        /must be covered by a policy|must not delete or truncate/,
+      ],
+      [
+        "ALTER TABLE public.organizations DISABLE ROW LEVEL SECURITY",
+        /RLS enabled/,
+      ],
+    ];
+    for (const [statement, reason] of broken) {
+      await expect(
+        fresh.admin.begin(async (tx) => {
+          await tx.unsafe(statement);
+          await tx.unsafe(block);
+        }),
+        statement.slice(0, 80),
+      ).rejects.toMatchObject({ message: expect.stringMatching(reason) });
+    }
+  });
+
+  describe("idempotencia", () => {
+    it("pnpm db:migrate dos veces: la segunda no aplica nada, ni toca los datos", async () => {
+      const hito5 = await hito5Base();
+      await runMigrations(hito5.migrationUrl);
+      const rows = await teamSnapshot(hito5.admin);
+      const catalog = await catalogSnapshot(hito5.admin);
+
+      await runMigrations(hito5.migrationUrl);
+
+      expect(await history(hito5.admin)).toBe(13);
+      expect(await teamSnapshot(hito5.admin)).toEqual(rows);
+      expect(await catalogSnapshot(hito5.admin)).toEqual(catalog);
+    });
+
+    it("volver a ejecutar su SQL fuera del historial falla entero y no deja nada a medias", async () => {
+      const sql = await readFile(
+        new URL("0012_team_settings.sql", MIGRATIONS_DIR),
+        "utf8",
+      );
+      const statements = sql.split("--> statement-breakpoint");
+      const fresh = await createDatabase();
+      await runMigrations(fresh.migrationUrl);
+      const owner = postgres(fresh.migrationUrl, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        // private.user_admin_org_ids() ya existe: 42723 en el primer statement.
+        await expect(
+          owner.begin(async (tx) => {
+            for (const statement of statements) await tx.unsafe(statement);
+          }),
+        ).rejects.toMatchObject({ code: "42723" });
+      } finally {
+        await owner.end();
+      }
+      expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+      expect(await history(fresh.admin)).toBe(13);
+    });
+
+    it("se revierte sola al catálogo del Hito 5 y se vuelve a aplicar idéntica", async () => {
+      const reference = await createDatabase();
+      await migrateUpTo(reference.migrationUrl, HITO_5);
+      const hito5Catalog = await catalogSnapshot(reference.admin);
+
+      const fresh = await createDatabase();
+      await runMigrations(fresh.migrationUrl);
+      const owner = postgres(fresh.migrationUrl, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        // La reversión corre con la credencial de migración, dueña de todo.
+        await owner.begin(async (tx) => {
+          await tx.unsafe(REVERT_0012);
+          await tx.unsafe(`
+            DELETE FROM drizzle.__drizzle_migrations
+            WHERE created_at = (SELECT max(created_at) FROM drizzle.__drizzle_migrations)
+          `);
+        });
+      } finally {
+        await owner.end();
+      }
+      expect(await catalogSnapshot(fresh.admin)).toEqual(hito5Catalog);
       expect(await history(fresh.admin)).toBe(12);
+
+      await runMigrations(fresh.migrationUrl);
+      expect(await history(fresh.admin)).toBe(13);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });

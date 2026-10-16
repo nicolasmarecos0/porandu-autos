@@ -10,9 +10,9 @@ import { finding, type Finding } from "./report.mts";
  * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
- * 0010_opportunity_closure_metadata y 0011_conversations_and_activity_trigger,
- * leído del catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030,
- * DEC-032, DEC-033, DEC-034, DEC-036). Espeja tests/db/tenant-catalog y
+ * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger
+ * y 0012_team_settings, leído del catálogo real (DEC-018, DEC-019, ADR-001
+ * §2, §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034, DEC-036, DEC-038). Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
  */
@@ -63,7 +63,10 @@ type Policy = {
  * válida lo decide el trigger (EXPECTED_OPPORTUNITY_STAGES). La bitácora del
  * Hito 2 (opportunity_notes) y los mensajes del Hito 4 (messages) tienen
  * lectura y un alta append-only: miembro activo, autor de la request y
- * reloj de la base. Tal como las deparsea PostgreSQL 17.
+ * reloj de la base. El Hito 6 (DEC-038) suma la edición de organizations y
+ * el alta y la edición de memberships, solo para admin activo
+ * (private.user_admin_org_ids()); qué cambio de membership vale lo decide su
+ * trigger (EXPECTED_TEAM_SETTINGS). Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -88,6 +91,16 @@ export const EXPECTED_POLICIES: Policy[] = [
   },
   {
     table: "memberships",
+    name: "memberships_insert_admin",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "INSERT",
+    using: null,
+    withCheck:
+      "((organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids)) AND active AND (created_at = now()) AND (updated_at = now()))",
+  },
+  {
+    table: "memberships",
     name: "memberships_select_member",
     permissive: "PERMISSIVE",
     roles: ["authenticated"],
@@ -95,6 +108,17 @@ export const EXPECTED_POLICIES: Policy[] = [
     using:
       "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
     withCheck: null,
+  },
+  {
+    table: "memberships",
+    name: "memberships_update_admin",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "UPDATE",
+    using:
+      "(organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
+    withCheck:
+      "(organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
   },
   {
     table: "messages",
@@ -195,6 +219,17 @@ export const EXPECTED_POLICIES: Policy[] = [
     command: "SELECT",
     using: "(id IN ( SELECT private.user_org_ids() AS user_org_ids))",
     withCheck: null,
+  },
+  {
+    table: "organizations",
+    name: "organizations_update_admin",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "UPDATE",
+    using:
+      "(id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
+    withCheck:
+      "(id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
   },
   {
     table: "profiles",
@@ -368,31 +403,62 @@ export const EXPECTED_ACTIVITY_TOUCH = {
 };
 
 /**
+ * Configuración y equipo (Hito 6, 0012, DEC-038): los CHECKs de
+ * organizations (nombre y moneda por defecto), los triggers de guarda BEFORE
+ * UPDATE de memberships y organizations, la función de la guarda de
+ * memberships (SECURITY DEFINER de postgres, search_path vacío, sin EXECUTE
+ * para nadie) y las tres funciones que llama authenticated (SECURITY
+ * DEFINER de postgres, search_path vacío, EXECUTE solo para authenticated).
+ */
+export const EXPECTED_TEAM_SETTINGS = {
+  constraints: [
+    "organizations_default_currency_check CHECK ((default_currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
+    "organizations_name_check CHECK ((((char_length(name) >= 1) AND (char_length(name) <= 120)) AND (name = btrim(name)) AND (name !~ '[[:cntrl:]]'::text)))",
+  ],
+  triggers: [
+    "O CREATE TRIGGER memberships_change_guard BEFORE UPDATE ON public.memberships FOR EACH ROW EXECUTE FUNCTION private.enforce_membership_change()",
+    "O CREATE TRIGGER organizations_update_guard BEFORE UPDATE ON public.organizations FOR EACH ROW EXECUTE FUNCTION private.enforce_organization_update()",
+  ],
+  functions: [
+    'private.enforce_membership_change() SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=false anon=false app_runtime=false',
+    'private.find_member_candidate(uuid,text) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false',
+    'private.organization_members(uuid) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false',
+    'private.user_admin_org_ids() SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false',
+  ],
+};
+
+/**
  * Privilegios de authenticated: lectura en todo, las altas de H1.2
  * (contacts, opportunities), H1.3B (vehicles), H1.4
- * (opportunity_demand_facts), el Hito 2 (opportunity_notes) y el Hito 4
- * (messages), estas tres de tabla (diseño A), y los UPDATE de H1.3C
- * (vehicles), H1.6 y el Hito 2
- * (opportunities), que son por columna (AUTHENTICATED_UPDATE_COLUMNS).
- * Ningún DELETE.
+ * (opportunity_demand_facts), el Hito 2 (opportunity_notes), el Hito 4
+ * (messages) y el Hito 6 (memberships), estas cuatro de tabla (diseño A), y
+ * los UPDATE de H1.3C (vehicles), H1.6 y el Hito 2 (opportunities) y el
+ * Hito 6 (organizations, memberships), que son por columna
+ * (AUTHENTICATED_UPDATE_COLUMNS). Ningún DELETE.
  */
 const AUTHENTICATED_PRIVILEGES = [
   "INSERT contacts",
+  "INSERT memberships",
   "INSERT messages",
   "INSERT opportunities",
   "INSERT opportunity_demand_facts",
   "INSERT opportunity_notes",
   "INSERT vehicles",
   ...APP_TABLES.map((table) => `SELECT ${table}`),
+  "UPDATE memberships",
   "UPDATE opportunities",
+  "UPDATE organizations",
   "UPDATE vehicles",
 ];
 
 /**
- * Lo único que authenticated puede actualizar (H1.3C, H1.6, el Hito 2 y el
- * cierre de DEC-034): nunca la tabla.
+ * Lo único que authenticated puede actualizar (H1.3C, H1.6, el Hito 2, el
+ * cierre de DEC-034 y el Hito 6): nunca la tabla.
  */
 const AUTHENTICATED_UPDATE_COLUMNS = [
+  "memberships.active",
+  "memberships.role",
+  "memberships.updated_at",
   "opportunities.delivery_date",
   "opportunities.delivery_status",
   "opportunities.loss_notes",
@@ -403,6 +469,9 @@ const AUTHENTICATED_UPDATE_COLUMNS = [
   "opportunities.stage",
   "opportunities.updated_at",
   "opportunities.vehicle_id",
+  "organizations.default_currency",
+  "organizations.name",
+  "organizations.updated_at",
   "vehicles.status",
   "vehicles.updated_at",
 ];
@@ -801,6 +870,64 @@ export async function verifyCatalog(
     ),
   );
 
+  // Configuración y equipo (Hito 6): CHECKs de organizations, triggers de
+  // guarda y funciones de equipo.
+  const [team] = await tx<
+    {
+      constraints: string[] | null;
+      triggers: string[] | null;
+      functions: string[] | null;
+    }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.organizations') AND contype = 'c'
+      ) AS constraints,
+      (
+        SELECT array_agg(t.tgenabled::text || ' ' || pg_get_triggerdef(t.oid) ORDER BY t.tgname)
+        FROM pg_trigger t
+        WHERE t.tgrelid IN (
+            to_regclass('public.memberships'),
+            to_regclass('public.organizations')
+          )
+          AND NOT t.tgisinternal
+      ) AS triggers,
+      (
+        SELECT array_agg(
+          p.oid::regprocedure::text
+            || ' SECURITY DEFINER=' || p.prosecdef
+            || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+            || ' owner=' || p.proowner::regrole::text
+            || ' EXECUTE PUBLIC=' || EXISTS (
+              SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+              WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+            )
+            || ' authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+            || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+            || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+          ORDER BY p.oid::regprocedure::text
+        )
+        FROM pg_proc p
+        WHERE p.pronamespace = to_regnamespace('private')
+          AND p.proname IN ('enforce_membership_change', 'find_member_candidate',
+            'organization_members', 'user_admin_org_ids')
+      ) AS functions
+  `;
+  const teamFound = {
+    constraints: team?.constraints ?? [],
+    triggers: team?.triggers ?? [],
+    functions: team?.functions ?? [],
+  };
+  findings.push(
+    finding(
+      "schema.team-settings",
+      equal(teamFound, EXPECTED_TEAM_SETTINGS),
+      `organizations: ${teamFound.constraints.length} CHECKs (expected: ${EXPECTED_TEAM_SETTINGS.constraints.length}, exact definitions); guard triggers: ${list(teamFound.triggers)}; team functions: ${list(teamFound.functions)}`,
+    ),
+  );
+
   // Schema private y private.user_org_ids() (ADR-001 §4).
   const [privateSchema] = await tx<
     {
@@ -973,7 +1100,7 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes and messages, UPDATE on opportunities and vehicles only; no DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages and memberships, UPDATE on opportunities, vehicles, organizations and memberships only; no DELETE)`,
     ),
   );
 

@@ -51,6 +51,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-035 | Motor de Scoring, Recency y NBA | Aceptada en principio | 2026-10-12 |
 | DEC-036 | Módulo de Conversaciones y Actualización Automática de Actividad | Aceptada en principio | 2026-10-13 |
 | DEC-037 | Dashboard Directivo y Agregación de Métricas | Aceptada en principio | 2026-10-14 |
+| DEC-038 | Gestión de Equipo, Invitaciones y Configuración de Concesionario | Aceptada en principio | 2026-10-15 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -844,6 +845,66 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Cada request de `/intelligence` hace tres lecturas agregadas sobre las oportunidades y unidades de la organización activa (O(oportunidades + unidades)). Si el volumen del piloto lo exige, se revisa con una decisión nueva (índices, límites o materialización).
   - El dashboard y la Stock List pueden diferir: una unidad vendida según el dashboard sigue `available` en Stock hasta que se habilite vender la unidad (DEC-034 §12). Ese flujo tiene que revisar esta DEC.
   - Habilitar la edición de una oportunidad cerrada, o que el toque de actividad cambie `updated_at`, exige agregar antes `closed_at` (§5). Si no, el dashboard movería esas oportunidades al mes en curso.
+
+## DEC-038 — Gestión de Equipo, Invitaciones y Configuración de Concesionario
+- **Estado:** Aceptada en principio · 2026-10-15. Formaliza el pedido del fundador "Hito 6: Módulo de Configuración y Gestión de Equipo (Onboarding)". Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** `/settings` es un empty state desde B1 (DEC-001, B1 §6). Las memberships solo se crean, cambian o revocan por provisioning con el rol dueño: DEC-021 dejó "provisioning y gestión de miembros" fuera de H0.7, DEC-019 dejó `organizations` y `memberships` sin escrituras (default deny) y DEC-024 §9 no introdujo autorización por rol. Un concesionario no puede sumar a un vendedor, cambiarle el rol, quitarle el acceso ni corregir su nombre sin pasar por el equipo de Porandú. El fundador lo llama "Hito 6": no es un hito del Master Context §34 ni del TB §15.
+- **Decisión:**
+  1. **Ruta.** Configuración vive en `/settings` ("Configuración", DEC-001) con navegación interna por rutas: General (`/settings`) y Equipo (`/settings/team`). La navegación global no cambia.
+  2. **Configuración general (`organizations`).** Un admin edita:
+     - `name`: de 1 a 120 caracteres, normalizado en el dominio (NFC, sin caracteres de control, espacios colapsados, recortado). La base exige lo esencial con el CHECK `organizations_name_check` (largo, recortado, sin control).
+     - *Propuesta de implementación:* las "preferencias básicas" son la moneda por defecto, `default_currency` (`PYG | USD`, `PYG` por defecto), la `currency_default` de `organizations` en el TB §10. `text` + CHECK reemplazable (`organizations_default_currency_check`), como las demás monedas (DEC-025 §6).
+     - La moneda por defecto se guarda y se muestra. Ningún formulario la consume todavía (alta rápida de unidades, cierre): adoptarla es un cambio de esos flujos, fuera de este bloque. Cada monto sigue guardando su propia moneda (DEC-025 §5).
+     - La zona horaria no es editable: `America/Asuncion` es la zona de presentación de P1 (DEC-037 §4). Una preferencia que no cambia nada confundiría.
+  3. **Invitación por email, sin credenciales nuevas.** El pedido es "agregar nuevos usuarios a la organización usando su email". En P1 no hay signup público ni invitaciones de Supabase (DEC-012, DEC-020), y la aplicación no tiene service role ni secret key (CLAUDE.md §3, DEC-022): no puede crear cuentas ni enviar correos. Por eso:
+     - *Propuesta de implementación:* invitar es **dar acceso a la organización activa a una cuenta de Porandú que ya existe**, identificada por su email. `inviteMember()` crea la membership activa con el rol elegido, o reactiva una revocada con ese rol. Si ya es miembro activo, no cambia nada (tampoco su rol: eso es "Cambiar rol"). Si no hay cuenta con ese email, responde `no_account` y no cambia nada.
+     - `private.find_member_candidate(organization, email)` resuelve el usuario. Es `SECURITY DEFINER` (owner `postgres`), `STABLE`, con `search_path` vacío y EXECUTE solo para `authenticated`, porque el email vive en `auth.users` y no se duplica (DEC-018). Solo responde a un admin activo de esa organización (si no, `42501` sin buscar), solo devuelve usuarios con perfil y compara el email sin distinguir mayúsculas. Ninguna coincidencia, o más de una, es `NULL`.
+     - La cuenta la sigue creando el provisioning (fuera de la aplicación). No hay invitaciones pendientes, tokens, correos ni links de aceptación.
+     - *Limitación aceptada:* un admin puede saber si un email tiene cuenta de Porandú (en cualquier organización). Es información de cuenta, no datos de otro tenant, y solo la ve un admin. Mitigarla (respuesta uniforme o invitaciones pendientes) llega con el flujo de invitación por correo.
+  4. **Escritura en la base (RLS + privilegios + triggers).**
+     - `private.user_admin_org_ids()`: las organizaciones donde el usuario de la request es `admin` con membership activa. Mismo patrón que `private.user_org_ids()` (ADR-001 §4): `SECURITY DEFINER`, `STABLE`, `search_path` vacío, EXECUTE solo para `authenticated`.
+     - `organizations`: policy de UPDATE `organizations_update_admin` (USING y WITH CHECK con `private.user_admin_org_ids()`) y UPDATE por columna de `name`, `default_currency` y `updated_at`. Sin INSERT ni DELETE: crear o borrar organizaciones sigue siendo provisioning.
+     - `memberships`: alta `memberships_insert_admin` (admin de la organización, `active`, `created_at = now()`, `updated_at = now()`; INSERT de tabla, diseño A de DEC-030 §9) y edición `memberships_update_admin` (admin antes y después), con UPDATE por columna de `role`, `active` y `updated_at`. Sin DELETE: revocar es `active = false` (DEC-018).
+     - Trigger `memberships_change_guard` (`BEFORE UPDATE FOR EACH ROW`, función `private.enforce_membership_change()`, `SECURITY DEFINER` de `postgres`, sin EXECUTE para nadie). Rechaza con `23514`:
+       - `memberships_identity_immutable`: cambiar organización, usuario, id o alta;
+       - `memberships_self_change`: que el usuario de la request cambie su propia membership. Nadie se degrada ni se quita a sí mismo;
+       - `memberships_last_admin`: que un pedido con identidad deje la organización sin admin activo. Bloquea la fila de la organización (`FOR NO KEY UPDATE`) antes de contar, así dos admins que se degradan a la vez se serializan.
+       - Sin claims (provisioning con el rol dueño) las dos últimas no aplican: revocar de inmediato una cuenta comprometida, aunque sea el único admin, sigue siendo posible (ADR-001 §4, A-09).
+       - Fija `updated_at` con el reloj de la base.
+     - Trigger `organizations_update_guard` (`private.enforce_organization_update()`, sin `SECURITY DEFINER`): rechaza cambiar id o alta y fija `updated_at`.
+  5. **RBAC.** Solo `admin` edita la organización, invita, cambia roles o revoca. Un `seller` ve General y Equipo de solo lectura.
+     - El rol es el de la membership activa del `TenantContext` (DEC-021), nunca del cliente.
+     - Defensa en profundidad: las Server Actions (`updateOrganization()`, `inviteMember()`, `updateMemberRole()`, `removeMember()`, en `lib/settings/actions.ts`) llaman a `requireTenant()` y devuelven `forbidden` a un seller antes de leer el pedido. La base rechaza lo mismo sin esa regla: RLS filtra el UPDATE (0 filas), la policy de INSERT y `find_member_candidate()` responden `42501`.
+     - Es la primera autorización por rol del producto (amplía DEC-024 §9, DEC-027 §4 y DEC-037 §11, que siguen sin restricción por rol).
+     - *Propuesta de implementación:* "quitar a un miembro" desactiva su membership de esta organización. No borra su cuenta, ni sus registros (notas, mensajes, cierres), ni sus memberships en otras organizaciones. Rige desde el request siguiente (DEC-021), también con una sesión abierta.
+  6. **Lista del equipo.** Los miembros **activos** de la organización activa con nombre, email y rol. La lee `private.organization_members(organization)`: `SECURITY DEFINER`, `STABLE`, `search_path` vacío, EXECUTE solo para `authenticated`. Solo responde a un miembro activo de esa organización y solo devuelve nombre (`profiles.full_name`), email (`auth.users.email`), rol y alta de sus miembros activos.
+     - La policy `profiles_select_own` no cambia (DEC-019): la tabla sigue mostrando solo el perfil propio y `auth.users` sigue cerrado para `authenticated`.
+     - *Propuesta de implementación:* un seller también ve los emails de sus compañeros. Es el dato con el que se identifica a un miembro del equipo.
+     - Las memberships revocadas no se listan. Reactivar a alguien es volver a invitarlo.
+  7. **Validación con Zod.** `domains/settings/organization.ts` (nombre y moneda) y `domains/team/members.ts` (roles, invitación, reglas `canManageTeam()` y `canManageMember()`) son puros y aptos para el navegador. El servidor siempre valida antes de escribir.
+  8. **UI.**
+     - DEC-013 sin cambios: workspace claro, paneles blancos y tokens de `components/ui/tokens.css`. El pedido menciona "Glassmorphism, Dark Mode", pero DEC-013 superseded esa dirección y el fundador la confirmó en DEC-037 §2.
+     - General: formulario en panel para el admin; datos de solo lectura con "Solo lectura" para el seller.
+     - Equipo: lista con avatar, nombre, "(vos)", email y rol. El admin ve "Invitar miembro" (drawer con email y rol) y un menú de acciones por miembro (cambiar a Administrador o Vendedor, quitar acceso), con confirmación (alertdialog). No hay menú sobre la propia fila.
+     - *Propuesta de implementación:* el menú usa `@radix-ui/react-dropdown-menu` (primitiva Radix, DEC-009).
+  9. **Migración `0012_team_settings`.**
+     - Agrega `organizations.default_currency` (las organizaciones existentes quedan en `PYG`) y los dos CHECKs. Si una organización tiene un nombre fuera del CHECK, la migración se detiene y no aplica nada: corregirlo es una decisión humana.
+     - Crea las cuatro funciones, los dos triggers, las tres policies y los grants.
+     - Postcondiciones: las de `0011`, con `memberships` entre las altas aprobadas y las columnas nuevas entre las ediciones aprobadas. Además, los triggers de guarda habilitados, la función de la guarda `SECURITY DEFINER` sin EXECUTE para nadie, y las tres funciones de equipo `SECURITY DEFINER` de `postgres` con EXECUTE solo para `authenticated`.
+     - No toca ninguna fila existente.
+  10. **Fuera de este bloque:** crear cuentas, signup y enviar correos de invitación (requiere un proveedor de email y la Auth Admin API, con su decisión de credenciales); invitaciones pendientes; transferir la propiedad; crear o borrar organizaciones; editar el perfil propio; auditoría de cambios de membership; restringir otras superficies por rol; adoptar la moneda por defecto en los formularios; zona horaria, logo, sucursales e integraciones (TB §5 "Configuración"); y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-019 ("sin policies ni grants de escritura en H0"): `organizations` y `memberships` reciben escrituras solo para admin, con `WITH CHECK`. Se cumple ADR-001 §4: misma condición en USING y WITH CHECK.
+  - DEC-019 (`profiles` solo propio): la policy no cambia. La lista del equipo expone nombre y email de los miembros activos de la misma organización por una función acotada (§6).
+  - DEC-020 ("quedan fuera… invitaciones") y DEC-021 ("fuera de H0.7: provisioning y gestión de miembros"): la gestión de miembros entra, sin crear cuentas ni enviar correos (§3).
+  - DEC-024 §9, DEC-027 §4 y DEC-037 §11: el Hito 6 es el primer flujo con autorización por rol. Las demás superficies siguen sin restricción por rol.
+  - B1 §6 ("Settings: Organización y perfil (solo lectura)") y DEC-001: `/settings` deja de ser un empty state y el admin edita la organización. El perfil queda fuera.
+  - DEC-013: sin cambios.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: las funciones `SECURITY DEFINER` viven en `private` (ADR-001 §3.6) y siguen el patrón de `private.user_org_ids()`.
+- **Consecuencias:**
+  - `0012_team_settings` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0012_team_settings` si staging ya tiene `0011`, o con las anteriores que falten delante, en orden. La verificación suma `schema.team-settings` y amplía `rls.policies`, `privileges.authenticated` y `privileges.authenticated-update-columns`.
+  - Las funciones de equipo leen `auth.users.email` como `postgres`. El harness lo modela (`email` y SELECT para `postgres` en `supabase-shim.sql`), pero ni la migración ni la verificación de staging lo ejercitan: PostgreSQL revisa ese privilegio al ejecutar, no al crear la función. Queda pendiente confirmarlo en staging (por ejemplo, con un caso en el acceptance Auth → Tenant que liste el equipo con usuarios sintéticos). Si Supabase no lo permitiera, se consulta antes de cambiar el mecanismo.
+  - El provisioning con el rol dueño sigue pudiendo revocar o degradar a cualquier miembro (A-09). Un concesionario sin admin activo solo se recupera por provisioning.
 
 ---
 

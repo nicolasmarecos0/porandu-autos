@@ -43,6 +43,7 @@ describe("readRepoMigrations", () => {
       [9, "0009_opportunity_notes_vehicle_link"],
       [10, "0010_opportunity_closure_metadata"],
       [11, "0011_conversations_and_activity_trigger"],
+      [12, "0012_team_settings"],
     ]);
   });
 
@@ -71,31 +72,37 @@ describe("compareHistory", () => {
       applied: [REPO[0]],
       pending: REPO.slice(1),
     });
-    // Staging con H1.4/H1.5: 0008 a 0011 pendientes.
+    // Staging con H1.4/H1.5: 0008 a 0012 pendientes.
     expect(compareHistory(REPO, applied(8))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 8),
-      pending: [REPO[8], REPO[9], REPO[10], REPO[11]],
+      pending: [REPO[8], REPO[9], REPO[10], REPO[11], REPO[12]],
     });
-    // Staging con H1.6: 0009 a 0011 pendientes.
+    // Staging con H1.6: 0009 a 0012 pendientes.
     expect(compareHistory(REPO, applied(9))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 9),
-      pending: [REPO[9], REPO[10], REPO[11]],
+      pending: [REPO[9], REPO[10], REPO[11], REPO[12]],
     });
-    // Staging con el Hito 2: 0010 y 0011 pendientes.
+    // Staging con el Hito 2: 0010 a 0012 pendientes.
     expect(compareHistory(REPO, applied(10))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 10),
-      pending: [REPO[10], REPO[11]],
+      pending: [REPO[10], REPO[11], REPO[12]],
     });
-    // Staging con el Hito 2A: solo 0011 pendiente (DEC-036).
+    // Staging con el Hito 2A: 0011 y 0012 pendientes.
     expect(compareHistory(REPO, applied(11))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 11),
-      pending: [REPO[11]],
+      pending: [REPO[11], REPO[12]],
     });
-    expect(compareHistory(REPO, [...applied(12)].reverse())).toMatchObject({
+    // Staging con el Hito 4/5: solo 0012 pendiente (DEC-038).
+    expect(compareHistory(REPO, applied(12))).toEqual({
+      kind: "consistent",
+      applied: REPO.slice(0, 12),
+      pending: [REPO[12]],
+    });
+    expect(compareHistory(REPO, [...applied(13)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -115,8 +122,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(12), { id: 13, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 12",
+      [...applied(13), { id: 14, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 13",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -155,7 +162,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0010: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0012: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -287,6 +294,20 @@ describe("expectedFootprint", () => {
         "messages.messages_select_member",
       ].sort(),
     };
-    expect(expectedFootprint(REPO)).toEqual(hito4);
+    expect(expectedFootprint(REPO.slice(0, 12))).toEqual(hito4);
+    // 0012 no crea tablas: suma la edición de organizations y el alta y la
+    // edición de memberships, solo para admin (Hito 6, DEC-038). Las
+    // funciones de equipo y los triggers de guarda son SQL custom: no
+    // figuran.
+    const hito6 = {
+      ...hito4,
+      policies: [
+        ...hito4.policies,
+        "memberships.memberships_insert_admin",
+        "memberships.memberships_update_admin",
+        "organizations.organizations_update_admin",
+      ].sort(),
+    };
+    expect(expectedFootprint(REPO)).toEqual(hito6);
   });
 });

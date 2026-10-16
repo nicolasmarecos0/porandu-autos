@@ -160,7 +160,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes y messages, la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages y memberships (admin) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -202,6 +202,16 @@ describe("db/schema", () => {
       },
       {
         table: "memberships",
+        name: "memberships_insert_admin",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck:
+          '"memberships"."organization_id" IN (SELECT private.user_admin_org_ids()) AND "memberships"."active" AND "memberships"."created_at" = now() AND "memberships"."updated_at" = now()',
+      },
+      {
+        table: "memberships",
         name: "memberships_select_member",
         as: "permissive",
         for: "select",
@@ -209,6 +219,17 @@ describe("db/schema", () => {
         using:
           '"memberships"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
+      },
+      {
+        table: "memberships",
+        name: "memberships_update_admin",
+        as: "permissive",
+        for: "update",
+        to: ["authenticated"],
+        using:
+          '"memberships"."organization_id" IN (SELECT private.user_admin_org_ids())',
+        withCheck:
+          '"memberships"."organization_id" IN (SELECT private.user_admin_org_ids())',
       },
       {
         table: "messages",
@@ -305,6 +326,16 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using: '"organizations"."id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
+      },
+      {
+        table: "organizations",
+        name: "organizations_update_admin",
+        as: "permissive",
+        for: "update",
+        to: ["authenticated"],
+        using: '"organizations"."id" IN (SELECT private.user_admin_org_ids())',
+        withCheck:
+          '"organizations"."id" IN (SELECT private.user_admin_org_ids())',
       },
       {
         table: "profiles",
