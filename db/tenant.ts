@@ -34,6 +34,14 @@ import { getDb, type RuntimeDatabase } from "./client";
  * emitido lib/tenant/resolution.ts, aunque tenga la forma correcta.
  * withUser() solo lo usa la query de memberships propias
  * (db/queries/memberships.ts); ESLint lo impide en cualquier otro módulo.
+ *
+ * withIngestion() es la puerta del sistema, sin usuario (Hito 7, DEC-039
+ * §4): la ingesta de los webhooks de WhatsApp. Asume `authenticated` sin
+ * claims: sin usuario no hay membership, así que RLS no le deja ver ni
+ * escribir ninguna fila y no satisface ninguna policy de miembro. Solo
+ * escribe por `private.ingest_whatsapp_message()`, que rechaza cualquier
+ * llamada con claims. Solo lo usa db/queries/ingest-whatsapp-message.ts;
+ * ESLint lo impide en cualquier otro módulo.
  */
 
 /** Usuario autenticado, todavía sin organización elegida. */
@@ -48,7 +56,10 @@ export type UserContext = Readonly<{
  */
 export type { TenantContext };
 
-/** Transacción de withUser/withTenant: rol `authenticated` y claims locales. */
+/**
+ * Transacción de withUser/withTenant (rol `authenticated` y claims locales)
+ * o de withIngestion (rol `authenticated`, sin claims).
+ */
 export type ScopedTransaction = Parameters<
   Parameters<RuntimeDatabase["transaction"]>[0]
 >[0];
@@ -134,4 +145,24 @@ export async function withTenant<T>(
     throw new TenantContextError("organizationId must be a UUID");
   }
   return run(claims, fn);
+}
+
+/**
+ * Puerta del sistema para la ingesta de mensajes entrantes (DEC-039 §4). Una
+ * transacción cuyo primer statement vacía los claims y asume
+ * `authenticated`, con alcance de transacción, como withTenant() (ADR-001
+ * §3.2). Sin claims, RLS no deja ver ni escribir nada: la escritura pasa por
+ * `private.ingest_whatsapp_message()`, y la organización la resuelve la base
+ * a partir de la línea receptora, nunca el llamador.
+ */
+export async function withIngestion<T>(
+  fn: (tx: ScopedTransaction) => Promise<T>,
+): Promise<T> {
+  return getDb().transaction(async (tx) => {
+    // Un solo statement. El rol está fijo en el código.
+    await tx.execute(
+      sql`SELECT set_config('request.jwt.claims', '', true), set_config('role', 'authenticated', true)`,
+    );
+    return fn(tx);
+  });
 }

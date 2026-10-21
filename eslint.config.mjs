@@ -73,6 +73,17 @@ const withUserImport = {
   message: WITH_USER_MESSAGE,
 };
 
+// Hito 7 (DEC-039 §4): withIngestion() es la puerta del sistema, sin
+// usuario: asume authenticated sin claims para ejecutar la función de
+// ingesta de WhatsApp. Solo la usa db/queries/ingest-whatsapp-message.ts.
+const WITH_INGESTION_MESSAGE =
+  "withIngestion() is the system door for the WhatsApp ingestion only (db/queries/ingest-whatsapp-message.ts). Tenant-scoped data goes through requireTenant() + withTenant().";
+const withIngestionImport = {
+  regex: "(^|/)db/tenant$|^\\.{1,2}/tenant$",
+  importNames: ["withIngestion"],
+  message: WITH_INGESTION_MESSAGE,
+};
+
 // H0.7: resolveTenant() es el único que emite un TenantContext. Solo lo
 // llama requireTenant() (lib/tenant/session.ts), después de verificar al
 // usuario y leer sus memberships activas.
@@ -239,6 +250,19 @@ const settingsWriteImport = {
   message: SETTINGS_WRITE_MESSAGE,
 };
 
+// Hito 7 (DEC-039): la ingesta de mensajes entrantes de WhatsApp tiene una
+// sola puerta, el webhook (lib/whatsapp/webhook.ts), que verifica la firma
+// y valida el payload antes de escribir.
+const INGEST_WHATSAPP_MESSAGE =
+  "Inbound WhatsApp messages are ingested only through the webhook (lib/whatsapp/webhook.ts): signature, server-side validation, then withIngestion().";
+const ingestWhatsAppImport = {
+  regex:
+    "(^|/)db/queries/ingest-whatsapp-message$|^\\.{1,2}/ingest-whatsapp-message$",
+  // Los tipos del resultado (InboundMessageOutcome) no escriben nada.
+  allowTypeImports: true,
+  message: INGEST_WHATSAPP_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -275,6 +299,7 @@ const phoneLibraryImport = {
 const basePatterns = [
   dbClientImport,
   withUserImport,
+  withIngestionImport,
   resolveTenantImport,
   opportunitiesMockImport,
   createOpportunityImport,
@@ -286,6 +311,7 @@ const basePatterns = [
   linkOpportunityVehicleImport,
   recordMessageImport,
   settingsWriteImport,
+  ingestWhatsAppImport,
   demandFactsImport,
   phoneLibraryImport,
 ];
@@ -432,6 +458,7 @@ const eslintConfig = defineConfig([
           patterns: [
             dbClientImport,
             dbClientRelativeImport,
+            withIngestionImport,
             resolveTenantImport,
             opportunitiesMockImport,
             createOpportunityImport,
@@ -443,6 +470,7 @@ const eslintConfig = defineConfig([
             linkOpportunityVehicleImport,
             recordMessageImport,
             settingsWriteImport,
+            ingestWhatsAppImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -460,6 +488,7 @@ const eslintConfig = defineConfig([
           patterns: [
             dbClientImport,
             withUserImport,
+            withIngestionImport,
             opportunitiesMockImport,
             createOpportunityImport,
             createVehicleImport,
@@ -470,6 +499,7 @@ const eslintConfig = defineConfig([
             linkOpportunityVehicleImport,
             recordMessageImport,
             settingsWriteImport,
+            ingestWhatsAppImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -488,12 +518,14 @@ const eslintConfig = defineConfig([
           patterns: [
             dbClientImport,
             withUserImport,
+            withIngestionImport,
             resolveTenantImport,
             opportunitiesMockImport,
             createVehicleImport,
             markVehicleAvailableImport,
             recordMessageImport,
             settingsWriteImport,
+            ingestWhatsAppImport,
             phoneLibraryImport,
           ],
         },
@@ -539,6 +571,7 @@ const eslintConfig = defineConfig([
           patterns: [
             dbClientImport,
             withUserImport,
+            withIngestionImport,
             resolveTenantImport,
             opportunitiesMockImport,
             createOpportunityImport,
@@ -548,9 +581,42 @@ const eslintConfig = defineConfig([
             linkOpportunityVehicleImport,
             recordMessageImport,
             settingsWriteImport,
+            ingestWhatsAppImport,
             demandFactsImport,
             phoneLibraryImport,
             stockMockImport,
+          ],
+        },
+      ],
+    },
+  },
+  // Única puerta de la ingesta de mensajes entrantes de WhatsApp (Hito 7,
+  // DEC-039).
+  {
+    files: ["lib/whatsapp/webhook.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== ingestWhatsAppImport,
+          ),
+        },
+      ],
+    },
+  },
+  // Único módulo que importa withIngestion() (Hito 7, DEC-039 §4).
+  {
+    files: ["db/queries/ingest-whatsapp-message.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ...basePatterns.filter(
+              (pattern) => pattern !== withIngestionImport,
+            ),
+            dbClientRelativeImport,
           ],
         },
       ],
@@ -566,6 +632,7 @@ const eslintConfig = defineConfig([
           patterns: [
             dbClientImport,
             withUserImport,
+            withIngestionImport,
             resolveTenantImport,
             opportunitiesMockImport,
             createOpportunityImport,
@@ -577,6 +644,7 @@ const eslintConfig = defineConfig([
             linkOpportunityVehicleImport,
             recordMessageImport,
             settingsWriteImport,
+            ingestWhatsAppImport,
             demandFactsImport,
           ],
         },
@@ -604,6 +672,7 @@ const eslintConfig = defineConfig([
             linkOpportunityVehicleImport,
             recordMessageImport,
             settingsWriteImport,
+            ingestWhatsAppImport,
             demandFactsImport,
             phoneLibraryImport,
           ],

@@ -26,6 +26,9 @@ import { describe, expect, it } from "vitest";
  *   la Server Action addMessage() (lib/conversations/actions.ts);
  * - la configuración y el equipo (Hito 6) (db/queries/settings-write),
  *   también: las Server Actions de lib/settings/actions.ts;
+ * - la ingesta de mensajes entrantes de WhatsApp (Hito 7)
+ *   (db/queries/ingest-whatsapp-message), también: el webhook
+ *   (lib/whatsapp/webhook.ts);
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -465,6 +468,76 @@ describe(
         await restrictedBy(
           "lib/conversations/message.ts",
           `import type { MessageWriteOutcome } from "@/db/queries/record-message";\nexport type T = MessageWriteOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importIngestWrite = `import { ingestInboundMessage } from "@/db/queries/ingest-whatsapp-message";\nexport const use = ingestInboundMessage;\n`;
+
+/*
+ * Hito 7 (DEC-039): la ingesta de mensajes entrantes de WhatsApp tiene un
+ * único módulo de escritura, que solo importa el webhook
+ * (lib/whatsapp/webhook.ts).
+ */
+describe(
+  "una sola puerta para la ingesta de WhatsApp (Hito 7)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/api/webhooks/whatsapp/route.ts",
+      "app/(app)/conversations/page.tsx",
+      "lib/whatsapp/signature.ts",
+      "lib/conversations/actions.ts",
+      "lib/opportunities/actions.ts",
+      "lib/settings/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/tenant/session.ts",
+      "lib/contacts/phone.ts",
+      "db/queries/record-message.ts",
+      "db/queries/messages.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importIngestWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/messages.ts",
+          `import { ingestInboundMessage } from "./ingest-whatsapp-message";\nexport const use = ingestInboundMessage;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en el webhook", async () => {
+      expect(
+        await restrictedBy("lib/whatsapp/webhook.ts", importIngestWrite),
+      ).toEqual([]);
+    });
+
+    it("el webhook no importa otras escrituras, withIngestion() ni el cliente", async () => {
+      for (const code of [
+        importMessageWrite,
+        importWrite,
+        `import { withIngestion } from "@/db/tenant";\nexport const use = withIngestion;\n`,
+        `import { getDb } from "@/db/client";\nexport const use = getDb;\n`,
+      ]) {
+        expect(await restrictedBy("lib/whatsapp/webhook.ts", code)).toContain(
+          "no-restricted-imports",
+        );
+      }
+    });
+
+    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/whatsapp/summary.ts",
+          `import type { InboundMessageOutcome } from "@/db/queries/ingest-whatsapp-message";\nexport type T = InboundMessageOutcome;\n`,
         ),
       ).toEqual([]);
     });
