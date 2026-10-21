@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { MessageRow } from "@/domains/conversations/messages";
-import { activityTimeline } from "@/domains/conversations/timeline";
+import {
+  activityTimeline,
+  INGESTED_MESSAGE_AUTHOR,
+} from "@/domains/conversations/timeline";
 import type { NoteRow } from "@/domains/opportunities/notes";
 
 /*
@@ -122,5 +125,38 @@ describe("activityTimeline", () => {
     );
     expect(JSON.stringify(entries)).not.toContain(OTHER);
     expect(JSON.stringify(entries)).not.toContain(VIEWER);
+  });
+});
+
+describe("activityTimeline: mensajes ingeridos (Hito 7, DEC-039 §9)", () => {
+  it("un mensaje sin autor llegó solo por WhatsApp y se muestra así", () => {
+    const [entry] = activityTimeline(
+      [],
+      [message("m1", "2026-10-21T15:00:00Z", { recordedBy: null })],
+      VIEWER,
+    );
+    expect(entry).toMatchObject({
+      kind: "message",
+      label: "Mensaje recibido",
+      channelLabel: "WhatsApp",
+      author: INGESTED_MESSAGE_AUTHOR,
+    });
+    expect(INGESTED_MESSAGE_AUTHOR).toBe("WhatsApp (automático)");
+  });
+
+  it("se ordena con las notas y los mensajes registrados por fecha de registro", () => {
+    const entries = activityTimeline(
+      [note("n1", "2026-10-21T14:00:00Z")],
+      [
+        message("m1", "2026-10-21T15:00:00Z", { recordedBy: null }),
+        message("m2", "2026-10-21T13:00:00Z", { recordedBy: OTHER }),
+      ],
+      VIEWER,
+    );
+    expect(entries.map((e) => [e.id, e.author])).toEqual([
+      ["m1", "WhatsApp (automático)"],
+      ["n1", "Vos"],
+      ["m2", "Otro miembro"],
+    ]);
   });
 });

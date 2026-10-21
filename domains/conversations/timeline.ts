@@ -13,7 +13,9 @@ import {
  * la bitácora (DEC-033) y los mensajes registrados, juntos y en orden
  * cronológico. Puro y determinista: la presentación (autor "Vos" u "Otro
  * miembro", fecha de Asunción) se arma contra el usuario que mira y no
- * expone ids de usuario.
+ * expone ids de usuario. Un mensaje ingerido por el webhook de WhatsApp
+ * (Hito 7, DEC-039 §9) no tiene autor: se muestra como "WhatsApp
+ * (automático)".
  */
 
 /** Una entrada del muro, lista para mostrar. */
@@ -47,6 +49,9 @@ const MESSAGE_LABELS: Readonly<Record<MessageDirection, string>> = {
   inbound: "Mensaje recibido",
   outbound: "Mensaje enviado",
 };
+
+/** Autor de un mensaje que llegó solo, por el webhook de WhatsApp. */
+export const INGESTED_MESSAGE_AUTHOR = "WhatsApp (automático)";
 
 type Dated = Readonly<{ entry: ActivityEntry; instant: Date }>;
 
@@ -83,7 +88,10 @@ export function activityTimeline(
         channelLabel: MESSAGE_CHANNEL_LABELS[message.channel],
         direction: message.direction,
         body: message.content,
-        author: authorLabel(message.recordedBy, viewerUserId),
+        author:
+          message.recordedBy === null
+            ? INGESTED_MESSAGE_AUTHOR
+            : authorLabel(message.recordedBy, viewerUserId),
         at: formatDemandDate(message.createdAt),
       },
     })),
