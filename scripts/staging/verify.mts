@@ -10,15 +10,17 @@ import { finding, type Finding } from "./report.mts";
  * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
- * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger
- * y 0012_team_settings, leído del catálogo real (DEC-018, DEC-019, ADR-001
- * §2, §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034, DEC-036, DEC-038). Espeja tests/db/tenant-catalog y
+ * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
+ * 0012_team_settings y 0013_whatsapp_ingestion, leído del catálogo real
+ * (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033,
+ * DEC-034, DEC-036, DEC-038, DEC-039). Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
  */
 
 const APP_TABLES = [
   "contacts",
+  "conversations",
   "memberships",
   "messages",
   "opportunities",
@@ -27,7 +29,12 @@ const APP_TABLES = [
   "organizations",
   "profiles",
   "vehicles",
+  "whatsapp_lines",
 ];
+/** Las que leen los miembros: whatsapp_lines es de provisioning (DEC-039). */
+const MEMBER_READABLE_TABLES = APP_TABLES.filter(
+  (table) => table !== "whatsapp_lines",
+);
 const PRIVILEGES = [
   "SELECT",
   "INSERT",
@@ -66,7 +73,9 @@ type Policy = {
  * reloj de la base. El Hito 6 (DEC-038) suma la edición de organizations y
  * el alta y la edición de memberships, solo para admin activo
  * (private.user_admin_org_ids()); qué cambio de membership vale lo decide su
- * trigger (EXPECTED_TEAM_SETTINGS). Tal como las deparsea PostgreSQL 17.
+ * trigger (EXPECTED_TEAM_SETTINGS). El Hito 7 (DEC-039) suma la lectura de
+ * conversations; whatsapp_lines no tiene policies. Tal como las deparsea
+ * PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -82,6 +91,16 @@ export const EXPECTED_POLICIES: Policy[] = [
   {
     table: "contacts",
     name: "contacts_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "conversations",
+    name: "conversations_select_member",
     permissive: "PERMISSIVE",
     roles: ["authenticated"],
     command: "SELECT",
@@ -365,22 +384,57 @@ export const EXPECTED_OPPORTUNITY_NOTES = {
 };
 
 /**
- * Mensajes (Hito 4, 0011), tal como los deja PostgreSQL 17: FKs RESTRICT a
- * la organización, al contacto y a la oportunidad de la misma organización
- * y del mismo contacto, y al autor; los CHECKs de canal, dirección y texto;
- * y la unique de opportunities que es destino de la FK compuesta.
+ * Mensajes (Hito 4, 0011; Hito 7, 0013), tal como los deja PostgreSQL 17:
+ * FKs RESTRICT a la organización, al contacto y a la oportunidad y a la
+ * conversación de la misma organización y del mismo contacto, y al autor;
+ * los CHECKs de canal, dirección, texto, id del proveedor y origen (miembro
+ * o ingesta); y la unique de opportunities que es destino de la FK
+ * compuesta.
  */
 export const EXPECTED_MESSAGES = {
   constraints: [
     "messages_channel_check CHECK ((channel = ANY (ARRAY['whatsapp'::text, 'email'::text, 'manual'::text])))",
     "messages_contact_fk FOREIGN KEY (organization_id, contact_id) REFERENCES contacts(organization_id, id) ON DELETE RESTRICT",
     "messages_content_check CHECK ((((char_length(content) >= 1) AND (char_length(content) <= 4096)) AND (content = btrim(content, (' '::text || chr(10)))) AND (translate(content, chr(10), ''::text) !~ '[[:cntrl:]]'::text)))",
+    "messages_conversation_fk FOREIGN KEY (organization_id, conversation_id, contact_id) REFERENCES conversations(organization_id, id, contact_id) ON DELETE RESTRICT",
     "messages_direction_check CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text])))",
+    "messages_external_id_check CHECK ((((char_length(external_id) >= 1) AND (char_length(external_id) <= 256)) AND (external_id !~ '[[:space:][:cntrl:]]'::text)))",
     "messages_opportunity_fk FOREIGN KEY (organization_id, opportunity_id, contact_id) REFERENCES opportunities(organization_id, id, contact_id) ON DELETE RESTRICT",
     "messages_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
     "messages_recorded_by_profiles_id_fk FOREIGN KEY (recorded_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    "messages_source_check CHECK ((((recorded_by IS NOT NULL) AND (conversation_id IS NULL) AND (external_id IS NULL) AND (sent_at IS NULL)) OR ((recorded_by IS NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'inbound'::text))))",
   ],
   opportunitiesContactKey: "UNIQUE (organization_id, id, contact_id)",
+};
+
+/**
+ * Ingesta de WhatsApp (Hito 7, 0013, DEC-039): las conversaciones y las
+ * líneas con sus constraints, las dos uniques que son la autoridad de la
+ * idempotencia y de la conversación abierta, ninguna policy sobre
+ * whatsapp_lines y la función de ingesta (SECURITY DEFINER de postgres,
+ * search_path vacío, EXECUTE solo para authenticated y la regla que rechaza
+ * una llamada con claims).
+ */
+export const EXPECTED_WHATSAPP_INGESTION = {
+  constraints: [
+    "conversations_channel_check CHECK ((channel = 'whatsapp'::text))",
+    "conversations_contact_fk FOREIGN KEY (organization_id, contact_id) REFERENCES contacts(organization_id, id) ON DELETE RESTRICT",
+    "conversations_last_message_check CHECK (((last_message_at IS NULL) = (last_message_preview IS NULL)))",
+    "conversations_last_message_preview_check CHECK ((((char_length(last_message_preview) >= 1) AND (char_length(last_message_preview) <= 160)) AND (last_message_preview = btrim(last_message_preview)) AND (last_message_preview !~ '[[:cntrl:]]'::text)))",
+    "conversations_organization_id_id_contact_id_key UNIQUE (organization_id, id, contact_id)",
+    "conversations_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "conversations_status_check CHECK ((status = ANY (ARRAY['open'::text, 'closed'::text])))",
+    "whatsapp_lines_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "whatsapp_lines_phone_number_id_check CHECK ((phone_number_id ~ '^[0-9]{1,32}$'::text))",
+    "whatsapp_lines_phone_number_id_key UNIQUE (phone_number_id)",
+  ],
+  uniqueIndexes: [
+    "CREATE UNIQUE INDEX conversations_open_contact_channel_key ON public.conversations USING btree (organization_id, contact_id, channel) WHERE (status = 'open'::text)",
+    "CREATE UNIQUE INDEX messages_organization_id_external_id_key ON public.messages USING btree (organization_id, external_id) WHERE (external_id IS NOT NULL)",
+  ],
+  linePolicies: 0,
+  function:
+    'private.ingest_whatsapp_message(text,text,text,text,text,text,text,timestamp with time zone) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false guard=true',
 };
 
 /**
@@ -428,7 +482,8 @@ export const EXPECTED_TEAM_SETTINGS = {
 };
 
 /**
- * Privilegios de authenticated: lectura en todo, las altas de H1.2
+ * Privilegios de authenticated: lectura en todo salvo whatsapp_lines
+ * (provisioning, DEC-039), las altas de H1.2
  * (contacts, opportunities), H1.3B (vehicles), H1.4
  * (opportunity_demand_facts), el Hito 2 (opportunity_notes), el Hito 4
  * (messages) y el Hito 6 (memberships), estas cuatro de tabla (diseño A), y
@@ -444,7 +499,7 @@ const AUTHENTICATED_PRIVILEGES = [
   "INSERT opportunity_demand_facts",
   "INSERT opportunity_notes",
   "INSERT vehicles",
-  ...APP_TABLES.map((table) => `SELECT ${table}`),
+  ...MEMBER_READABLE_TABLES.map((table) => `SELECT ${table}`),
   "UPDATE memberships",
   "UPDATE opportunities",
   "UPDATE organizations",
@@ -928,6 +983,70 @@ export async function verifyCatalog(
     ),
   );
 
+  // Ingesta de WhatsApp (Hito 7): constraints de conversations y
+  // whatsapp_lines, las uniques de idempotencia y de conversación abierta,
+  // las líneas sin policies y la función de ingesta.
+  const [ingestion] = await tx<
+    {
+      constraints: string[] | null;
+      uniqueIndexes: string[] | null;
+      linePolicies: number;
+      function: string | null;
+    }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid IN (
+            to_regclass('public.conversations'),
+            to_regclass('public.whatsapp_lines')
+          )
+          AND contype IN ('c', 'f', 'u')
+      ) AS constraints,
+      (
+        SELECT array_agg(indexdef ORDER BY indexname) FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname IN (
+            'conversations_open_contact_channel_key',
+            'messages_organization_id_external_id_key'
+          )
+      ) AS "uniqueIndexes",
+      (
+        SELECT count(*)::int FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = 'whatsapp_lines'
+      ) AS "linePolicies",
+      (
+        SELECT p.oid::regprocedure::text
+          || ' SECURITY DEFINER=' || p.prosecdef
+          || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+          || ' owner=' || p.proowner::regrole::text
+          || ' EXECUTE PUBLIC=' || EXISTS (
+            SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+            WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+          )
+          || ' authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+          || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+          || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+          || ' guard=' || (position('ingestion_without_user' in p.prosrc) > 0)
+        FROM pg_proc p
+        WHERE p.oid = to_regprocedure('private.ingest_whatsapp_message(text, text, text, text, text, text, text, timestamp with time zone)')
+      ) AS function
+  `;
+  const ingestionFound = {
+    constraints: ingestion?.constraints ?? [],
+    uniqueIndexes: ingestion?.uniqueIndexes ?? [],
+    linePolicies: ingestion?.linePolicies ?? null,
+    function: ingestion?.function ?? null,
+  };
+  findings.push(
+    finding(
+      "schema.whatsapp-ingestion",
+      equal(ingestionFound, EXPECTED_WHATSAPP_INGESTION),
+      `conversations and whatsapp_lines: ${ingestionFound.constraints.length} constraints (expected: ${EXPECTED_WHATSAPP_INGESTION.constraints.length}, exact definitions); unique indexes: ${ingestionFound.uniqueIndexes.length} (expected: ${EXPECTED_WHATSAPP_INGESTION.uniqueIndexes.length}); whatsapp_lines policies: ${ingestionFound.linePolicies}; ingest function: ${ingestionFound.function ?? "missing"}`,
+    ),
+  );
+
   // Schema private y private.user_org_ids() (ADR-001 §4).
   const [privateSchema] = await tx<
     {
@@ -1100,7 +1219,7 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages and memberships, UPDATE on opportunities, vehicles, organizations and memberships only; no DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table but whatsapp_lines, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages and memberships, UPDATE on opportunities, vehicles, organizations and memberships only; no DELETE)`,
     ),
   );
 
@@ -1288,6 +1407,8 @@ const DATA_API_TABLES = [
   "opportunity_demand_facts",
   "opportunity_notes",
   "messages",
+  "conversations",
+  "whatsapp_lines",
 ];
 /** Nombres que pg_graphql daría a los tipos de la app. */
 const GRAPHQL_APP_TYPES = [
@@ -1301,6 +1422,8 @@ const GRAPHQL_APP_TYPES = [
   "OpportunityDemandFacts",
   "OpportunityNotes",
   "Messages",
+  "Conversations",
+  "WhatsappLines",
 ];
 
 /** Campo de colección de pg_graphql con nombres inflectados. */

@@ -17,15 +17,18 @@ import {
  * 0004_vehicles_stock_persistence, 0005_vehicle_quick_create,
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
- * 0010_opportunity_closure_metadata y 0011_conversations_and_activity_trigger,
- * leídos del catálogo de PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2,
+ * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
+ * 0012_team_settings y 0013_whatsapp_ingestion, leídos del catálogo de
+ * PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2,
  * C3 y C9). El acceso a datos se prueba en tenant-isolation.test.ts,
  * opportunities.test.ts, vehicles.test.ts, demand-facts.test.ts y los tests
  * de cada escritura.
  */
 
+/** Tablas que leen los miembros (todas salvo whatsapp_lines, DEC-039 §5). */
 const TABLES = [
   "contacts",
+  "conversations",
   "memberships",
   "messages",
   "opportunities",
@@ -187,6 +190,16 @@ describe("policies (ADR-001 §4)", () => {
       {
         table: "contacts",
         name: "contacts_select_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
+      },
+      {
+        table: "conversations",
+        name: "conversations_select_member",
         permissive: "PERMISSIVE",
         roles: ["authenticated"],
         command: "SELECT",
@@ -714,6 +727,65 @@ describe("grants (ADR-001 §3.6)", () => {
       "messages_insert_member INSERT",
       "messages_select_member SELECT",
     ]);
+  });
+
+  it("conversations y whatsapp_lines (Hito 7, DEC-039 §5 y §6): los miembros solo leen las conversaciones; las líneas no tienen policies ni privilegios de authenticated", async () => {
+    expect(
+      (
+        await tablePrivileges(db.admin, [
+          "anon",
+          "authenticated",
+          "app_runtime",
+        ])
+      ).filter(
+        (grant) =>
+          grant.endsWith(" conversations") || grant.endsWith(" whatsapp_lines"),
+      ),
+    ).toEqual(["authenticated SELECT conversations"]);
+    expect(
+      (await policies(db.admin))
+        .filter((policy) =>
+          ["conversations", "whatsapp_lines"].includes(policy.table),
+        )
+        .map((policy) => `${policy.table}.${policy.name} ${policy.command}`),
+    ).toEqual(["conversations.conversations_select_member SELECT"]);
+  });
+
+  it("ingesta (Hito 7, DEC-039 §4 y §7): private.ingest_whatsapp_message() es SECURITY DEFINER de postgres, de search_path vacío, con EXECUTE solo para authenticated y la regla que rechaza las claims; app_runtime sigue sin privilegios directos", async () => {
+    const signature =
+      "private.ingest_whatsapp_message(text,text,text,text,text,text,text,timestamp with time zone)";
+    const [fn] = await db.admin<
+      {
+        securityDefiner: boolean;
+        volatility: string;
+        config: string[] | null;
+        owner: string;
+        acl: string[] | null;
+        guard: boolean;
+      }[]
+    >`
+      SELECT p.prosecdef AS "securityDefiner", p.provolatile::text AS volatility,
+        p.proconfig AS config, p.proowner::regrole::text AS owner,
+        p.proacl::text[] AS acl,
+        position('ingestion_without_user' in p.prosrc) > 0 AS guard
+      FROM pg_proc p
+      WHERE p.oid = to_regprocedure(${signature})
+    `;
+    expect(fn).toEqual({
+      securityDefiner: true,
+      volatility: "v",
+      config: ['search_path=""'],
+      owner: "postgres",
+      acl: ["postgres=X/postgres", "authenticated=X/postgres"],
+      guard: true,
+    });
+    const executors = await db.admin<{ role: string }[]>`
+      SELECT rolname AS role FROM pg_roles
+      WHERE has_function_privilege(oid, to_regprocedure(${signature}), 'EXECUTE')
+        AND NOT rolsuper
+      ORDER BY 1
+    `;
+    expect(executors.map((r) => r.role)).toEqual(["authenticated", "postgres"]);
   });
 
   it("recencia (Hito 4, DEC-036 §1 y §2): una nota o un mensaje nuevos la mueven con un trigger AFTER INSERT de fila, habilitado, cuya función es SECURITY DEFINER de postgres, de search_path vacío y sin EXECUTE para nadie", async () => {

@@ -1,0 +1,2011 @@
+{
+  "id": "3d4ba916-de63-49a8-ab0f-5677c79fcc56",
+  "prevId": "201ef989-70ff-4d76-9ad9-94832f32b041",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.organizations": {
+      "name": "organizations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "default_currency": {
+          "name": "default_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PYG'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "organizations_select_member": {
+          "name": "organizations_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"organizations\".\"id\" IN (SELECT private.user_org_ids())"
+        },
+        "organizations_update_admin": {
+          "name": "organizations_update_admin",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"organizations\".\"id\" IN (SELECT private.user_admin_org_ids())",
+          "withCheck": "\"organizations\".\"id\" IN (SELECT private.user_admin_org_ids())"
+        }
+      },
+      "checkConstraints": {
+        "organizations_name_check": {
+          "name": "organizations_name_check",
+          "value": "char_length(\"organizations\".\"name\") BETWEEN 1 AND 120 AND \"organizations\".\"name\" = btrim(\"organizations\".\"name\") AND \"organizations\".\"name\" !~ '[[:cntrl:]]'"
+        },
+        "organizations_default_currency_check": {
+          "name": "organizations_default_currency_check",
+          "value": "\"organizations\".\"default_currency\" IN ('PYG', 'USD')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.profiles": {
+      "name": "profiles",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "profiles_id_users_id_fk": {
+          "name": "profiles_id_users_id_fk",
+          "tableFrom": "profiles",
+          "tableTo": "users",
+          "schemaTo": "auth",
+          "columnsFrom": [
+            "id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "profiles_select_own": {
+          "name": "profiles_select_own",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"profiles\".\"id\" = (select auth.uid())"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.memberships": {
+      "name": "memberships",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "membership_role",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "memberships_user_id_idx": {
+          "name": "memberships_user_id_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "memberships_organization_id_organizations_id_fk": {
+          "name": "memberships_organization_id_organizations_id_fk",
+          "tableFrom": "memberships",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "memberships_user_id_profiles_id_fk": {
+          "name": "memberships_user_id_profiles_id_fk",
+          "tableFrom": "memberships",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "memberships_organization_id_user_id_key": {
+          "name": "memberships_organization_id_user_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "user_id"
+          ]
+        }
+      },
+      "policies": {
+        "memberships_select_member": {
+          "name": "memberships_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"memberships\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        },
+        "memberships_insert_admin": {
+          "name": "memberships_insert_admin",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "authenticated"
+          ],
+          "withCheck": "\"memberships\".\"organization_id\" IN (SELECT private.user_admin_org_ids()) AND \"memberships\".\"active\" AND \"memberships\".\"created_at\" = now() AND \"memberships\".\"updated_at\" = now()"
+        },
+        "memberships_update_admin": {
+          "name": "memberships_update_admin",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"memberships\".\"organization_id\" IN (SELECT private.user_admin_org_ids())",
+          "withCheck": "\"memberships\".\"organization_id\" IN (SELECT private.user_admin_org_ids())"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "public.contacts": {
+      "name": "contacts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phone_normalized": {
+          "name": "phone_normalized",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "city": {
+          "name": "city",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "contacts_organization_id_phone_normalized_key": {
+          "name": "contacts_organization_id_phone_normalized_key",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "phone_normalized",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"contacts\".\"phone_normalized\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "contacts_organization_id_organizations_id_fk": {
+          "name": "contacts_organization_id_organizations_id_fk",
+          "tableFrom": "contacts",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "contacts_organization_id_id_key": {
+          "name": "contacts_organization_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "contacts_select_member": {
+          "name": "contacts_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"contacts\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        },
+        "contacts_insert_member": {
+          "name": "contacts_insert_member",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "authenticated"
+          ],
+          "withCheck": "\"contacts\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        }
+      },
+      "checkConstraints": {
+        "contacts_phone_normalized_check": {
+          "name": "contacts_phone_normalized_check",
+          "value": "\"contacts\".\"phone_normalized\" IS NULL OR (\"contacts\".\"phone\" IS NOT NULL AND \"contacts\".\"phone_normalized\" ~ '^\\+[1-9][0-9]{1,14}$')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.opportunities": {
+      "name": "opportunities",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stage": {
+          "name": "stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "loss_reason": {
+          "name": "loss_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vehicle_id": {
+          "name": "vehicle_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "loss_notes": {
+          "name": "loss_notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sale_price": {
+          "name": "sale_price",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sale_currency": {
+          "name": "sale_currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payment_method": {
+          "name": "payment_method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "delivery_status": {
+          "name": "delivery_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "delivery_date": {
+          "name": "delivery_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "interest_model": {
+          "name": "interest_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "interest_version": {
+          "name": "interest_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_activity_at": {
+          "name": "last_activity_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "opportunities_organization_id_last_activity_at_idx": {
+          "name": "opportunities_organization_id_last_activity_at_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_activity_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "opportunities_organization_id_contact_id_idx": {
+          "name": "opportunities_organization_id_contact_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "opportunities_organization_id_vehicle_id_idx": {
+          "name": "opportunities_organization_id_vehicle_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "vehicle_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"opportunities\".\"vehicle_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "opportunities_organization_id_organizations_id_fk": {
+          "name": "opportunities_organization_id_organizations_id_fk",
+          "tableFrom": "opportunities",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "opportunities_organization_id_contact_id_contacts_fk": {
+          "name": "opportunities_organization_id_contact_id_contacts_fk",
+          "tableFrom": "opportunities",
+          "tableTo": "contacts",
+          "columnsFrom": [
+            "organization_id",
+            "contact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "opportunities_vehicle_fk": {
+          "name": "opportunities_vehicle_fk",
+          "tableFrom": "opportunities",
+          "tableTo": "vehicles",
+          "columnsFrom": [
+            "organization_id",
+            "vehicle_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "opportunities_organization_id_id_key": {
+          "name": "opportunities_organization_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "id"
+          ]
+        },
+        "opportunities_organization_id_id_contact_id_key": {
+          "name": "opportunities_organization_id_id_contact_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "id",
+            "contact_id"
+          ]
+        }
+      },
+      "policies": {
+        "opportunities_select_member": {
+          "name": "opportunities_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"opportunities\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        },
+        "opportunities_insert_member": {
+          "name": "opportunities_insert_member",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "authenticated"
+          ],
+          "withCheck": "\"opportunities\".\"organization_id\" IN (SELECT private.user_org_ids()) AND \"opportunities\".\"stage\" = 'new'"
+        },
+        "opportunities_update_stage": {
+          "name": "opportunities_update_stage",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"opportunities\".\"organization_id\" IN (SELECT private.user_org_ids())",
+          "withCheck": "\"opportunities\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        }
+      },
+      "checkConstraints": {
+        "opportunities_stage_check": {
+          "name": "opportunities_stage_check",
+          "value": "\"opportunities\".\"stage\" IN ('new', 'qualifying', 'negotiating', 'won', 'lost')"
+        },
+        "opportunities_source_check": {
+          "name": "opportunities_source_check",
+          "value": "\"opportunities\".\"source\" IN ('whatsapp', 'meta_ads', 'web', 'showroom', 'referral')"
+        },
+        "opportunities_loss_reason_check": {
+          "name": "opportunities_loss_reason_check",
+          "value": "\"opportunities\".\"loss_reason\" IN ('price', 'vehicle_unavailable', 'competitor', 'financing_rejected', 'ghosted', 'other')"
+        },
+        "opportunities_loss_reason_stage_check": {
+          "name": "opportunities_loss_reason_stage_check",
+          "value": "(\"opportunities\".\"stage\" = 'lost' AND \"opportunities\".\"loss_reason\" IS NOT NULL) OR (\"opportunities\".\"stage\" <> 'lost' AND \"opportunities\".\"loss_reason\" IS NULL)"
+        },
+        "opportunities_vehicle_stage_check": {
+          "name": "opportunities_vehicle_stage_check",
+          "value": "\"opportunities\".\"vehicle_id\" IS NULL OR \"opportunities\".\"stage\" IN ('negotiating', 'won', 'lost')"
+        },
+        "opportunities_loss_notes_check": {
+          "name": "opportunities_loss_notes_check",
+          "value": "char_length(\"opportunities\".\"loss_notes\") BETWEEN 1 AND 500 AND \"opportunities\".\"loss_notes\" = btrim(\"opportunities\".\"loss_notes\", ' ' || chr(10)) AND translate(\"opportunities\".\"loss_notes\", chr(10), '') !~ '[[:cntrl:]]'"
+        },
+        "opportunities_loss_notes_stage_check": {
+          "name": "opportunities_loss_notes_stage_check",
+          "value": "\"opportunities\".\"loss_notes\" IS NULL OR \"opportunities\".\"stage\" = 'lost'"
+        },
+        "opportunities_sale_currency_check": {
+          "name": "opportunities_sale_currency_check",
+          "value": "\"opportunities\".\"sale_currency\" IN ('PYG', 'USD')"
+        },
+        "opportunities_sale_price_check": {
+          "name": "opportunities_sale_price_check",
+          "value": "(\"opportunities\".\"sale_price\" IS NULL) = (\"opportunities\".\"sale_currency\" IS NULL) AND (\"opportunities\".\"sale_price\" IS NULL OR (\"opportunities\".\"sale_price\" > 0 AND (\"opportunities\".\"sale_currency\" <> 'PYG' OR \"opportunities\".\"sale_price\" = trunc(\"opportunities\".\"sale_price\"))))"
+        },
+        "opportunities_payment_method_check": {
+          "name": "opportunities_payment_method_check",
+          "value": "\"opportunities\".\"payment_method\" IN ('cash', 'financing', 'trade_in', 'mixed')"
+        },
+        "opportunities_delivery_status_check": {
+          "name": "opportunities_delivery_status_check",
+          "value": "\"opportunities\".\"delivery_status\" IN ('scheduled', 'delivered')"
+        },
+        "opportunities_delivery_date_check": {
+          "name": "opportunities_delivery_date_check",
+          "value": "\"opportunities\".\"delivery_date\" BETWEEN '2000-01-01' AND '2100-12-31'"
+        },
+        "opportunities_won_closure_check": {
+          "name": "opportunities_won_closure_check",
+          "value": "(\"opportunities\".\"stage\" = 'won' AND \"opportunities\".\"vehicle_id\" IS NOT NULL AND \"opportunities\".\"sale_price\" IS NOT NULL AND \"opportunities\".\"sale_currency\" IS NOT NULL AND \"opportunities\".\"payment_method\" IS NOT NULL AND \"opportunities\".\"delivery_status\" IS NOT NULL AND \"opportunities\".\"delivery_date\" IS NOT NULL) OR (\"opportunities\".\"stage\" <> 'won' AND \"opportunities\".\"sale_price\" IS NULL AND \"opportunities\".\"sale_currency\" IS NULL AND \"opportunities\".\"payment_method\" IS NULL AND \"opportunities\".\"delivery_status\" IS NULL AND \"opportunities\".\"delivery_date\" IS NULL)"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.vehicles": {
+      "name": "vehicles",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "year": {
+          "name": "year",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "km": {
+          "name": "km",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "price": {
+          "name": "price",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "vehicles_organization_id_created_at_idx": {
+          "name": "vehicles_organization_id_created_at_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "vehicles_organization_id_organizations_id_fk": {
+          "name": "vehicles_organization_id_organizations_id_fk",
+          "tableFrom": "vehicles",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "vehicles_organization_id_id_key": {
+          "name": "vehicles_organization_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "vehicles_select_member": {
+          "name": "vehicles_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"vehicles\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        },
+        "vehicles_insert_member": {
+          "name": "vehicles_insert_member",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "authenticated"
+          ],
+          "withCheck": "\"vehicles\".\"organization_id\" IN (SELECT private.user_org_ids()) AND \"vehicles\".\"status\" = 'in_preparation'"
+        },
+        "vehicles_update_mark_available": {
+          "name": "vehicles_update_mark_available",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"vehicles\".\"organization_id\" IN (SELECT private.user_org_ids()) AND \"vehicles\".\"status\" = 'in_preparation'",
+          "withCheck": "\"vehicles\".\"organization_id\" IN (SELECT private.user_org_ids()) AND \"vehicles\".\"status\" = 'available'"
+        }
+      },
+      "checkConstraints": {
+        "vehicles_status_check": {
+          "name": "vehicles_status_check",
+          "value": "\"vehicles\".\"status\" IN ('in_preparation', 'available', 'reserved', 'sold')"
+        },
+        "vehicles_currency_check": {
+          "name": "vehicles_currency_check",
+          "value": "\"vehicles\".\"currency\" IN ('PYG', 'USD')"
+        },
+        "vehicles_price_check": {
+          "name": "vehicles_price_check",
+          "value": "(\"vehicles\".\"price\" IS NULL) = (\"vehicles\".\"currency\" IS NULL) AND (\"vehicles\".\"price\" IS NULL OR (\"vehicles\".\"price\" > 0 AND (\"vehicles\".\"currency\" <> 'PYG' OR \"vehicles\".\"price\" = trunc(\"vehicles\".\"price\"))))"
+        },
+        "vehicles_year_check": {
+          "name": "vehicles_year_check",
+          "value": "\"vehicles\".\"year\" BETWEEN 1900 AND 2100"
+        },
+        "vehicles_km_check": {
+          "name": "vehicles_km_check",
+          "value": "\"vehicles\".\"km\" IS NULL OR \"vehicles\".\"km\" >= 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.opportunity_demand_facts": {
+      "name": "opportunity_demand_facts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opportunity_id": {
+          "name": "opportunity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fact": {
+          "name": "fact",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_kind": {
+          "name": "source_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recorded_by": {
+          "name": "recorded_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "target_fact_id": {
+          "name": "target_fact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "previous_member_fact_id": {
+          "name": "previous_member_fact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "brand": {
+          "name": "brand",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "year_min": {
+          "name": "year_min",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "year_max": {
+          "name": "year_max",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "purchase_type": {
+          "name": "purchase_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "trade_in": {
+          "name": "trade_in",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_text": {
+          "name": "evidence_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "opportunity_demand_facts_member_root_key": {
+          "name": "opportunity_demand_facts_member_root_key",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "opportunity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "fact",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"opportunity_demand_facts\".\"source_kind\" = 'member' AND \"opportunity_demand_facts\".\"previous_member_fact_id\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "opportunity_demand_facts_member_next_key": {
+          "name": "opportunity_demand_facts_member_next_key",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "opportunity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "fact",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "previous_member_fact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"opportunity_demand_facts\".\"source_kind\" = 'member' AND \"opportunity_demand_facts\".\"previous_member_fact_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "opportunity_demand_facts_organization_id_organizations_id_fk": {
+          "name": "opportunity_demand_facts_organization_id_organizations_id_fk",
+          "tableFrom": "opportunity_demand_facts",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "opportunity_demand_facts_recorded_by_profiles_id_fk": {
+          "name": "opportunity_demand_facts_recorded_by_profiles_id_fk",
+          "tableFrom": "opportunity_demand_facts",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "recorded_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "opportunity_demand_facts_opportunity_fk": {
+          "name": "opportunity_demand_facts_opportunity_fk",
+          "tableFrom": "opportunity_demand_facts",
+          "tableTo": "opportunities",
+          "columnsFrom": [
+            "organization_id",
+            "opportunity_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "opportunity_demand_facts_target_fk": {
+          "name": "opportunity_demand_facts_target_fk",
+          "tableFrom": "opportunity_demand_facts",
+          "tableTo": "opportunity_demand_facts",
+          "columnsFrom": [
+            "organization_id",
+            "opportunity_id",
+            "fact",
+            "target_fact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "opportunity_id",
+            "fact",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "opportunity_demand_facts_previous_fk": {
+          "name": "opportunity_demand_facts_previous_fk",
+          "tableFrom": "opportunity_demand_facts",
+          "tableTo": "opportunity_demand_facts",
+          "columnsFrom": [
+            "organization_id",
+            "opportunity_id",
+            "fact",
+            "source_kind",
+            "previous_member_fact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "opportunity_id",
+            "fact",
+            "source_kind",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "opportunity_demand_facts_scope_key": {
+          "name": "opportunity_demand_facts_scope_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "opportunity_id",
+            "fact",
+            "id"
+          ]
+        },
+        "opportunity_demand_facts_scope_source_key": {
+          "name": "opportunity_demand_facts_scope_source_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "opportunity_id",
+            "fact",
+            "source_kind",
+            "id"
+          ]
+        }
+      },
+      "policies": {
+        "opportunity_demand_facts_select_member": {
+          "name": "opportunity_demand_facts_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"opportunity_demand_facts\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        },
+        "opportunity_demand_facts_insert_member": {
+          "name": "opportunity_demand_facts_insert_member",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "authenticated"
+          ],
+          "withCheck": "\"opportunity_demand_facts\".\"organization_id\" IN (SELECT private.user_org_ids()) AND \"opportunity_demand_facts\".\"source_kind\" = 'member' AND \"opportunity_demand_facts\".\"status\" IN ('confirmed', 'corrected', 'rejected') AND \"opportunity_demand_facts\".\"recorded_by\" = (select auth.uid()) AND \"opportunity_demand_facts\".\"recorded_at\" = now()"
+        }
+      },
+      "checkConstraints": {
+        "opportunity_demand_facts_fact_check": {
+          "name": "opportunity_demand_facts_fact_check",
+          "value": "\"opportunity_demand_facts\".\"fact\" IN ('desired_vehicle', 'year_range', 'budget_max', 'purchase_type', 'trade_in_intent', 'down_payment')"
+        },
+        "opportunity_demand_facts_status_check": {
+          "name": "opportunity_demand_facts_status_check",
+          "value": "\"opportunity_demand_facts\".\"status\" IN ('detected', 'confirmed', 'corrected', 'rejected')"
+        },
+        "opportunity_demand_facts_source_kind_check": {
+          "name": "opportunity_demand_facts_source_kind_check",
+          "value": "\"opportunity_demand_facts\".\"source_kind\" IN ('member')"
+        },
+        "opportunity_demand_facts_currency_check": {
+          "name": "opportunity_demand_facts_currency_check",
+          "value": "\"opportunity_demand_facts\".\"currency\" IN ('PYG', 'USD')"
+        },
+        "opportunity_demand_facts_purchase_type_check": {
+          "name": "opportunity_demand_facts_purchase_type_check",
+          "value": "\"opportunity_demand_facts\".\"purchase_type\" IN ('cash', 'financed', 'undecided')"
+        },
+        "opportunity_demand_facts_value_check": {
+          "name": "opportunity_demand_facts_value_check",
+          "value": "CASE\n        WHEN \"opportunity_demand_facts\".\"status\" = 'rejected' THEN num_nonnulls(\"opportunity_demand_facts\".\"brand\", \"opportunity_demand_facts\".\"model\", \"opportunity_demand_facts\".\"year_min\", \"opportunity_demand_facts\".\"year_max\", \"opportunity_demand_facts\".\"amount\", \"opportunity_demand_facts\".\"currency\", \"opportunity_demand_facts\".\"purchase_type\", \"opportunity_demand_facts\".\"trade_in\") = 0\n        WHEN \"opportunity_demand_facts\".\"fact\" = 'desired_vehicle' THEN num_nonnulls(\"opportunity_demand_facts\".\"brand\", \"opportunity_demand_facts\".\"model\") >= 1 AND num_nonnulls(\"opportunity_demand_facts\".\"year_min\", \"opportunity_demand_facts\".\"year_max\", \"opportunity_demand_facts\".\"amount\", \"opportunity_demand_facts\".\"currency\", \"opportunity_demand_facts\".\"purchase_type\", \"opportunity_demand_facts\".\"trade_in\") = 0\n        WHEN \"opportunity_demand_facts\".\"fact\" = 'year_range' THEN num_nonnulls(\"opportunity_demand_facts\".\"year_min\", \"opportunity_demand_facts\".\"year_max\") >= 1 AND coalesce(\"opportunity_demand_facts\".\"year_min\" BETWEEN 1900 AND 2100, true) AND coalesce(\"opportunity_demand_facts\".\"year_max\" BETWEEN 1900 AND 2100, true) AND coalesce(\"opportunity_demand_facts\".\"year_min\" <= \"opportunity_demand_facts\".\"year_max\", true) AND num_nonnulls(\"opportunity_demand_facts\".\"brand\", \"opportunity_demand_facts\".\"model\", \"opportunity_demand_facts\".\"amount\", \"opportunity_demand_facts\".\"currency\", \"opportunity_demand_facts\".\"purchase_type\", \"opportunity_demand_facts\".\"trade_in\") = 0\n        WHEN \"opportunity_demand_facts\".\"fact\" = 'budget_max' THEN num_nonnulls(\"opportunity_demand_facts\".\"amount\", \"opportunity_demand_facts\".\"currency\") = 2 AND \"opportunity_demand_facts\".\"amount\" > 0 AND (\"opportunity_demand_facts\".\"currency\" <> 'PYG' OR \"opportunity_demand_facts\".\"amount\" = trunc(\"opportunity_demand_facts\".\"amount\")) AND num_nonnulls(\"opportunity_demand_facts\".\"brand\", \"opportunity_demand_facts\".\"model\", \"opportunity_demand_facts\".\"year_min\", \"opportunity_demand_facts\".\"year_max\", \"opportunity_demand_facts\".\"purchase_type\", \"opportunity_demand_facts\".\"trade_in\") = 0\n        WHEN \"opportunity_demand_facts\".\"fact\" = 'down_payment' THEN num_nonnulls(\"opportunity_demand_facts\".\"amount\", \"opportunity_demand_facts\".\"currency\") = 2 AND \"opportunity_demand_facts\".\"amount\" >= 0 AND (\"opportunity_demand_facts\".\"currency\" <> 'PYG' OR \"opportunity_demand_facts\".\"amount\" = trunc(\"opportunity_demand_facts\".\"amount\")) AND num_nonnulls(\"opportunity_demand_facts\".\"brand\", \"opportunity_demand_facts\".\"model\", \"opportunity_demand_facts\".\"year_min\", \"opportunity_demand_facts\".\"year_max\", \"opportunity_demand_facts\".\"purchase_type\", \"opportunity_demand_facts\".\"trade_in\") = 0\n        WHEN \"opportunity_demand_facts\".\"fact\" = 'purchase_type' THEN \"opportunity_demand_facts\".\"purchase_type\" IS NOT NULL AND num_nonnulls(\"opportunity_demand_facts\".\"brand\", \"opportunity_demand_facts\".\"model\", \"opportunity_demand_facts\".\"year_min\", \"opportunity_demand_facts\".\"year_max\", \"opportunity_demand_facts\".\"amount\", \"opportunity_demand_facts\".\"currency\", \"opportunity_demand_facts\".\"trade_in\") = 0\n        WHEN \"opportunity_demand_facts\".\"fact\" = 'trade_in_intent' THEN \"opportunity_demand_facts\".\"trade_in\" IS NOT NULL AND num_nonnulls(\"opportunity_demand_facts\".\"brand\", \"opportunity_demand_facts\".\"model\", \"opportunity_demand_facts\".\"year_min\", \"opportunity_demand_facts\".\"year_max\", \"opportunity_demand_facts\".\"amount\", \"opportunity_demand_facts\".\"currency\", \"opportunity_demand_facts\".\"purchase_type\") = 0\n        ELSE false\n      END"
+        },
+        "opportunity_demand_facts_status_target_check": {
+          "name": "opportunity_demand_facts_status_target_check",
+          "value": "(\"opportunity_demand_facts\".\"status\" NOT IN ('rejected', 'corrected') OR \"opportunity_demand_facts\".\"target_fact_id\" IS NOT NULL) AND (\"opportunity_demand_facts\".\"status\" <> 'detected' OR (\"opportunity_demand_facts\".\"target_fact_id\" IS NULL AND \"opportunity_demand_facts\".\"previous_member_fact_id\" IS NULL))"
+        },
+        "opportunity_demand_facts_source_status_check": {
+          "name": "opportunity_demand_facts_source_status_check",
+          "value": "(\"opportunity_demand_facts\".\"status\" = 'detected') = (\"opportunity_demand_facts\".\"source_kind\" <> 'member')"
+        },
+        "opportunity_demand_facts_member_author_check": {
+          "name": "opportunity_demand_facts_member_author_check",
+          "value": "\"opportunity_demand_facts\".\"source_kind\" <> 'member' OR \"opportunity_demand_facts\".\"recorded_by\" IS NOT NULL"
+        },
+        "opportunity_demand_facts_member_chain_check": {
+          "name": "opportunity_demand_facts_member_chain_check",
+          "value": "\"opportunity_demand_facts\".\"source_kind\" = 'member' OR \"opportunity_demand_facts\".\"previous_member_fact_id\" IS NULL"
+        },
+        "opportunity_demand_facts_self_reference_check": {
+          "name": "opportunity_demand_facts_self_reference_check",
+          "value": "(\"opportunity_demand_facts\".\"target_fact_id\" IS NULL OR \"opportunity_demand_facts\".\"target_fact_id\" <> \"opportunity_demand_facts\".\"id\") AND (\"opportunity_demand_facts\".\"previous_member_fact_id\" IS NULL OR \"opportunity_demand_facts\".\"previous_member_fact_id\" <> \"opportunity_demand_facts\".\"id\")"
+        },
+        "opportunity_demand_facts_text_check": {
+          "name": "opportunity_demand_facts_text_check",
+          "value": "(\"opportunity_demand_facts\".\"brand\" IS NULL OR (char_length(\"opportunity_demand_facts\".\"brand\") BETWEEN 1 AND 40 AND \"opportunity_demand_facts\".\"brand\" = btrim(\"opportunity_demand_facts\".\"brand\") AND \"opportunity_demand_facts\".\"brand\" !~ '[[:cntrl:]]')) AND (\"opportunity_demand_facts\".\"model\" IS NULL OR (char_length(\"opportunity_demand_facts\".\"model\") BETWEEN 1 AND 80 AND \"opportunity_demand_facts\".\"model\" = btrim(\"opportunity_demand_facts\".\"model\") AND \"opportunity_demand_facts\".\"model\" !~ '[[:cntrl:]]')) AND (\"opportunity_demand_facts\".\"evidence_text\" IS NULL OR (char_length(\"opportunity_demand_facts\".\"evidence_text\") BETWEEN 1 AND 500 AND \"opportunity_demand_facts\".\"evidence_text\" = btrim(\"opportunity_demand_facts\".\"evidence_text\") AND \"opportunity_demand_facts\".\"evidence_text\" !~ '[[:cntrl:]]'))"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.opportunity_notes": {
+      "name": "opportunity_notes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opportunity_id": {
+          "name": "opportunity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recorded_by": {
+          "name": "recorded_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "opportunity_notes_organization_id_opportunity_id_idx": {
+          "name": "opportunity_notes_organization_id_opportunity_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "opportunity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "recorded_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "opportunity_notes_organization_id_organizations_id_fk": {
+          "name": "opportunity_notes_organization_id_organizations_id_fk",
+          "tableFrom": "opportunity_notes",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "opportunity_notes_recorded_by_profiles_id_fk": {
+          "name": "opportunity_notes_recorded_by_profiles_id_fk",
+          "tableFrom": "opportunity_notes",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "recorded_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "opportunity_notes_opportunity_fk": {
+          "name": "opportunity_notes_opportunity_fk",
+          "tableFrom": "opportunity_notes",
+          "tableTo": "opportunities",
+          "columnsFrom": [
+            "organization_id",
+            "opportunity_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "opportunity_notes_select_member": {
+          "name": "opportunity_notes_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"opportunity_notes\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        },
+        "opportunity_notes_insert_member": {
+          "name": "opportunity_notes_insert_member",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "authenticated"
+          ],
+          "withCheck": "\"opportunity_notes\".\"organization_id\" IN (SELECT private.user_org_ids()) AND \"opportunity_notes\".\"recorded_by\" = (select auth.uid()) AND \"opportunity_notes\".\"recorded_at\" = now()"
+        }
+      },
+      "checkConstraints": {
+        "opportunity_notes_body_check": {
+          "name": "opportunity_notes_body_check",
+          "value": "char_length(\"opportunity_notes\".\"body\") BETWEEN 1 AND 1000 AND \"opportunity_notes\".\"body\" = btrim(\"opportunity_notes\".\"body\", ' ' || chr(10)) AND translate(\"opportunity_notes\".\"body\", chr(10), '') !~ '[[:cntrl:]]'"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.messages": {
+      "name": "messages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opportunity_id": {
+          "name": "opportunity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "channel": {
+          "name": "channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "direction": {
+          "name": "direction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recorded_by": {
+          "name": "recorded_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_id": {
+          "name": "external_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "sent_at": {
+          "name": "sent_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "messages_organization_id_external_id_key": {
+          "name": "messages_organization_id_external_id_key",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "external_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"messages\".\"external_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_organization_id_opportunity_id_idx": {
+          "name": "messages_organization_id_opportunity_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "opportunity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_organization_id_contact_id_idx": {
+          "name": "messages_organization_id_contact_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "first"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "messages_organization_id_organizations_id_fk": {
+          "name": "messages_organization_id_organizations_id_fk",
+          "tableFrom": "messages",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "messages_recorded_by_profiles_id_fk": {
+          "name": "messages_recorded_by_profiles_id_fk",
+          "tableFrom": "messages",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "recorded_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "messages_contact_fk": {
+          "name": "messages_contact_fk",
+          "tableFrom": "messages",
+          "tableTo": "contacts",
+          "columnsFrom": [
+            "organization_id",
+            "contact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "messages_opportunity_fk": {
+          "name": "messages_opportunity_fk",
+          "tableFrom": "messages",
+          "tableTo": "opportunities",
+          "columnsFrom": [
+            "organization_id",
+            "opportunity_id",
+            "contact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id",
+            "contact_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "messages_conversation_fk": {
+          "name": "messages_conversation_fk",
+          "tableFrom": "messages",
+          "tableTo": "conversations",
+          "columnsFrom": [
+            "organization_id",
+            "conversation_id",
+            "contact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id",
+            "contact_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "messages_select_member": {
+          "name": "messages_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"messages\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        },
+        "messages_insert_member": {
+          "name": "messages_insert_member",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "authenticated"
+          ],
+          "withCheck": "\"messages\".\"organization_id\" IN (SELECT private.user_org_ids()) AND \"messages\".\"recorded_by\" = (select auth.uid()) AND \"messages\".\"created_at\" = now()"
+        }
+      },
+      "checkConstraints": {
+        "messages_channel_check": {
+          "name": "messages_channel_check",
+          "value": "\"messages\".\"channel\" IN ('whatsapp', 'email', 'manual')"
+        },
+        "messages_direction_check": {
+          "name": "messages_direction_check",
+          "value": "\"messages\".\"direction\" IN ('inbound', 'outbound')"
+        },
+        "messages_content_check": {
+          "name": "messages_content_check",
+          "value": "char_length(\"messages\".\"content\") BETWEEN 1 AND 4096 AND \"messages\".\"content\" = btrim(\"messages\".\"content\", ' ' || chr(10)) AND translate(\"messages\".\"content\", chr(10), '') !~ '[[:cntrl:]]'"
+        },
+        "messages_external_id_check": {
+          "name": "messages_external_id_check",
+          "value": "char_length(\"messages\".\"external_id\") BETWEEN 1 AND 256 AND \"messages\".\"external_id\" !~ '[[:space:][:cntrl:]]'"
+        },
+        "messages_source_check": {
+          "name": "messages_source_check",
+          "value": "(\"messages\".\"recorded_by\" IS NOT NULL AND \"messages\".\"conversation_id\" IS NULL AND \"messages\".\"external_id\" IS NULL AND \"messages\".\"sent_at\" IS NULL) OR (\"messages\".\"recorded_by\" IS NULL AND \"messages\".\"conversation_id\" IS NOT NULL AND \"messages\".\"external_id\" IS NOT NULL AND \"messages\".\"sent_at\" IS NOT NULL AND \"messages\".\"channel\" = 'whatsapp' AND \"messages\".\"direction\" = 'inbound')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.whatsapp_lines": {
+      "name": "whatsapp_lines",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone_number_id": {
+          "name": "phone_number_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "whatsapp_lines_organization_id_idx": {
+          "name": "whatsapp_lines_organization_id_idx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "whatsapp_lines_organization_id_organizations_id_fk": {
+          "name": "whatsapp_lines_organization_id_organizations_id_fk",
+          "tableFrom": "whatsapp_lines",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "whatsapp_lines_phone_number_id_key": {
+          "name": "whatsapp_lines_phone_number_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "phone_number_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "whatsapp_lines_phone_number_id_check": {
+          "name": "whatsapp_lines_phone_number_id_check",
+          "value": "\"whatsapp_lines\".\"phone_number_id\" ~ '^[0-9]{1,32}$'"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "public.conversations": {
+      "name": "conversations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "channel": {
+          "name": "channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "last_message_at": {
+          "name": "last_message_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_message_preview": {
+          "name": "last_message_preview",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "conversations_open_contact_channel_key": {
+          "name": "conversations_open_contact_channel_key",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "channel",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"conversations\".\"status\" = 'open'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "conversations_organization_id_organizations_id_fk": {
+          "name": "conversations_organization_id_organizations_id_fk",
+          "tableFrom": "conversations",
+          "tableTo": "organizations",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "conversations_contact_fk": {
+          "name": "conversations_contact_fk",
+          "tableFrom": "conversations",
+          "tableTo": "contacts",
+          "columnsFrom": [
+            "organization_id",
+            "contact_id"
+          ],
+          "columnsTo": [
+            "organization_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "conversations_organization_id_id_contact_id_key": {
+          "name": "conversations_organization_id_id_contact_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "organization_id",
+            "id",
+            "contact_id"
+          ]
+        }
+      },
+      "policies": {
+        "conversations_select_member": {
+          "name": "conversations_select_member",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "authenticated"
+          ],
+          "using": "\"conversations\".\"organization_id\" IN (SELECT private.user_org_ids())"
+        }
+      },
+      "checkConstraints": {
+        "conversations_channel_check": {
+          "name": "conversations_channel_check",
+          "value": "\"conversations\".\"channel\" IN ('whatsapp')"
+        },
+        "conversations_status_check": {
+          "name": "conversations_status_check",
+          "value": "\"conversations\".\"status\" IN ('open', 'closed')"
+        },
+        "conversations_last_message_check": {
+          "name": "conversations_last_message_check",
+          "value": "(\"conversations\".\"last_message_at\" IS NULL) = (\"conversations\".\"last_message_preview\" IS NULL)"
+        },
+        "conversations_last_message_preview_check": {
+          "name": "conversations_last_message_preview_check",
+          "value": "char_length(\"conversations\".\"last_message_preview\") BETWEEN 1 AND 160 AND \"conversations\".\"last_message_preview\" = btrim(\"conversations\".\"last_message_preview\") AND \"conversations\".\"last_message_preview\" !~ '[[:cntrl:]]'"
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {
+    "public.membership_role": {
+      "name": "membership_role",
+      "schema": "public",
+      "values": [
+        "admin",
+        "seller"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

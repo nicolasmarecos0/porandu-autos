@@ -134,6 +134,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
+      "0013_whatsapp_ingestion",
     ]);
   });
 
@@ -359,6 +360,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.messages",
         "schema.activity-touch",
         "schema.team-settings",
+        "schema.whatsapp-ingestion",
         "private.schema",
         "private.user_org_ids",
         "app_runtime.attributes",
@@ -768,6 +770,60 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta un mensaje sin CHECK de origen, líneas con una policy, la ingesta ejecutable por anon y la ingesta sin la regla de las claims (Hito 7, DEC-039)", async () => {
+    const signature =
+      "private.ingest_whatsapp_message(text, text, text, text, text, text, text, timestamp with time zone)";
+    await migrated.admin.unsafe(`
+      ALTER TABLE public.messages DROP CONSTRAINT messages_source_check;
+      CREATE POLICY probe ON public.whatsapp_lines FOR SELECT TO authenticated USING (true);
+      GRANT EXECUTE ON FUNCTION ${signature} TO anon;
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "rls.policies",
+        "schema.messages",
+        "schema.whatsapp-ingestion",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(`
+        ALTER TABLE public.messages ADD CONSTRAINT messages_source_check CHECK (
+          (recorded_by IS NOT NULL AND conversation_id IS NULL AND external_id IS NULL AND sent_at IS NULL)
+          OR (recorded_by IS NULL AND conversation_id IS NOT NULL AND external_id IS NOT NULL AND sent_at IS NOT NULL AND channel = 'whatsapp' AND direction = 'inbound')
+        );
+        DROP POLICY probe ON public.whatsapp_lines;
+        REVOKE EXECUTE ON FUNCTION ${signature} FROM anon;
+      `);
+    }
+
+    // Una versión de la función sin la regla que rechaza las claims.
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef(${signature}::regprocedure) AS definition
+    `;
+    await migrated.admin.unsafe(
+      current!.definition.replace(/ingestion_without_user/g, "no guard"),
+    );
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "schema.whatsapp-ingestion",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(current!.definition);
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -778,13 +834,13 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-036): 0011 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 4/5 (0000 a 0011) si
- * 0011 ya se aplicó; si no, en el Hito 2A (0000 a 0010), el Hito 2 (0000 a
- * 0009), H1.6 (0000 a 0008),
- * H1.4 (0000 a 0007) o todavía en H1.3C (0000 a 0006, DEC-028):
- * expected_migrations declara exactamente lo pendiente en cada caso. Esta
- * rama no aplica nada a staging.
+ * El próximo rollout real (DEC-039): 0013 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 6 (0000 a 0012) si
+ * 0012 ya se aplicó; si no, en el Hito 4/5 (0000 a 0011), el Hito 2A (0000
+ * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
+ * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
+ * exactamente lo pendiente en cada caso. Esta rama no aplica nada a
+ * staging.
  */
 describe.each([
   {
@@ -798,6 +854,7 @@ describe.each([
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
+      "0013_whatsapp_ingestion",
     ],
   },
   {
@@ -810,6 +867,7 @@ describe.each([
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
+      "0013_whatsapp_ingestion",
     ],
   },
   {
@@ -821,6 +879,7 @@ describe.each([
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
+      "0013_whatsapp_ingestion",
     ],
   },
   {
@@ -831,22 +890,33 @@ describe.each([
       "0010_opportunity_closure_metadata",
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
+      "0013_whatsapp_ingestion",
     ],
   },
   {
     stagingAt: "0010_opportunity_closure_metadata",
     label: "Hito 2A",
     applied: 11,
-    expected: ["0011_conversations_and_activity_trigger", "0012_team_settings"],
+    expected: [
+      "0011_conversations_and_activity_trigger",
+      "0012_team_settings",
+      "0013_whatsapp_ingestion",
+    ],
   },
   {
     stagingAt: "0011_conversations_and_activity_trigger",
     label: "Hito 4/5",
     applied: 12,
-    expected: ["0012_team_settings"],
+    expected: ["0012_team_settings", "0013_whatsapp_ingestion"],
+  },
+  {
+    stagingAt: "0012_team_settings",
+    label: "Hito 6",
+    applied: 13,
+    expected: ["0013_whatsapp_ingestion"],
   },
 ])(
-  "staging en $label: rollout hasta 0012",
+  "staging en $label: rollout hasta 0013",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 
