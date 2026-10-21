@@ -154,6 +154,19 @@ describe("matcher de proxy.ts", () => {
   ])("excluye assets y estáticos: %s", (url) => {
     expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false);
   });
+
+  // DEC-039 §1: servidor a servidor, sin sesión que refrescar.
+  it("excluye los webhooks", () => {
+    expect(
+      unstable_doesMiddlewareMatch({ config, url: "/api/webhooks/whatsapp" }),
+    ).toBe(false);
+  });
+
+  it("sigue corriendo en otras rutas de /api", () => {
+    expect(unstable_doesMiddlewareMatch({ config, url: "/api/other" })).toBe(
+      true,
+    );
+  });
 });
 
 describe("updateSession", () => {

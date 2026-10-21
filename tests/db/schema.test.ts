@@ -579,12 +579,21 @@ describe("messages (Hito 4)", () => {
       { name: "channel", type: "text", notNull: true, default: null },
       { name: "direction", type: "text", notNull: true, default: null },
       { name: "content", type: "text", notNull: true, default: null },
-      { name: "recorded_by", type: "uuid", notNull: true, default: null },
+      // Opcional desde 0013: un mensaje ingerido no tiene autor (DEC-039).
+      { name: "recorded_by", type: "uuid", notNull: false, default: null },
       {
         name: "created_at",
         type: "timestamp with time zone",
         notNull: true,
         default: "now()",
+      },
+      { name: "conversation_id", type: "uuid", notNull: false, default: null },
+      { name: "external_id", type: "text", notNull: false, default: null },
+      {
+        name: "sent_at",
+        type: "timestamp with time zone",
+        notNull: false,
+        default: null,
       },
     ]);
   });
@@ -606,6 +615,14 @@ describe("messages (Hito 4)", () => {
         "CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text])))",
       messages_content_check:
         "CHECK ((((char_length(content) >= 1) AND (char_length(content) <= 4096)) AND (content = btrim(content, (' '::text || chr(10)))) AND (translate(content, chr(10), ''::text) !~ '[[:cntrl:]]'::text)))",
+      // Hito 7 (DEC-039 §10): la conversación del mismo contacto, el id del
+      // proveedor y el origen (miembro o ingesta).
+      messages_conversation_fk:
+        "FOREIGN KEY (organization_id, conversation_id, contact_id) REFERENCES conversations(organization_id, id, contact_id) ON DELETE RESTRICT",
+      messages_external_id_check:
+        "CHECK ((((char_length(external_id) >= 1) AND (char_length(external_id) <= 256)) AND (external_id !~ '[[:space:][:cntrl:]]'::text)))",
+      messages_source_check:
+        "CHECK ((((recorded_by IS NOT NULL) AND (conversation_id IS NULL) AND (external_id IS NULL) AND (sent_at IS NULL)) OR ((recorded_by IS NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'inbound'::text))))",
     });
   });
 
@@ -617,6 +634,116 @@ describe("messages (Hito 4)", () => {
         "CREATE INDEX messages_organization_id_opportunity_id_idx ON public.messages USING btree (organization_id, opportunity_id, created_at DESC)",
       messages_organization_id_contact_id_idx:
         "CREATE INDEX messages_organization_id_contact_id_idx ON public.messages USING btree (organization_id, contact_id, created_at DESC)",
+      // Idempotencia de la ingesta (DEC-039 §8).
+      messages_organization_id_external_id_key:
+        "CREATE UNIQUE INDEX messages_organization_id_external_id_key ON public.messages USING btree (organization_id, external_id) WHERE (external_id IS NOT NULL)",
+    });
+  });
+});
+
+describe("conversations y whatsapp_lines (Hito 7)", () => {
+  it("conversations: columnas, una abierta por contacto y canal, el último mensaje en una línea", async () => {
+    expect(await columns(db.admin, "conversations")).toEqual([
+      {
+        name: "id",
+        type: "uuid",
+        notNull: true,
+        default: "gen_random_uuid()",
+      },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "contact_id", type: "uuid", notNull: true, default: null },
+      { name: "channel", type: "text", notNull: true, default: null },
+      { name: "status", type: "text", notNull: true, default: "'open'::text" },
+      {
+        name: "last_message_at",
+        type: "timestamp with time zone",
+        notNull: false,
+        default: null,
+      },
+      {
+        name: "last_message_preview",
+        type: "text",
+        notNull: false,
+        default: null,
+      },
+      {
+        name: "created_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+      {
+        name: "updated_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+    ]);
+    expect(await constraints(db.admin, "conversations")).toEqual({
+      conversations_pkey: "PRIMARY KEY (id)",
+      conversations_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      conversations_contact_fk:
+        "FOREIGN KEY (organization_id, contact_id) REFERENCES contacts(organization_id, id) ON DELETE RESTRICT",
+      conversations_organization_id_id_contact_id_key:
+        "UNIQUE (organization_id, id, contact_id)",
+      conversations_channel_check: "CHECK ((channel = 'whatsapp'::text))",
+      conversations_status_check:
+        "CHECK ((status = ANY (ARRAY['open'::text, 'closed'::text])))",
+      conversations_last_message_check:
+        "CHECK (((last_message_at IS NULL) = (last_message_preview IS NULL)))",
+      conversations_last_message_preview_check:
+        "CHECK ((((char_length(last_message_preview) >= 1) AND (char_length(last_message_preview) <= 160)) AND (last_message_preview = btrim(last_message_preview)) AND (last_message_preview !~ '[[:cntrl:]]'::text)))",
+    });
+    expect(await indexes(db.admin, "conversations")).toEqual({
+      conversations_pkey:
+        "CREATE UNIQUE INDEX conversations_pkey ON public.conversations USING btree (id)",
+      conversations_organization_id_id_contact_id_key:
+        "CREATE UNIQUE INDEX conversations_organization_id_id_contact_id_key ON public.conversations USING btree (organization_id, id, contact_id)",
+      conversations_open_contact_channel_key:
+        "CREATE UNIQUE INDEX conversations_open_contact_channel_key ON public.conversations USING btree (organization_id, contact_id, channel) WHERE (status = 'open'::text)",
+    });
+  });
+
+  it("whatsapp_lines: la línea receptora, única global y de una organización", async () => {
+    expect(await columns(db.admin, "whatsapp_lines")).toEqual([
+      {
+        name: "id",
+        type: "uuid",
+        notNull: true,
+        default: "gen_random_uuid()",
+      },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "phone_number_id", type: "text", notNull: true, default: null },
+      { name: "active", type: "boolean", notNull: true, default: "true" },
+      {
+        name: "created_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+      {
+        name: "updated_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+    ]);
+    expect(await constraints(db.admin, "whatsapp_lines")).toEqual({
+      whatsapp_lines_pkey: "PRIMARY KEY (id)",
+      whatsapp_lines_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      whatsapp_lines_phone_number_id_key: "UNIQUE (phone_number_id)",
+      whatsapp_lines_phone_number_id_check:
+        "CHECK ((phone_number_id ~ '^[0-9]{1,32}$'::text))",
+    });
+    expect(await indexes(db.admin, "whatsapp_lines")).toEqual({
+      whatsapp_lines_pkey:
+        "CREATE UNIQUE INDEX whatsapp_lines_pkey ON public.whatsapp_lines USING btree (id)",
+      whatsapp_lines_phone_number_id_key:
+        "CREATE UNIQUE INDEX whatsapp_lines_phone_number_id_key ON public.whatsapp_lines USING btree (phone_number_id)",
+      whatsapp_lines_organization_id_idx:
+        "CREATE INDEX whatsapp_lines_organization_id_idx ON public.whatsapp_lines USING btree (organization_id)",
     });
   });
 });
@@ -996,12 +1123,14 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
     );
     expect(tenantScoped.map((t) => t.table)).toEqual([
       "contacts",
+      "conversations",
       "memberships",
       "messages",
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",
       "vehicles",
+      "whatsapp_lines",
     ]);
     for (const table of tenantScoped) {
       expect(table).toEqual({

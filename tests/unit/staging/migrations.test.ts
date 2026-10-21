@@ -44,6 +44,7 @@ describe("readRepoMigrations", () => {
       [10, "0010_opportunity_closure_metadata"],
       [11, "0011_conversations_and_activity_trigger"],
       [12, "0012_team_settings"],
+      [13, "0013_whatsapp_ingestion"],
     ]);
   });
 
@@ -72,37 +73,43 @@ describe("compareHistory", () => {
       applied: [REPO[0]],
       pending: REPO.slice(1),
     });
-    // Staging con H1.4/H1.5: 0008 a 0012 pendientes.
+    // Staging con H1.4/H1.5: 0008 a 0013 pendientes.
     expect(compareHistory(REPO, applied(8))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 8),
-      pending: [REPO[8], REPO[9], REPO[10], REPO[11], REPO[12]],
+      pending: [REPO[8], REPO[9], REPO[10], REPO[11], REPO[12], REPO[13]],
     });
-    // Staging con H1.6: 0009 a 0012 pendientes.
+    // Staging con H1.6: 0009 a 0013 pendientes.
     expect(compareHistory(REPO, applied(9))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 9),
-      pending: [REPO[9], REPO[10], REPO[11], REPO[12]],
+      pending: [REPO[9], REPO[10], REPO[11], REPO[12], REPO[13]],
     });
-    // Staging con el Hito 2: 0010 a 0012 pendientes.
+    // Staging con el Hito 2: 0010 a 0013 pendientes.
     expect(compareHistory(REPO, applied(10))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 10),
-      pending: [REPO[10], REPO[11], REPO[12]],
+      pending: [REPO[10], REPO[11], REPO[12], REPO[13]],
     });
-    // Staging con el Hito 2A: 0011 y 0012 pendientes.
+    // Staging con el Hito 2A: 0011 a 0013 pendientes.
     expect(compareHistory(REPO, applied(11))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 11),
-      pending: [REPO[11], REPO[12]],
+      pending: [REPO[11], REPO[12], REPO[13]],
     });
-    // Staging con el Hito 4/5: solo 0012 pendiente (DEC-038).
+    // Staging con el Hito 4/5: 0012 y 0013 pendientes.
     expect(compareHistory(REPO, applied(12))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 12),
-      pending: [REPO[12]],
+      pending: [REPO[12], REPO[13]],
     });
-    expect(compareHistory(REPO, [...applied(13)].reverse())).toMatchObject({
+    // Staging con el Hito 6: solo 0013 pendiente (DEC-039).
+    expect(compareHistory(REPO, applied(13))).toEqual({
+      kind: "consistent",
+      applied: REPO.slice(0, 13),
+      pending: [REPO[13]],
+    });
+    expect(compareHistory(REPO, [...applied(14)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -122,8 +129,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(13), { id: 14, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 13",
+      [...applied(14), { id: 15, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 14",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -162,7 +169,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0012: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0013: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -308,6 +315,18 @@ describe("expectedFootprint", () => {
         "organizations.organizations_update_admin",
       ].sort(),
     };
-    expect(expectedFootprint(REPO)).toEqual(hito6);
+    expect(expectedFootprint(REPO.slice(0, 13))).toEqual(hito6);
+    // 0013 suma las conversaciones, con su policy de lectura, y las líneas
+    // de WhatsApp, sin policies (provisioning, DEC-039). La función de
+    // ingesta es SQL custom: no figura.
+    const hito7 = {
+      ...hito6,
+      tables: [...hito6.tables, "conversations", "whatsapp_lines"].sort(),
+      policies: [
+        ...hito6.policies,
+        "conversations.conversations_select_member",
+      ].sort(),
+    };
+    expect(expectedFootprint(REPO)).toEqual(hito7);
   });
 });

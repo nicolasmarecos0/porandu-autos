@@ -52,6 +52,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-036 | Módulo de Conversaciones y Actualización Automática de Actividad | Aceptada en principio | 2026-10-13 |
 | DEC-037 | Dashboard Directivo y Agregación de Métricas | Aceptada en principio | 2026-10-14 |
 | DEC-038 | Gestión de Equipo, Invitaciones y Configuración de Concesionario | Aceptada en principio | 2026-10-15 |
+| DEC-039 | Procesamiento de Webhooks de WhatsApp e Ingesta de Mensajes | Aceptada en principio | 2026-10-21 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -905,6 +906,93 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - `0012_team_settings` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0012_team_settings` si staging ya tiene `0011`, o con las anteriores que falten delante, en orden. La verificación suma `schema.team-settings` y amplía `rls.policies`, `privileges.authenticated` y `privileges.authenticated-update-columns`.
   - Las funciones de equipo leen `auth.users.email` como `postgres`. El harness lo modela (`email` y SELECT para `postgres` en `supabase-shim.sql`), pero ni la migración ni la verificación de staging lo ejercitan: PostgreSQL revisa ese privilegio al ejecutar, no al crear la función. Lo ejercita el acceptance Auth → Tenant (`auth-tenant-acceptance`), con usuarios creados por la Auth Admin API: lista el equipo con `getTeam()` (`private.organization_members()`) e invita por email con `inviteMember()` (`private.find_member_candidate()`), y comprueba que `authenticated` sigue sin leer `auth.users`. Si Supabase no lo permitiera, se consulta antes de cambiar el mecanismo.
   - El provisioning con el rol dueño sigue pudiendo revocar o degradar a cualquier miembro (A-09). Un concesionario sin admin activo solo se recupera por provisioning.
+
+## DEC-039 — Procesamiento de Webhooks de WhatsApp e Ingesta de Mensajes
+- **Estado:** Aceptada en principio · 2026-10-21. Formaliza el pedido del fundador "Hito 7: Ingesta Activa de WhatsApp (Webhooks)". Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** hasta el Hito 4 los mensajes solo los registra un miembro (DEC-036 §4 y §6), y los webhooks, la Cloud API y el BSP quedaron para H2b, después de un ADR-002 de identidad de sistema que no satisfaga las policies de miembro (DEC-029 §9, DEC-036 §12 y Consecuencias). El fundador pide recibir los mensajes entrantes de WhatsApp por webhook y registrarlos solos. El pedido nombra tablas que el schema no tiene con esos nombres:
+  - `customers` es `contacts` (DEC-023, DEC-024): la identidad del cliente por teléfono dentro de la organización. No se crea otra tabla.
+  - `conversations` no existe. Se crea (§6).
+  - `tenant_id` es `organization_id`, como en DEC-036 §4.
+  - El pedido admite el Service Role de Supabase o funciones `SECURITY DEFINER`. El service role sigue sin aprobarse para la aplicación (CLAUDE.md §3, ADR-001 §8, DEC-022, DEC-038 §3): se usa una función `SECURITY DEFINER` (§4).
+- **Decisión:**
+  1. **Endpoint.** `POST /api/webhooks/whatsapp` (Route Handler de Next, runtime Node). Recibe los eventos de la WhatsApp Cloud API (`object = whatsapp_business_account`). Solo POST.
+     - *Propuesta de implementación:* el formato es el de la Cloud API de Meta, la fuente prevista en DEC-029 §9. El GET de verificación de la suscripción (`hub.challenge`) no forma parte del pedido y queda fuera: hace falta antes de suscribir el endpoint en Meta.
+     - `proxy.ts` no corre sobre `/api/webhooks/*`: no hay sesión que refrescar ni redirect que hacer.
+  2. **Autenticación (seguridad básica).** El header `X-Hub-Signature-256: sha256=<hex>` tiene que ser el HMAC-SHA256 del cuerpo crudo con el secreto compartido `WHATSAPP_APP_SECRET`, comparado en tiempo constante.
+     - *Propuesta de implementación:* el pedido dice "token o secret en los headers"; se eligió la firma HMAC, porque el secreto no viaja, el cuerpo no se puede alterar y es lo que envía Meta.
+     - El secreto es server-only y se lee con `lib/env.server.ts`. Tiene que tener al menos 32 caracteres. Nunca se registra.
+     - Sin el secreto configurado, el endpoint falla cerrado (`503`) sin leer el cuerpo. Una firma ausente o inválida es `401` y no se parsea nada. Un cuerpo de más de 3 MiB es `413`.
+  3. **Validación (Zod) en `domains/webhooks/`.** Puro y separado del framework: no conoce Next, la base ni `lib/`.
+     - `whatsapp.ts` valida el sobre del payload (`entry[].changes[].value`, `metadata.phone_number_id`, `contacts[]` y `messages[]`) y cada mensaje de texto: `id` (el id del proveedor), `from` (número de origen, solo dígitos), `timestamp` (segundos Unix) y `text.body`.
+     - Es estricto en los campos que se usan (forma, largo y rangos) y tolerante a los campos que el proveedor agregue: un campo nuevo de Meta no puede hacer perder mensajes. El contrato propio, `InboundMessage` (`inbound-message.ts`), es estricto y no conoce WhatsApp.
+     - Un sobre inválido o un cuerpo que no es JSON es `400` y no se escribe nada. Un evento que no es un mensaje de texto entrante (estados de entrega, reacciones, media, etc.) se ignora con `200`, para que el proveedor no lo reintente. Un mensaje de texto con un campo inválido (texto vacío o de más de 4096 caracteres después de normalizar) se descarta, sin escribir, y el resto del lote sigue.
+     - `domains/webhooks` es la capa de Ingestion de DEC-029 §2: el único módulo que conoce el payload de WhatsApp. Domain Truth (`domains/conversations`, `domains/opportunities`) sigue sin conocer proveedores.
+  4. **Identidad de sistema (resuelve, para la ingesta entrante, el ADR-002 de DEC-029 §9).** El fundador pide registrar la decisión como DEC-039; si prefiere el documento ADR-002 aparte, se extrae sin cambiar la decisión.
+     - La identidad de la ingesta es **`authenticated` sin claims**. Sin usuario no hay membership: `private.user_org_ids()` no devuelve nada, RLS no le deja ver ni escribir ninguna fila y no satisface ninguna policy de miembro (DEC-029 §9). Solo puede escribir por la función de ingesta (§7).
+     - La función rechaza con `42501` cualquier llamada con claims (`request.jwt.claims` o `request.jwt.claim.sub`): un miembro, que siempre llega por `withTenant()` con sus claims verificados, no puede ingerir en nombre de una línea. La regla está en la base, no solo en la aplicación.
+     - Boundary `withIngestion()` en `db/tenant.ts`: una transacción por llamada, cuyo primer statement vacía los claims (`set_config('request.jwt.claims', '', true)`) y asume `authenticated` (`set_config('role', 'authenticated', true)`). Mismas reglas que `withTenant()` (ADR-001 §3.2). ESLint solo deja importarlo a `db/queries/ingest-whatsapp-message.ts`, y ese módulo solo a `lib/whatsapp/webhook.ts`.
+     - Sin roles, memberships ni credenciales nuevas: ADR-001 §2 no cambia (`app_runtime` sigue siendo miembro solo de `authenticated`). La Data API sigue deshabilitada (ADR-001 §3.3); aun habilitada, PostgREST siempre fija los claims de un JWT verificado para `authenticated`, así que no llega a la función sin ellos.
+     - *Descartados:* un rol de sistema `NOLOGIN` (`app_ingest`) que `app_runtime` asuma exige que `app_runtime` sea miembro de él, y la postcondición de `0001` (aplicada e inmutable) exige que sea miembro solo de `authenticated`. Como los roles son del cluster, toda base que vuelva a migrar desde cero junto a una con `0013` fallaría (el harness de PostgreSQL 17 y una base local recreada). Un rol con login propio requiere una credencial y un provisioning nuevos, fuera del pedido.
+  5. **Tenant por la línea receptora.** Tabla nueva `whatsapp_lines`: `organization_id` y el `phone_number_id` de la línea (único global, porque una línea pertenece a una sola organización), con `active`.
+     - El `metadata.phone_number_id` del payload es lo único que determina la organización. Ningún dato del payload elige `organization_id`.
+     - Una línea desconocida o inactiva es `unknown_line`: no se escribe nada y responde `200`.
+     - *Propuesta de implementación:* las líneas las da de alta el provisioning con el rol dueño, como las cuentas (DEC-038 §3). Sin UI, sin policies ni grants para `authenticated` (default deny, con RLS habilitado).
+  6. **Conversaciones (`conversations`).** Una por contacto y canal mientras está abierta: `organization_id`, `contact_id` (FK compuesta a `contacts`), `channel` (`whatsapp`, `text` + CHECK ampliable), `status` (`open | closed`), `last_message_at` y `last_message_preview` (juntos o ninguno, CHECK), `created_at` y `updated_at`.
+     - "Conversación activa" es `status = 'open'`. La unique parcial `(organization_id, contact_id, channel) WHERE status = 'open'` garantiza una sola por contacto.
+     - `last_message_preview` es el texto del mensaje en una sola línea, de 1 a 160 caracteres, con "…" si se cortó. Lo arma el dominio (`messagePreview()`).
+     - Lectura para los miembros activos (SELECT, como los mensajes). Sin INSERT, UPDATE ni DELETE para `authenticated`: solo la escribe la función de ingesta.
+     - *Propuesta de implementación:* ningún flujo cierra una conversación en este bloque. `closed` existe para que "activa" tenga sentido; cerrar llega con la superficie `/conversations`.
+  7. **Función de ingesta.** `private.ingest_whatsapp_message(línea, id del proveedor, teléfono, teléfono E.164, nombre del contacto, texto, preview, enviado)` es `SECURITY DEFINER` (owner `postgres`), con `search_path` vacío y EXECUTE solo para `authenticated`. En una sola transacción:
+     1. con claims, `42501` sin leer nada (§4); sin todos los argumentos, `22004`;
+     2. la organización de la línea activa; si no hay, `unknown_line`;
+     3. si el mensaje ya se registró en esa organización (mismo id del proveedor), `duplicate`;
+     4. el contacto de esa organización con ese `phone_normalized`, o uno nuevo (`ON CONFLICT DO NOTHING` y relectura, DEC-024 §3). Un contacto existente no cambia: ni nombre ni ciudad;
+     5. la conversación abierta del contacto, o una nueva (`ON CONFLICT DO NOTHING` y relectura);
+     6. la oportunidad abierta del contacto (§9);
+     7. el INSERT del mensaje (`inbound`, `whatsapp`, sin autor). Un choque de idempotencia es `duplicate`;
+     8. `last_message_at` y `last_message_preview` de la conversación, solo si el mensaje no es más viejo que el último;
+     9. el trigger de actividad (DEC-036 §1), si el mensaje tiene oportunidad.
+     - Devuelve el resultado (`recorded`, `duplicate` o `unknown_line`) y los ids. Todo `organization_id` que escribe sale de la línea, y las FKs compuestas impiden cruzar organizaciones.
+  8. **Concurrencia e idempotencia.** La unicidad de la base es la autoridad:
+     - contacto: `(organization_id, phone_normalized)` (DEC-024 §1);
+     - conversación abierta: `(organization_id, contact_id, channel) WHERE status = 'open'`;
+     - mensaje: `(organization_id, external_id) WHERE external_id IS NOT NULL`.
+     - Dos mensajes del mismo número nuevo al mismo tiempo: el segundo espera la confirmación del primero en el índice único y reutiliza su contacto y su conversación. Una entrega repetida (reintentos del proveedor, también simultáneos) deja una sola fila.
+     - El último mensaje de la conversación se actualiza con un UPDATE condicional bajo el bloqueo de la fila: un mensaje viejo que llega tarde no pisa el preview.
+     - Cada mensaje del lote va en su propia transacción. Si uno falla, el endpoint responde `500`, el proveedor reintenta y los ya registrados son `duplicate`.
+  9. **Muro del Hito 4.** *Propuesta de implementación:* el muro de actividad es por oportunidad (DEC-036 §11) y no lee `conversations`. Para que el chat "suba", el mensaje se asocia a la oportunidad abierta (`new`, `qualifying` o `negotiating`) del contacto **cuando hay exactamente una**: aparece en su muro y el trigger de DEC-036 mueve `last_activity_at`, así que la oportunidad vuelve a Activa y sube en la cola.
+     - Sin oportunidad abierta, o con varias, el mensaje queda solo en la conversación: no se adivina el negocio ni se crea una oportunidad (`createOpportunity()` sigue siendo su única puerta, DEC-024 §4).
+     - En el muro, un mensaje ingerido muestra "WhatsApp (automático)" como autor.
+     - `last_message_at` y `last_message_preview` quedan listos para la bandeja de `/conversations`, que sigue como placeholder (DEC-001).
+  10. **Mensajes (amplía DEC-036 §4 y §5).**
+      - `recorded_by` pasa a ser opcional: un mensaje ingerido no tiene autor. Columnas nuevas, opcionales: `conversation_id` (FK compuesta `(organization_id, conversation_id, contact_id)` → `conversations`, RESTRICT), `external_id` (el id del proveedor, de 1 a 256 caracteres sin espacios ni control) y `sent_at` (el `timestamp` del proveedor).
+      - CHECK `messages_source_check`: o lo registró un miembro (con autor, sin conversación, id ni `sent_at`), o es un WhatsApp entrante ingerido (sin autor, con conversación, id y `sent_at`).
+      - La policy de INSERT de miembros no cambia: exige `recorded_by = auth.uid()`, así que un miembro no puede escribir un mensaje con forma de ingerido.
+      - `created_at` sigue siendo el reloj de la base (el momento en que Porandú lo registró) y ordena el muro. `sent_at` es cuándo lo envió el cliente, y ordena la conversación.
+      - Siguen append-only: sin UPDATE ni DELETE para ningún rol de la app, tampoco `service_role` (C-11).
+  11. **Contacto nuevo.** `phone` es el número tal como llega (`+` y los dígitos de `from`), y `phone_normalized`, su E.164 con `libphonenumber-js` en el servidor (DEC-024 §2). Un número que no valida es `invalid_sender` y no se escribe.
+      - *Propuesta de implementación:* el nombre es el nombre de perfil de WhatsApp del remitente (`contacts[].profile.name`), normalizado (NFC, sin caracteres de control, espacios colapsados) y acotado a 120 caracteres. Si falta, "Contacto de WhatsApp".
+  12. **Respuestas y logs.** `200` con los conteos por resultado; `400`, `401`, `413`, `503` y `500` como en §2, §3 y §8. Los logs registran solo los conteos y, ante un error, `{ name, code, constraint_name }`: nunca teléfonos, nombres, textos ni ids.
+  13. **Migración `0013_whatsapp_ingestion`.**
+      - `whatsapp_lines` y `conversations` con FKs, CHECKs, índices, RLS, policies y grants. `messages` recibe sus columnas, la FK compuesta, la unique de idempotencia y `messages_source_check`, y `recorded_by` deja de ser obligatorio. `conversations` recibe la `UNIQUE (organization_id, id, contact_id)` destino de esa FK.
+      - La función de ingesta con su grant (EXECUTE solo para `authenticated`).
+      - Postcondiciones: las de 0012, con `conversations` y `whatsapp_lines` entre las tablas sin altas ni ediciones de `authenticated`; `app_runtime` sigue siendo miembro solo de `authenticated`; la función `SECURITY DEFINER` de `postgres`, con `search_path` vacío, EXECUTE solo para `authenticated` y la regla que rechaza las llamadas con claims; `whatsapp_lines` sin policies ni privilegios de `authenticated`; el CHECK y las FKs de los mensajes y las uniques de idempotencia y de conversación abierta, validados.
+      - No toca ninguna fila existente: los mensajes registrados por miembros cumplen el CHECK nuevo tal como están.
+  14. **Fuera de este bloque:** el GET de verificación de la suscripción; enviar mensajes, plantillas y estados de entrega o lectura; media, adjuntos, reacciones y mensajes interactivos; crear oportunidades automáticamente; cerrar conversaciones; la bandeja `/conversations`; registrar líneas desde la UI; varias líneas por organización con conversaciones separadas; colas o procesamiento asíncrono; límites de tasa; la extracción asistida (H2a), Intent desde conversaciones, IA y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-029 §9 y DEC-036 §12 y Consecuencias: la ingesta entrante de WhatsApp entra por decisión del fundador, con la identidad de sistema de §4 en lugar de un ADR-002 previo. El envío y el resto de H2b siguen fuera.
+  - ADR-001 §2 y §4: sin cambios de roles. `withTenant()` sigue siendo la única puerta de los datos tenant-scoped de un usuario; `withIngestion()` es la del sistema, sin usuario, y solo escribe por la función de ingesta. Las reglas de §3 se mantienen: sin `SET` de sesión, sin privilegios directos de `app_runtime`, sin `SECURITY DEFINER` en `public`.
+  - CLAUDE.md §3: el service role y la secret key siguen sin aprobarse. `WHATSAPP_APP_SECRET` es un secreto server-only nuevo, solo para verificar la firma.
+  - DEC-036 §4, §5 y §6: los mensajes admiten una segunda fuente (la ingesta), sin autor. `addMessage()` sigue siendo la única puerta de los miembros.
+  - DEC-024 §4: los contactos también nacen de la ingesta. Las oportunidades, no.
+  - DEC-029 §2 y DEC-016: `domains/webhooks` es la capa de Ingestion, pura; Domain Truth no conoce proveedores.
+  - B1 §4 (WhatsApp: webhooks diferidos) y DEC-001 (Conversations sigue como placeholder).
+  - Prevalece según DEC-002.
+- **Consecuencias:**
+  - `0013_whatsapp_ingestion` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0013_whatsapp_ingestion` si staging ya tiene `0012`, o con las anteriores que falten delante, en orden. La verificación suma `schema.whatsapp-ingestion` y amplía `schema.tables`, `rls.policies`, `schema.messages` y `privileges.authenticated`.
+  - Operación: `WHATSAPP_APP_SECRET` se configura en Vercel como variable server-only, y cada línea se registra en `whatsapp_lines` por provisioning. Suscribir el endpoint en Meta requiere antes el GET de verificación.
+  - El runtime acceptance de staging todavía no ejercita la ingesta. Se suma cuando haya una línea de prueba.
+  - La limitación C-14 (PII inmutable, sin redacción) también aplica a los mensajes ingeridos y a los nombres de perfil.
 
 ---
 

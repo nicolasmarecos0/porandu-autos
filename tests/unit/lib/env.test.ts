@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { EnvValidationError, parsePublicEnv, parseServerEnv } from "@/lib/env";
+import {
+  EnvValidationError,
+  parsePublicEnv,
+  parseServerEnv,
+  parseWhatsAppEnv,
+} from "@/lib/env";
 
 /*
  * Valores ficticios: ninguno corresponde a un entorno real.
@@ -109,5 +114,36 @@ describe("parseServerEnv", () => {
         parseServerEnv({ RUNTIME_DATABASE_URL: "https://example.com" }),
       ),
     ).toEqual(["RUNTIME_DATABASE_URL must be a postgres:// URL."]);
+  });
+});
+
+describe("parseWhatsAppEnv (DEC-039 §2)", () => {
+  const SECRET = "0123456789abcdef0123456789abcdef";
+
+  it("acepta un secreto de al menos 32 caracteres", () => {
+    expect(parseWhatsAppEnv({ WHATSAPP_APP_SECRET: SECRET })).toEqual({
+      appSecret: SECRET,
+    });
+  });
+
+  it("exige WHATSAPP_APP_SECRET y no toma una variable pública", () => {
+    expect(issuesOf(() => parseWhatsAppEnv({}))).toEqual([
+      "WHATSAPP_APP_SECRET is required.",
+    ]);
+    expect(
+      issuesOf(() =>
+        parseWhatsAppEnv({ NEXT_PUBLIC_WHATSAPP_APP_SECRET: SECRET }),
+      ),
+    ).toEqual(["WHATSAPP_APP_SECRET is required."]);
+  });
+
+  it("rechaza un secreto corto sin exponerlo", () => {
+    const issues = issuesOf(() =>
+      parseWhatsAppEnv({ WHATSAPP_APP_SECRET: "short-secret-value" }),
+    );
+    expect(issues).toEqual([
+      "WHATSAPP_APP_SECRET must be at least 32 characters long.",
+    ]);
+    expect(issues.join()).not.toContain("short-secret-value");
   });
 });

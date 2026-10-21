@@ -156,6 +156,10 @@ export type MessageRow = Readonly<{
   channel: MessageChannel;
   direction: MessageDirection;
   content: string;
-  recordedBy: string;
+  /**
+   * El miembro que lo registró, o null si lo ingirió el webhook de
+   * WhatsApp (Hito 7, DEC-039 §10).
+   */
+  recordedBy: string | null;
   createdAt: Date;
 }>;

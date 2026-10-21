@@ -15,9 +15,11 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Todo menos los assets: _next/static, _next/image y archivos de imagen o
-     * ícono (favicon.ico, el icon.svg de app/).
+     * Todo menos los assets (_next/static, _next/image y archivos de imagen
+     * o ícono: favicon.ico, el icon.svg de app/) y los webhooks
+     * (/api/webhooks/*, DEC-039 §1): servidor a servidor, sin sesión que
+     * refrescar.
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/webhooks/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

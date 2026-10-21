@@ -7,12 +7,14 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { authenticatedRole, authUid } from "drizzle-orm/supabase";
 
 import { oneOf } from "./checks";
 import { contacts } from "./contacts";
+import { conversations } from "./conversations";
 import { opportunities } from "./opportunities";
 import { organizations } from "./organizations";
 import { userOrgIds } from "./policies";
@@ -34,6 +36,12 @@ export const messageDirections = ["inbound", "outbound"] as const;
  */
 export const messageMaxLength = 4096;
 
+/**
+ * Largo máximo del id del mensaje en el proveedor (Hito 7, DEC-039 §10).
+ * Espeja EXTERNAL_ID_MAX_LENGTH de domains/webhooks/inbound-message.ts.
+ */
+export const messageExternalIdMaxLength = 256;
+
 /*
  * Mensajes de una conversación con el cliente (Hito 4, DEC-036 §4): una fila
  * inmutable por mensaje recibido o enviado, tal como lo registra un miembro.
@@ -54,9 +62,20 @@ export const messageMaxLength = 4096;
  *   de línea en los bordes y sin caracteres de control salvo el salto de
  *   línea.
  * - `recorded_by`: el miembro que lo registró. FK a `profiles` con RESTRICT
- *   (como C-9 de la demanda).
+ *   (como C-9 de la demanda). Vacío en un mensaje ingerido (Hito 7).
  * - `created_at`: reloj de la base (`defaultNow()`); la policy de INSERT
- *   exige `created_at = now()`.
+ *   exige `created_at = now()`. Ordena el muro.
+ * - Ingesta de WhatsApp (Hito 7, DEC-039 §10): `conversation_id` (FK
+ *   compuesta (organization_id, conversation_id, contact_id) →
+ *   conversations: de la misma organización y del mismo contacto),
+ *   `external_id` (el id del mensaje en el proveedor, único por
+ *   organización: la autoridad de la idempotencia ante reintentos) y
+ *   `sent_at` (cuándo lo envió el cliente, según el proveedor).
+ * - `messages_source_check`: o lo registró un miembro (con autor, sin
+ *   conversación, id ni `sent_at`), o es un WhatsApp entrante ingerido (sin
+ *   autor, con conversación, id y `sent_at`). La policy de INSERT exige
+ *   `recorded_by = auth.uid()`, así que un miembro solo escribe la primera
+ *   forma; la segunda solo la escribe `private.ingest_whatsapp_message()`.
  * - Índices (organization_id, opportunity_id, created_at DESC) para el muro
  *   de una oportunidad y (organization_id, contact_id, created_at DESC) para
  *   la FK y la conversación de un contacto.
@@ -67,7 +86,8 @@ export const messageMaxLength = 4096;
  * modela triggers).
  *
  * Lectura: los mensajes de las organizaciones con membership activa. Alta:
- * un miembro activo, como autor de la request y con el reloj de la base. Sin
+ * un miembro activo, como autor de la request y con el reloj de la base, o
+ * la función de ingesta (SECURITY DEFINER, 0013), como dueña. Sin
  * policies ni grants de UPDATE o DELETE: append-only (también para
  * service_role, como C-11; el owner `postgres` es la limitación documentada).
  */
@@ -83,12 +103,15 @@ export const messages = pgTable(
     channel: text("channel", { enum: messageChannels }).notNull(),
     direction: text("direction", { enum: messageDirections }).notNull(),
     content: text("content").notNull(),
-    recordedBy: uuid("recorded_by")
-      .notNull()
-      .references(() => profiles.id, { onDelete: "restrict" }),
+    recordedBy: uuid("recorded_by").references(() => profiles.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    conversationId: uuid("conversation_id"),
+    externalId: text("external_id"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
   },
   (t) => [
     foreignKey({
@@ -106,6 +129,20 @@ export const messages = pgTable(
         opportunities.contactId,
       ],
     }).onDelete("restrict"),
+    // La conversación es de la misma organización y del mismo contacto.
+    foreignKey({
+      name: "messages_conversation_fk",
+      columns: [t.organizationId, t.conversationId, t.contactId],
+      foreignColumns: [
+        conversations.organizationId,
+        conversations.id,
+        conversations.contactId,
+      ],
+    }).onDelete("restrict"),
+    // Idempotencia de la ingesta: un mensaje del proveedor, una sola fila.
+    uniqueIndex("messages_organization_id_external_id_key")
+      .on(t.organizationId, t.externalId)
+      .where(sql`${t.externalId} IS NOT NULL`),
     index("messages_organization_id_opportunity_id_idx").on(
       t.organizationId,
       t.opportunityId,
@@ -123,6 +160,14 @@ export const messages = pgTable(
     check(
       "messages_content_check",
       sql`char_length(${t.content}) BETWEEN 1 AND ${sql.raw(String(messageMaxLength))} AND ${t.content} = btrim(${t.content}, ' ' || chr(10)) AND translate(${t.content}, chr(10), '') !~ '[[:cntrl:]]'`,
+    ),
+    check(
+      "messages_external_id_check",
+      sql`char_length(${t.externalId}) BETWEEN 1 AND ${sql.raw(String(messageExternalIdMaxLength))} AND ${t.externalId} !~ '[[:space:][:cntrl:]]'`,
+    ),
+    check(
+      "messages_source_check",
+      sql`(${t.recordedBy} IS NOT NULL AND ${t.conversationId} IS NULL AND ${t.externalId} IS NULL AND ${t.sentAt} IS NULL) OR (${t.recordedBy} IS NULL AND ${t.conversationId} IS NOT NULL AND ${t.externalId} IS NOT NULL AND ${t.sentAt} IS NOT NULL AND ${t.channel} = 'whatsapp' AND ${t.direction} = 'inbound')`,
     ),
     pgPolicy("messages_select_member", {
       for: "select",

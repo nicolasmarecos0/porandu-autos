@@ -12,6 +12,11 @@ import { describe, expect, it } from "vitest";
 
 import * as schema from "@/db/schema";
 import {
+  CONVERSATION_CHANNELS,
+  CONVERSATION_STATUSES,
+  MESSAGE_PREVIEW_MAX_LENGTH,
+} from "@/domains/conversations/conversations";
+import {
   MESSAGE_CHANNELS,
   MESSAGE_DIRECTIONS,
   MESSAGE_MAX_LENGTH,
@@ -32,6 +37,7 @@ import {
 import { NOTE_MAX_LENGTH } from "@/domains/opportunities/notes";
 import { OPPORTUNITY_STAGES } from "@/domains/opportunities/stages";
 import { VEHICLE_HOLDING_STAGES } from "@/domains/opportunities/vehicle-link";
+import { EXTERNAL_ID_MAX_LENGTH } from "@/domains/webhooks/inbound-message";
 
 /*
  * Schema de Drizzle (db/schema), sin base de datos. El catálogo real que
@@ -69,9 +75,10 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes) y la del Hito 4 (messages)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages) y las del Hito 7 (conversations, whatsapp_lines)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
+      "conversations",
       "memberships",
       "messages",
       "opportunities",
@@ -80,6 +87,7 @@ describe("db/schema", () => {
       "organizations",
       "profiles",
       "vehicles",
+      "whatsapp_lines",
     ]);
   });
 
@@ -160,7 +168,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages y memberships (admin) la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla salvo whatsapp_lines (provisioning, DEC-039 §5) declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages y memberships (admin) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -198,6 +206,16 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using:
           '"contacts"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "conversations",
+        name: "conversations_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"conversations"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
       },
       {
@@ -876,14 +894,19 @@ describe("db/schema", () => {
       ["channel", "PgText", true, false],
       ["direction", "PgText", true, false],
       ["content", "PgText", true, false],
-      ["recorded_by", "PgUUID", true, false],
+      // Opcional desde el Hito 7: un mensaje ingerido no tiene autor.
+      ["recorded_by", "PgUUID", false, false],
       ["created_at", "PgTimestamp", true, true],
+      ["conversation_id", "PgUUID", false, false],
+      ["external_id", "PgText", false, false],
+      ["sent_at", "PgTimestamp", false, false],
     ]);
     // Reloj de la base, nunca de la aplicación.
     expect(column("messages", "created_at").defaultFn).toBeUndefined();
     expect(foreignKeys("messages")).toEqual([
       "organization_id -> public.organizations(id) ON DELETE restrict",
       "organization_id,contact_id -> public.contacts(organization_id,id) ON DELETE restrict",
+      "organization_id,conversation_id,contact_id -> public.conversations(organization_id,id,contact_id) ON DELETE restrict",
       "organization_id,opportunity_id,contact_id -> public.opportunities(organization_id,id,contact_id) ON DELETE restrict",
       "recorded_by -> public.profiles(id) ON DELETE restrict",
     ]);
@@ -906,17 +929,33 @@ describe("db/schema", () => {
         name: "messages_content_check",
         sql: `char_length("messages"."content") BETWEEN 1 AND 4096 AND "messages"."content" = btrim("messages"."content", ' ' || chr(10)) AND translate("messages"."content", chr(10), '') !~ '[[:cntrl:]]'`,
       },
+      {
+        name: "messages_external_id_check",
+        sql: `char_length("messages"."external_id") BETWEEN 1 AND 256 AND "messages"."external_id" !~ '[[:space:][:cntrl:]]'`,
+      },
+      {
+        // DEC-039 §10: o lo registró un miembro, o es un WhatsApp entrante
+        // ingerido.
+        name: "messages_source_check",
+        sql: `("messages"."recorded_by" IS NOT NULL AND "messages"."conversation_id" IS NULL AND "messages"."external_id" IS NULL AND "messages"."sent_at" IS NULL) OR ("messages"."recorded_by" IS NULL AND "messages"."conversation_id" IS NOT NULL AND "messages"."external_id" IS NOT NULL AND "messages"."sent_at" IS NOT NULL AND "messages"."channel" = 'whatsapp' AND "messages"."direction" = 'inbound')`,
+      },
     ]);
-    // Las listas y el largo máximo de la base son los del dominio.
+    // Las listas y los largos máximos de la base son los del dominio.
     expect(schema.messageChannels).toEqual(MESSAGE_CHANNELS);
     expect(schema.messageDirections).toEqual(MESSAGE_DIRECTIONS);
     expect(schema.messageMaxLength).toBe(MESSAGE_MAX_LENGTH);
+    expect(schema.messageExternalIdMaxLength).toBe(EXTERNAL_ID_MAX_LENGTH);
     expect(
       table("messages").indexes.map((i) => ({
         name: i.config.name,
         columns: i.config.columns.map((c) => ("name" in c ? c.name : c)),
       })),
     ).toEqual([
+      // Idempotencia de la ingesta (DEC-039 §8), única y parcial.
+      {
+        name: "messages_organization_id_external_id_key",
+        columns: ["organization_id", "external_id"],
+      },
       {
         name: "messages_organization_id_opportunity_id_idx",
         columns: ["organization_id", "opportunity_id", "created_at"],
@@ -930,6 +969,121 @@ describe("db/schema", () => {
     expect(table("messages").columns.map((c) => c.name)).not.toContain(
       "updated_at",
     );
+  });
+
+  it("conversations: una abierta por contacto y canal, con el último mensaje en una línea (Hito 7)", () => {
+    expect(
+      table("conversations").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", "PgUUID", true, true],
+      ["organization_id", "PgUUID", true, false],
+      ["contact_id", "PgUUID", true, false],
+      ["channel", "PgText", true, false],
+      ["status", "PgText", true, true],
+      ["last_message_at", "PgTimestamp", false, false],
+      ["last_message_preview", "PgText", false, false],
+      ["created_at", "PgTimestamp", true, true],
+      ["updated_at", "PgTimestamp", true, true],
+    ]);
+    expect(foreignKeys("conversations")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,contact_id -> public.contacts(organization_id,id) ON DELETE restrict",
+    ]);
+    const dialect = new PgDialect();
+    expect(
+      table("conversations").checks.map((c) => ({
+        name: c.name,
+        sql: dialect.sqlToQuery(c.value).sql,
+      })),
+    ).toEqual([
+      {
+        name: "conversations_channel_check",
+        sql: `"conversations"."channel" IN ('whatsapp')`,
+      },
+      {
+        name: "conversations_status_check",
+        sql: `"conversations"."status" IN ('open', 'closed')`,
+      },
+      {
+        name: "conversations_last_message_check",
+        sql: `("conversations"."last_message_at" IS NULL) = ("conversations"."last_message_preview" IS NULL)`,
+      },
+      {
+        name: "conversations_last_message_preview_check",
+        sql: `char_length("conversations"."last_message_preview") BETWEEN 1 AND 160 AND "conversations"."last_message_preview" = btrim("conversations"."last_message_preview") AND "conversations"."last_message_preview" !~ '[[:cntrl:]]'`,
+      },
+    ]);
+    // Las listas y el largo del preview de la base son los del dominio.
+    expect(schema.conversationChannels).toEqual(CONVERSATION_CHANNELS);
+    expect(schema.conversationStatuses).toEqual(CONVERSATION_STATUSES);
+    expect(schema.conversationPreviewMaxLength).toBe(
+      MESSAGE_PREVIEW_MAX_LENGTH,
+    );
+    expect(
+      table("conversations").indexes.map((i) => ({
+        name: i.config.name,
+        unique: i.config.unique,
+        columns: i.config.columns.map((c) => ("name" in c ? c.name : c)),
+        where: i.config.where && dialect.sqlToQuery(i.config.where).sql,
+      })),
+    ).toEqual([
+      {
+        name: "conversations_open_contact_channel_key",
+        unique: true,
+        columns: ["organization_id", "contact_id", "channel"],
+        where: `"conversations"."status" = 'open'`,
+      },
+    ]);
+    expect(
+      table("conversations").uniqueConstraints.map((u) => ({
+        name: u.getName(),
+        columns: u.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "conversations_organization_id_id_contact_id_key",
+        columns: ["organization_id", "id", "contact_id"],
+      },
+    ]);
+  });
+
+  it("whatsapp_lines: la línea receptora, única global, de una organización y sin policies (Hito 7)", () => {
+    expect(
+      table("whatsapp_lines").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", "PgUUID", true, true],
+      ["organization_id", "PgUUID", true, false],
+      ["phone_number_id", "PgText", true, false],
+      ["active", "PgBoolean", true, true],
+      ["created_at", "PgTimestamp", true, true],
+      ["updated_at", "PgTimestamp", true, true],
+    ]);
+    expect(foreignKeys("whatsapp_lines")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+    ]);
+    expect(
+      table("whatsapp_lines").uniqueConstraints.map((u) => ({
+        name: u.getName(),
+        columns: u.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "whatsapp_lines_phone_number_id_key",
+        columns: ["phone_number_id"],
+      },
+    ]);
+    // Provisioning: ningún miembro la lee ni la escribe.
+    expect(table("whatsapp_lines").policies).toEqual([]);
   });
 
   it("opportunities: unique (organization_id, id), destino de la FK de la demanda (H1.4), y (organization_id, id, contact_id), destino de la de los mensajes (Hito 4)", () => {
@@ -956,12 +1110,14 @@ describe("db/schema", () => {
     );
     expect(tenantScoped.map((t) => t.name).sort()).toEqual([
       "contacts",
+      "conversations",
       "memberships",
       "messages",
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",
       "vehicles",
+      "whatsapp_lines",
     ]);
 
     for (const t of tenantScoped) {

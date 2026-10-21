@@ -9,6 +9,10 @@
  * `MIGRATION_DATABASE_URL` (rol `postgres`) no forma parte de este contrato:
  * es exclusiva de drizzle-kit y el runtime nunca la referencia (ADR-001 §2
  * y §3.1). Los mensajes de error nombran la variable, nunca su valor.
+ *
+ * `WHATSAPP_APP_SECRET` (Hito 7, DEC-039 §2) se valida aparte: solo la usa
+ * el webhook de WhatsApp, que falla cerrado sin ella sin bloquear el resto
+ * de la aplicación.
  */
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -22,6 +26,10 @@ export type ServerEnv = {
   runtimeDatabaseUrl: string;
 };
 
+export type WhatsAppEnv = {
+  appSecret: string;
+};
+
 export class EnvValidationError extends Error {
   readonly issues: readonly string[];
 
@@ -33,6 +41,8 @@ export class EnvValidationError extends Error {
 }
 
 const RUNTIME_ROLE = "app_runtime";
+/** Largo mínimo del secreto del webhook (el app secret de Meta tiene 32). */
+const WHATSAPP_SECRET_MIN_LENGTH = 32;
 const PUBLISHABLE_KEY_PREFIX = "sb_publishable_";
 
 function readRequired(
@@ -118,4 +128,21 @@ export function parseServerEnv(source: EnvSource): ServerEnv {
 
   if (issues.length > 0) throw new EnvValidationError(issues);
   return { runtimeDatabaseUrl };
+}
+
+/**
+ * Secreto compartido con el que el proveedor firma cada webhook
+ * (`X-Hub-Signature-256`, HMAC-SHA256 del cuerpo). Server-only: nunca lleva
+ * prefijo NEXT_PUBLIC_ ni se registra.
+ */
+export function parseWhatsAppEnv(source: EnvSource): WhatsAppEnv {
+  const issues: string[] = [];
+  const appSecret = readRequired(source, "WHATSAPP_APP_SECRET", issues);
+  if (appSecret !== "" && appSecret.length < WHATSAPP_SECRET_MIN_LENGTH) {
+    issues.push(
+      `WHATSAPP_APP_SECRET must be at least ${WHATSAPP_SECRET_MIN_LENGTH} characters long.`,
+    );
+  }
+  if (issues.length > 0) throw new EnvValidationError(issues);
+  return { appSecret };
 }

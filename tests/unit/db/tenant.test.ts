@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   TenantContextError,
+  withIngestion,
   withTenant,
   withUser,
   type TenantContext,
@@ -15,8 +16,10 @@ import { isTenantContext, resolveTenant } from "@/lib/tenant/resolution";
 /*
  * withUser()/withTenant() sin base de datos: validación del contexto, que
  * withTenant() solo acepte un TenantContext emitido por Tenant Resolution y
- * forma exacta del statement que fija rol y claims. El comportamiento contra
- * PostgreSQL real está en tests/db/tenant-*.test.ts.
+ * forma exacta del statement que fija rol y claims. withIngestion() (Hito 7,
+ * DEC-039 §4): authenticated sin claims. El comportamiento contra
+ * PostgreSQL real está en tests/db/tenant-*.test.ts y
+ * tests/db/whatsapp-ingestion.test.ts.
  */
 
 // `server-only` lo resuelve Next; en Vitest (entorno node) es un no-op.
@@ -249,4 +252,30 @@ describe("withTenant solo acepta un TenantContext de Tenant Resolution", () => {
       expect(mocks.getDb).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("withIngestion (DEC-039 §4)", () => {
+  it("abre una transacción y ejecuta fn con la transacción", async () => {
+    await expect(withIngestion(async (tx) => tx)).resolves.toBe(mocks.tx);
+    expect(mocks.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("el primer statement vacía los claims y asume authenticated, con alcance de transacción y en uno solo", async () => {
+    await withIngestion(async () => undefined);
+
+    expect(mocks.executed).toHaveLength(1);
+    expect(rendered(mocks.executed[0])).toEqual({
+      sql: "SELECT set_config('request.jwt.claims', '', true), set_config('role', 'authenticated', true)",
+      params: [],
+    });
+  });
+
+  it("propaga el resultado y los errores de fn", async () => {
+    await expect(withIngestion(async () => 42)).resolves.toBe(42);
+    await expect(
+      withIngestion(async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+  });
 });
