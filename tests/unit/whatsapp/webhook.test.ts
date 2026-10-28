@@ -334,7 +334,7 @@ describe("route handler (app/api/webhooks/whatsapp)", () => {
     expect(mocks.ingest).toHaveBeenCalledTimes(1);
   });
 
-  it("solo exporta POST", () => {
-    expect(Object.keys(route).sort()).toEqual(["POST", "runtime"]);
+  it("solo exporta GET (verificación), POST (eventos) y runtime", () => {
+    expect(Object.keys(route).sort()).toEqual(["GET", "POST", "runtime"]);
   });
 });

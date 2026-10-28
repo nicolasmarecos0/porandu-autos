@@ -10,9 +10,10 @@
  * es exclusiva de drizzle-kit y el runtime nunca la referencia (ADR-001 §2
  * y §3.1). Los mensajes de error nombran la variable, nunca su valor.
  *
- * `WHATSAPP_APP_SECRET` (Hito 7, DEC-039 §2) se valida aparte: solo la usa
- * el webhook de WhatsApp, que falla cerrado sin ella sin bloquear el resto
- * de la aplicación.
+ * `WHATSAPP_APP_SECRET` (Hito 7, DEC-039 §2) y `WHATSAPP_VERIFY_TOKEN`
+ * (verificación de la suscripción) se validan aparte: solo las usa el
+ * webhook de WhatsApp, que falla cerrado sin ellas sin bloquear el resto de
+ * la aplicación.
  */
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -30,6 +31,10 @@ export type WhatsAppEnv = {
   appSecret: string;
 };
 
+export type WhatsAppVerifyEnv = {
+  verifyToken: string;
+};
+
 export class EnvValidationError extends Error {
   readonly issues: readonly string[];
 
@@ -43,6 +48,8 @@ export class EnvValidationError extends Error {
 const RUNTIME_ROLE = "app_runtime";
 /** Largo mínimo del secreto del webhook (el app secret de Meta tiene 32). */
 const WHATSAPP_SECRET_MIN_LENGTH = 32;
+/** Largo mínimo del token de verificación de la suscripción. */
+const WHATSAPP_VERIFY_TOKEN_MIN_LENGTH = 16;
 const PUBLISHABLE_KEY_PREFIX = "sb_publishable_";
 
 function readRequired(
@@ -145,4 +152,25 @@ export function parseWhatsAppEnv(source: EnvSource): WhatsAppEnv {
   }
   if (issues.length > 0) throw new EnvValidationError(issues);
   return { appSecret };
+}
+
+/**
+ * Token que el administrador configura en Meta al suscribir el webhook y que
+ * Meta devuelve en el GET de verificación (`hub.verify_token`). Distinto del
+ * app secret: este viaja en la URL de Meta, así que no sirve para firmar.
+ * Server-only: nunca lleva prefijo NEXT_PUBLIC_ ni se registra.
+ */
+export function parseWhatsAppVerifyEnv(source: EnvSource): WhatsAppVerifyEnv {
+  const issues: string[] = [];
+  const verifyToken = readRequired(source, "WHATSAPP_VERIFY_TOKEN", issues);
+  if (
+    verifyToken !== "" &&
+    verifyToken.length < WHATSAPP_VERIFY_TOKEN_MIN_LENGTH
+  ) {
+    issues.push(
+      `WHATSAPP_VERIFY_TOKEN must be at least ${WHATSAPP_VERIFY_TOKEN_MIN_LENGTH} characters long.`,
+    );
+  }
+  if (issues.length > 0) throw new EnvValidationError(issues);
+  return { verifyToken };
 }
