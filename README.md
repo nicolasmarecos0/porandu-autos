@@ -88,6 +88,7 @@ Ver `.env.example`, que solo contiene placeholders. **Nunca commitear `.env*` co
 | `RUNTIME_DATABASE_URL` | Conexión Postgres de la aplicación (runtime) | `app_runtime` | **No**, server-only |
 | `MIGRATION_DATABASE_URL` | Conexión Postgres de `drizzle-kit` (migraciones) | `postgres` | **No**, solo tooling |
 | `WHATSAPP_APP_SECRET` | Secreto con el que el proveedor firma el webhook de WhatsApp (DEC-039), al menos 32 caracteres | — | **No**, server-only |
+| `WHATSAPP_VERIFY_TOKEN` | Token de la verificación de la suscripción del webhook (`GET /api/webhooks/whatsapp`), al menos 16 caracteres, el mismo que se carga en Meta | — | **No**, server-only |
 
 Separación runtime / migraciones (ADR-001):
 
@@ -745,7 +746,11 @@ contacto → conversación abierta → oportunidad abierta única → mensaje (i
 
 - **Base (`0013_whatsapp_ingestion`):** `whatsapp_lines` y `conversations` con FKs, CHECKs, índices, RLS, policy y grants; las columnas, la FK compuesta, la unique de idempotencia y el CHECK de origen de `messages`; la función de ingesta y sus postcondiciones. No toca filas existentes: los mensajes de los miembros cumplen el CHECK nuevo tal como están.
 - **Limitaciones conocidas:** C-14 (sin redacción) también aplica a los mensajes ingeridos y a los nombres de perfil. Un número que `libphonenumber-js` no valida se descarta (`invalid_sender`).
-- **Fuera de este bloque:** el GET de verificación de la suscripción en Meta (necesario antes de suscribir el endpoint), enviar mensajes, plantillas, estados de entrega o lectura, media y reacciones, crear oportunidades automáticamente, cerrar conversaciones, la bandeja `/conversations`, registrar líneas desde la UI, colas y límites de tasa, extracción asistida (H2a), Intent e IA.
+- **Verificación de la suscripción (`GET /api/webhooks/whatsapp`):** Meta llama con `hub.mode=subscribe`, `hub.verify_token` y `hub.challenge` y espera el challenge de vuelta.
+  - Los query params se validan con Zod (`domains/webhooks/verification.ts`). El challenge se acota a letras, dígitos y `. _ ~ -` (hasta 256), porque se devuelve tal cual.
+  - El token se compara con `WHATSAPP_VERIFY_TOKEN` en tiempo constante (`lib/whatsapp/verification.ts`). Válido: `200` con el challenge como `text/plain` y `nosniff`. Cualquier otro caso (modo, token o forma): `403`, sin decir cuál falló. Sin el token configurado: `503`.
+  - Para suscribir el endpoint: definir `WHATSAPP_VERIFY_TOKEN` en Vercel, cargar el mismo valor en Meta (Webhooks → Verify token) y recién entonces verificar la URL.
+- **Fuera de este bloque:** enviar mensajes, plantillas, estados de entrega o lectura, media y reacciones, crear oportunidades automáticamente, cerrar conversaciones, la bandeja `/conversations`, registrar líneas desde la UI, colas y límites de tasa, extracción asistida (H2a), Intent e IA.
 - `0013_whatsapp_ingestion` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0013_whatsapp_ingestion` (o con las anteriores que falten delante, en orden).
 
 ## Convenciones
