@@ -716,15 +716,19 @@ describe("identidad de sistema (DEC-039 §4)", () => {
       contacts: await tx.select().from(contacts),
       conversations: await tx.select().from(conversations),
       messages: await tx.select().from(messages),
+      // Desde el Hito 8 los miembros leen sus líneas (DEC-040 §4): sin
+      // claims no hay membership y RLS no deja ver ninguna.
+      lines: await tx.select().from(whatsappLines),
     }));
-    expect(seen).toEqual({ contacts: [], conversations: [], messages: [] });
+    expect(seen).toEqual({
+      contacts: [],
+      conversations: [],
+      messages: [],
+      lines: [],
+    });
   });
 
   it.each([
-    [
-      "leer whatsapp_lines",
-      () => withIngestion((tx) => tx.select().from(whatsappLines)),
-    ],
     [
       "crear un contacto",
       () =>
@@ -824,7 +828,7 @@ describe("identidad de sistema (DEC-039 §4)", () => {
     });
   });
 
-  it("un miembro lee conversaciones pero no las escribe, y no ve las líneas", async () => {
+  it("un miembro lee conversaciones pero no las escribe, y lee las líneas de su organización sin escribirlas", async () => {
     const result = await ingestInboundMessage(inbound());
     if (result.outcome !== "recorded") throw new Error("not recorded");
     const ctx = tenantContext(USER_A, ORG_1);
@@ -857,10 +861,24 @@ describe("identidad de sistema (DEC-039 §4)", () => {
             .set({ status: "closed" })
             .where(eq(conversations.id, result.conversationId)),
         ),
-      () => withTenant(ctx, (tx) => tx.select().from(whatsappLines)),
+      () =>
+        withTenant(ctx, (tx) =>
+          tx
+            .update(whatsappLines)
+            .set({ active: false })
+            .where(eq(whatsappLines.phoneNumberId, LINE_1)),
+        ),
     ]) {
       await expect(run()).rejects.toMatchObject({ cause: { code: "42501" } });
     }
+    // Hito 8 (DEC-040 §4): solo las líneas de su organización.
+    const lines = await withTenant(ctx, (tx) =>
+      tx
+        .select({ id: whatsappLines.phoneNumberId })
+        .from(whatsappLines)
+        .orderBy(whatsappLines.phoneNumberId),
+    );
+    expect(lines.map((line) => line.id)).toEqual([LINE_1, LINE_OFF]);
   });
 
   it("los mensajes ingeridos siguen append-only para los miembros", async () => {

@@ -135,6 +135,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
       "0013_whatsapp_ingestion",
+      "0014_whatsapp_outbound",
     ]);
   });
 
@@ -361,6 +362,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.activity-touch",
         "schema.team-settings",
         "schema.whatsapp-ingestion",
+        "schema.whatsapp-outbound",
         "private.schema",
         "private.user_org_ids",
         "app_runtime.attributes",
@@ -770,7 +772,7 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
-  it("la verificación detecta un mensaje sin CHECK de origen, líneas con una policy, la ingesta ejecutable por anon y la ingesta sin la regla de las claims (Hito 7, DEC-039)", async () => {
+  it("la verificación detecta un mensaje sin CHECK de origen, líneas con otra policy, la ingesta ejecutable por anon y la ingesta sin la regla de las claims (Hito 7, DEC-039)", async () => {
     const signature =
       "private.ingest_whatsapp_message(text, text, text, text, text, text, text, timestamp with time zone)";
     await migrated.admin.unsafe(`
@@ -792,6 +794,7 @@ describe("migración oficial y verificación post-migración", () => {
         ALTER TABLE public.messages ADD CONSTRAINT messages_source_check CHECK (
           (recorded_by IS NOT NULL AND conversation_id IS NULL AND external_id IS NULL AND sent_at IS NULL)
           OR (recorded_by IS NULL AND conversation_id IS NOT NULL AND external_id IS NOT NULL AND sent_at IS NOT NULL AND channel = 'whatsapp' AND direction = 'inbound')
+          OR (recorded_by IS NOT NULL AND conversation_id IS NOT NULL AND external_id IS NOT NULL AND sent_at IS NOT NULL AND channel = 'whatsapp' AND direction = 'outbound')
         );
         DROP POLICY probe ON public.whatsapp_lines;
         REVOKE EXECUTE ON FUNCTION ${signature} FROM anon;
@@ -824,6 +827,59 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta el alta de mensajes con conversación, las líneas sin lectura de miembros, el envío ejecutable por anon y el envío sin sus reglas (Hito 8, DEC-040)", async () => {
+    const signature =
+      "private.record_outbound_whatsapp_message(uuid, uuid, text, text, text)";
+    await migrated.admin.unsafe(`
+      ALTER POLICY messages_insert_member ON public.messages TO authenticated
+        WITH CHECK (organization_id IN (SELECT private.user_org_ids()) AND recorded_by = (SELECT auth.uid()) AND created_at = now());
+      REVOKE SELECT ON public.whatsapp_lines FROM authenticated;
+      GRANT EXECUTE ON FUNCTION ${signature} TO anon;
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "rls.policies",
+        "schema.whatsapp-outbound",
+        "privileges.authenticated",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(`
+        ALTER POLICY messages_insert_member ON public.messages TO authenticated
+          WITH CHECK (organization_id IN (SELECT private.user_org_ids()) AND recorded_by = (SELECT auth.uid()) AND created_at = now() AND conversation_id IS NULL);
+        GRANT SELECT ON public.whatsapp_lines TO authenticated;
+        REVOKE EXECUTE ON FUNCTION ${signature} FROM anon;
+      `);
+    }
+
+    // Una versión de la función sin la regla que exige un miembro activo.
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef(${signature}::regprocedure) AS definition
+    `;
+    await migrated.admin.unsafe(
+      current!.definition.replace(/outbound_not_member/g, "no guard"),
+    );
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "schema.whatsapp-outbound",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(current!.definition);
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -834,9 +890,10 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-039): 0013 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 6 (0000 a 0012) si
- * 0012 ya se aplicó; si no, en el Hito 4/5 (0000 a 0011), el Hito 2A (0000
+ * El próximo rollout real (DEC-040): 0014 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 7 (0000 a 0013) si
+ * 0013 ya se aplicó; si no, en el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
  * exactamente lo pendiente en cada caso. Esta rama no aplica nada a
@@ -855,6 +912,7 @@ describe.each([
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
       "0013_whatsapp_ingestion",
+      "0014_whatsapp_outbound",
     ],
   },
   {
@@ -868,6 +926,7 @@ describe.each([
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
       "0013_whatsapp_ingestion",
+      "0014_whatsapp_outbound",
     ],
   },
   {
@@ -880,6 +939,7 @@ describe.each([
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
       "0013_whatsapp_ingestion",
+      "0014_whatsapp_outbound",
     ],
   },
   {
@@ -891,6 +951,7 @@ describe.each([
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
       "0013_whatsapp_ingestion",
+      "0014_whatsapp_outbound",
     ],
   },
   {
@@ -901,22 +962,33 @@ describe.each([
       "0011_conversations_and_activity_trigger",
       "0012_team_settings",
       "0013_whatsapp_ingestion",
+      "0014_whatsapp_outbound",
     ],
   },
   {
     stagingAt: "0011_conversations_and_activity_trigger",
     label: "Hito 4/5",
     applied: 12,
-    expected: ["0012_team_settings", "0013_whatsapp_ingestion"],
+    expected: [
+      "0012_team_settings",
+      "0013_whatsapp_ingestion",
+      "0014_whatsapp_outbound",
+    ],
   },
   {
     stagingAt: "0012_team_settings",
     label: "Hito 6",
     applied: 13,
-    expected: ["0013_whatsapp_ingestion"],
+    expected: ["0013_whatsapp_ingestion", "0014_whatsapp_outbound"],
+  },
+  {
+    stagingAt: "0013_whatsapp_ingestion",
+    label: "Hito 7",
+    applied: 14,
+    expected: ["0014_whatsapp_outbound"],
   },
 ])(
-  "staging en $label: rollout hasta 0013",
+  "staging en $label: rollout hasta 0014",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

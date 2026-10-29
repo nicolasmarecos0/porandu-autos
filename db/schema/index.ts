@@ -18,9 +18,10 @@
  * metadatos del cierre de opportunities, por columna; 0011: alta
  * append-only de messages; 0012: UPDATE de organizations y alta y UPDATE
  * de memberships, solo para admin, por columna salvo el alta; 0013: lectura
- * de conversations, y whatsapp_lines sin grants). Los triggers y sus
- * funciones (0008 a 0012), las funciones de equipo de 0012 y la función de
- * ingesta de 0013 son SQL custom: drizzle-kit no los modela.
+ * de conversations, y whatsapp_lines sin grants; 0014: lectura de
+ * whatsapp_lines). Los triggers y sus funciones (0008 a 0012), las
+ * funciones de equipo de 0012, la función de ingesta de 0013 y la de envío
+ * de 0014 son SQL custom: drizzle-kit no los modela.
  */
 export * from "./organizations";
 export * from "./profiles";

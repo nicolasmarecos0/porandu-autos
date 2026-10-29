@@ -99,6 +99,13 @@
       "when": 1792605287548,
       "tag": "0013_whatsapp_ingestion",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793297015349,
+      "tag": "0014_whatsapp_outbound",
+      "breakpoints": true
     }
   ]
 }

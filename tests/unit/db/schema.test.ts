@@ -168,7 +168,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla salvo whatsapp_lines (provisioning, DEC-039 §5) declara su policy de lectura para authenticated y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages y memberships (admin) la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages y memberships (admin) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -256,7 +256,7 @@ describe("db/schema", () => {
         for: "insert",
         to: ["authenticated"],
         using: undefined,
-        withCheck: `"messages"."organization_id" IN (SELECT private.user_org_ids()) AND "messages"."recorded_by" = (select auth.uid()) AND "messages"."created_at" = now()`,
+        withCheck: `"messages"."organization_id" IN (SELECT private.user_org_ids()) AND "messages"."recorded_by" = (select auth.uid()) AND "messages"."created_at" = now() AND "messages"."conversation_id" IS NULL`,
       },
       {
         table: "messages",
@@ -391,6 +391,16 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using: `"vehicles"."organization_id" IN (SELECT private.user_org_ids()) AND "vehicles"."status" = 'in_preparation'`,
         withCheck: `"vehicles"."organization_id" IN (SELECT private.user_org_ids()) AND "vehicles"."status" = 'available'`,
+      },
+      {
+        table: "whatsapp_lines",
+        name: "whatsapp_lines_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"whatsapp_lines"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
       },
     ]);
   });
@@ -934,10 +944,10 @@ describe("db/schema", () => {
         sql: `char_length("messages"."external_id") BETWEEN 1 AND 256 AND "messages"."external_id" !~ '[[:space:][:cntrl:]]'`,
       },
       {
-        // DEC-039 §10: o lo registró un miembro, o es un WhatsApp entrante
-        // ingerido.
+        // DEC-039 §10 y DEC-040 §7: o lo registró un miembro, o es un
+        // WhatsApp entrante ingerido, o es un WhatsApp que envió un miembro.
         name: "messages_source_check",
-        sql: `("messages"."recorded_by" IS NOT NULL AND "messages"."conversation_id" IS NULL AND "messages"."external_id" IS NULL AND "messages"."sent_at" IS NULL) OR ("messages"."recorded_by" IS NULL AND "messages"."conversation_id" IS NOT NULL AND "messages"."external_id" IS NOT NULL AND "messages"."sent_at" IS NOT NULL AND "messages"."channel" = 'whatsapp' AND "messages"."direction" = 'inbound')`,
+        sql: `("messages"."recorded_by" IS NOT NULL AND "messages"."conversation_id" IS NULL AND "messages"."external_id" IS NULL AND "messages"."sent_at" IS NULL) OR ("messages"."recorded_by" IS NULL AND "messages"."conversation_id" IS NOT NULL AND "messages"."external_id" IS NOT NULL AND "messages"."sent_at" IS NOT NULL AND "messages"."channel" = 'whatsapp' AND "messages"."direction" = 'inbound') OR ("messages"."recorded_by" IS NOT NULL AND "messages"."conversation_id" IS NOT NULL AND "messages"."external_id" IS NOT NULL AND "messages"."sent_at" IS NOT NULL AND "messages"."channel" = 'whatsapp' AND "messages"."direction" = 'outbound')`,
       },
     ]);
     // Las listas y los largos máximos de la base son los del dominio.
@@ -1052,7 +1062,7 @@ describe("db/schema", () => {
     ]);
   });
 
-  it("whatsapp_lines: la línea receptora, única global, de una organización y sin policies (Hito 7)", () => {
+  it("whatsapp_lines: la línea receptora, única global, de una organización y de solo lectura para los miembros (Hito 7, Hito 8)", () => {
     expect(
       table("whatsapp_lines").columns.map((c) => [
         c.name,
@@ -1082,8 +1092,10 @@ describe("db/schema", () => {
         columns: ["phone_number_id"],
       },
     ]);
-    // Provisioning: ningún miembro la lee ni la escribe.
-    expect(table("whatsapp_lines").policies).toEqual([]);
+    // Hito 8 (DEC-040 §4): los miembros la leen; la escribe el provisioning.
+    expect(
+      table("whatsapp_lines").policies.map((p) => `${p.name} ${p.for}`),
+    ).toEqual(["whatsapp_lines_select_member select"]);
   });
 
   it("opportunities: unique (organization_id, id), destino de la FK de la demanda (H1.4), y (organization_id, id, contact_id), destino de la de los mensajes (Hito 4)", () => {
