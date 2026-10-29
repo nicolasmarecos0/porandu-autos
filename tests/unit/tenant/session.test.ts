@@ -3,14 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActiveMembership } from "@/db/queries/memberships";
 import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
 import { isTenantContext } from "@/lib/tenant/resolution";
-import { getActiveMemberships, requireTenant } from "@/lib/tenant/session";
+import {
+  getActiveMemberships,
+  requireTenant,
+  resolveRequestTenant,
+} from "@/lib/tenant/session";
 
 import { cookieJar, type CookieJar } from "../support/cookie-jar";
 
 /*
  * requireTenant() (H0.7) con Supabase Auth, la query de memberships y las
  * cookies simuladas: orden de las verificaciones, redirects y origen de cada
- * dato del contexto. Contra PostgreSQL real: tests/db/tenant-resolution.
+ * dato del contexto. resolveRequestTenant() (Hito 8, DEC-040 §3) es la misma
+ * resolución sin redirects, para los Route Handlers. Contra PostgreSQL real: tests/db/tenant-resolution.
  * Valores ficticios.
  */
 
@@ -228,5 +233,52 @@ describe("getActiveMemberships", () => {
     mocks.listActiveMemberships.mockResolvedValue([seller1, admin3]);
 
     await expect(getActiveMemberships()).resolves.toEqual([seller1, admin3]);
+  });
+});
+
+describe("resolveRequestTenant (sin redirects, DEC-040 §3)", () => {
+  it("sin usuario verificado → unauthenticated, sin redirect ni memberships", async () => {
+    mocks.getClaims.mockResolvedValue({ data: null, error: null });
+
+    await expect(resolveRequestTenant()).resolves.toEqual({
+      kind: "unauthenticated",
+    });
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.listActiveMemberships).not.toHaveBeenCalled();
+  });
+
+  it("0 memberships activas → no-access, sin redirect", async () => {
+    mocks.listActiveMemberships.mockResolvedValue([]);
+
+    await expect(resolveRequestTenant()).resolves.toEqual({
+      kind: "no-access",
+    });
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("varias memberships sin elección válida → select-organization, sin redirect", async () => {
+    mocks.listActiveMemberships.mockResolvedValue([seller1, admin3]);
+    withCookie(ORG_2);
+
+    await expect(resolveRequestTenant()).resolves.toEqual({
+      kind: "select-organization",
+    });
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("con organización resuelta → el mismo TenantContext que requireTenant()", async () => {
+    mocks.listActiveMemberships.mockResolvedValue([seller1, admin3]);
+    withCookie(ORG_3);
+
+    const resolution = await resolveRequestTenant();
+    if (resolution.kind !== "resolved") throw new Error("not resolved");
+    expect(isTenantContext(resolution.context)).toBe(true);
+    const { userId, organizationId, role } = resolution.context;
+    expect({ userId, organizationId, role }).toEqual({
+      userId: USER,
+      organizationId: ORG_3,
+      role: "admin",
+    });
+    expect(await tenant()).toEqual({ userId, organizationId, role });
   });
 });

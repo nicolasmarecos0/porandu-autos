@@ -13,7 +13,8 @@
  * `WHATSAPP_APP_SECRET` (Hito 7, DEC-039 §2) y `WHATSAPP_VERIFY_TOKEN`
  * (verificación de la suscripción) se validan aparte: solo las usa el
  * webhook de WhatsApp, que falla cerrado sin ellas sin bloquear el resto de
- * la aplicación.
+ * la aplicación. Lo mismo `WHATSAPP_API_TOKEN` (Hito 8, DEC-040 §5): solo lo
+ * usa el envío de mensajes.
  */
 
 export type EnvSource = Readonly<Record<string, string | undefined>>;
@@ -35,6 +36,10 @@ export type WhatsAppVerifyEnv = {
   verifyToken: string;
 };
 
+export type WhatsAppApiEnv = {
+  apiToken: string;
+};
+
 export class EnvValidationError extends Error {
   readonly issues: readonly string[];
 
@@ -50,6 +55,8 @@ const RUNTIME_ROLE = "app_runtime";
 const WHATSAPP_SECRET_MIN_LENGTH = 32;
 /** Largo mínimo del token de verificación de la suscripción. */
 const WHATSAPP_VERIFY_TOKEN_MIN_LENGTH = 16;
+/** Largo mínimo del token de la Cloud API (los de Meta son mucho más largos). */
+const WHATSAPP_API_TOKEN_MIN_LENGTH = 32;
 const PUBLISHABLE_KEY_PREFIX = "sb_publishable_";
 
 function readRequired(
@@ -173,4 +180,21 @@ export function parseWhatsAppVerifyEnv(source: EnvSource): WhatsAppVerifyEnv {
   }
   if (issues.length > 0) throw new EnvValidationError(issues);
   return { verifyToken };
+}
+
+/**
+ * Token de acceso a la Cloud API de Meta con el que se envían los mensajes
+ * (`Authorization: Bearer`, DEC-040 §5). Server-only: nunca lleva prefijo
+ * NEXT_PUBLIC_ ni se registra.
+ */
+export function parseWhatsAppApiEnv(source: EnvSource): WhatsAppApiEnv {
+  const issues: string[] = [];
+  const apiToken = readRequired(source, "WHATSAPP_API_TOKEN", issues);
+  if (apiToken !== "" && apiToken.length < WHATSAPP_API_TOKEN_MIN_LENGTH) {
+    issues.push(
+      `WHATSAPP_API_TOKEN must be at least ${WHATSAPP_API_TOKEN_MIN_LENGTH} characters long.`,
+    );
+  }
+  if (issues.length > 0) throw new EnvValidationError(issues);
+  return { apiToken };
 }

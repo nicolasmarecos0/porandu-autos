@@ -29,6 +29,9 @@ import { describe, expect, it } from "vitest";
  * - la ingesta de mensajes entrantes de WhatsApp (Hito 7)
  *   (db/queries/ingest-whatsapp-message), también: el webhook
  *   (lib/whatsapp/webhook.ts);
+ * - el envío de mensajes de WhatsApp (Hito 8) (db/queries/outbound-message
+ *   y el cliente de Meta, lib/whatsapp/api), también: POST
+ *   /api/messages/send (lib/conversations/send.ts);
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -736,6 +739,85 @@ describe(
         await restrictedBy(
           "lib/settings/requests.ts",
           `import type { InviteOutcome } from "@/db/queries/settings-write";\nexport type I = InviteOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importSendWrite = `import { recordOutboundMessage } from "@/db/queries/outbound-message";\nexport const use = recordOutboundMessage;\n`;
+const importMetaClient = `import { sendWhatsAppText } from "@/lib/whatsapp/api";\nexport const use = sendWhatsAppText;\n`;
+
+describe(
+  "una sola puerta para el envío de mensajes de WhatsApp (Hito 8)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/conversations/page.tsx",
+      "app/api/messages/send/route.ts",
+      "components/inbox/message-composer.tsx",
+      "lib/conversations/actions.ts",
+      "lib/whatsapp/webhook.ts",
+      "lib/opportunities/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/tenant/session.ts",
+      "db/queries/conversations.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])(
+      "la lectura del destino y el registro fallan en %s",
+      async (filePath) => {
+        expect(await restrictedBy(filePath, importSendWrite)).toContain(
+          "no-restricted-imports",
+        );
+      },
+    );
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/conversations.ts",
+          `import { selectSendTarget } from "./outbound-message";\nexport const use = selectSendTarget;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it.each([
+      "app/api/messages/send/route.ts",
+      "components/inbox/message-composer.tsx",
+      "lib/whatsapp/webhook.ts",
+      "lib/conversations/actions.ts",
+      "lib/opportunities/actions.ts",
+      "db/queries/outbound-message.ts",
+    ])("el cliente de Meta falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importMetaClient)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("el cliente de Meta tampoco se importa por ruta relativa en lib/whatsapp", async () => {
+      expect(
+        await restrictedBy(
+          "lib/whatsapp/webhook.ts",
+          `import { sendWhatsAppText } from "./api";\nexport const use = sendWhatsAppText;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permiten en lib/conversations/send.ts", async () => {
+      expect(
+        await restrictedBy(
+          "lib/conversations/send.ts",
+          `${importSendWrite}${importMetaClient.replace("use", "send")}`,
+        ),
+      ).toEqual([]);
+    });
+
+    it("los tipos sí se pueden importar (no envían ni escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "components/inbox/message-composer.tsx",
+          `import type { SendTarget } from "@/db/queries/outbound-message";\nimport type { WhatsAppSendResult } from "@/lib/whatsapp/api";\nexport type T = SendTarget | WhatsAppSendResult;\n`,
         ),
       ).toEqual([]);
     });

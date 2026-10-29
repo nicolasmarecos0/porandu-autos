@@ -19,6 +19,7 @@ import {
 } from "@/db/queries/outbound-message";
 import { conversations, messages, whatsappLines } from "@/db/schema";
 import { withIngestion, withTenant, type TenantContext } from "@/db/tenant";
+import { handleSendMessage } from "@/lib/conversations/send";
 
 import { closureColumns } from "./support/closures";
 import {
@@ -54,7 +55,8 @@ import {
  * Prueba el registro, que un vendedor no puede enviar ni registrar en una
  * conversación de otro tenant (ni con un contexto falsificado), que la
  * identidad sin claims no envía, que un miembro no escribe conversaciones ni
- * mensajes de conversación por sí mismo, la lectura de las líneas y la de
+ * mensajes de conversación por sí mismo, la lectura de las líneas y el
+ * endpoint de punta a punta con Meta simulado (fetch). También la lectura de
  * la bandeja (getInbox()), filtrada por la organización activa.
  *
  * Tenants (support/tenants.ts): A: admin de ORG_1 · B: admin de ORG_2 ·
@@ -82,6 +84,7 @@ const LINE_1 = "200000000000001";
 const LINE_2 = "200000000000002";
 const LINE_OFF = "200000000000003";
 const API_TOKEN = "test-whatsapp-api-token-0123456789abcdef";
+const HOST = "app.porandu.test";
 
 let server: TestServer;
 let db: TestDatabase;
@@ -221,6 +224,33 @@ function signedInAs(ctx: TenantContext): void {
     context: ctx,
   });
   mocks.requireTenant.mockResolvedValue(ctx);
+}
+
+/** Meta acepta el mensaje y devuelve su id. */
+function metaAccepts(messageId = `wamid.META${randomUUID()}`): string {
+  mocks.fetch.mockResolvedValue(
+    Response.json(
+      {
+        messaging_product: "whatsapp",
+        contacts: [{ input: "595982000000", wa_id: "595982000000" }],
+        messages: [{ id: messageId }],
+      },
+      { status: 200 },
+    ),
+  );
+  return messageId;
+}
+
+function sendRequest(body: unknown): Request {
+  return new Request(`https://${HOST}/api/messages/send`, {
+    method: "POST",
+    headers: {
+      origin: `https://${HOST}`,
+      "x-forwarded-host": HOST,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
 }
 
 describe("registro por la función (DEC-040 §6)", () => {
@@ -730,5 +760,133 @@ describe("destino del envío (DEC-040 §4)", () => {
     expect(await selectSendTarget(admin, conversationId)).toEqual({
       outcome: "no_line",
     });
+  });
+});
+
+describe("POST /api/messages/send de punta a punta", () => {
+  it("un vendedor responde su conversación: Meta recibe el texto y el mensaje queda registrado con el id de Meta", async () => {
+    const conversation = await conversationOn(LINE_1);
+    const wamid = metaAccepts();
+
+    const response = await handleSendMessage(
+      sendRequest({
+        conversationId: conversation.conversationId.toUpperCase(),
+        text: "  Hola,  te escribo   por la Hilux  ",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { messageId: string };
+    expect(body).toEqual({ outcome: "sent", messageId: expect.any(String) });
+
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mocks.fetch.mock.calls[0]!;
+    expect(url).toBe(`https://graph.facebook.com/v20.0/${LINE_1}/messages`);
+    expect(new Headers(init?.headers).get("authorization")).toBe(
+      `Bearer ${API_TOKEN}`,
+    );
+    expect(JSON.parse(String(init?.body))).toEqual({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: conversation.phone.slice(1),
+      type: "text",
+      text: { preview_url: false, body: "Hola, te escribo por la Hilux" },
+    });
+
+    const [, sent] = await messageRows(conversation.conversationId);
+    expect(sent).toMatchObject({
+      id: body.messageId,
+      direction: "outbound",
+      content: "Hola, te escribo por la Hilux",
+      recorded_by: USER_C,
+      external_id: wamid,
+    });
+    expect(await conversationRow(conversation.conversationId)).toMatchObject({
+      last_message_preview: "Hola, te escribo por la Hilux",
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/conversations");
+  });
+
+  it.each([
+    ["un vendedor de ORG_1", USER_C, ORG_1, LINE_2],
+    ["un admin de ORG_2", USER_B, ORG_2, LINE_1],
+  ])(
+    "%s no puede enviar a una conversación de otro tenant: 404, sin llamar a Meta ni escribir",
+    async (_, user, org, foreignLine) => {
+      const foreign = await conversationOn(foreignLine);
+      const before = await conversationRow(foreign.conversationId);
+      const count = await messageCount();
+      signedInAs(tenantContext(user, org));
+      metaAccepts();
+
+      const response = await handleSendMessage(
+        sendRequest({
+          conversationId: foreign.conversationId,
+          text: "Intento cruzado",
+        }),
+      );
+
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "not_found" });
+      expect(mocks.fetch).not.toHaveBeenCalled();
+      expect(await messageCount()).toBe(count);
+      expect(await conversationRow(foreign.conversationId)).toEqual(before);
+    },
+  );
+
+  it("si Meta rechaza el mensaje, responde 502 y no escribe nada", async () => {
+    const conversation = await conversationOn(LINE_1);
+    const count = await messageCount();
+    mocks.fetch.mockResolvedValue(
+      Response.json(
+        { error: { code: 131030, message: "Recipient not allowed" } },
+        { status: 400 },
+      ),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await handleSendMessage(
+      sendRequest({
+        conversationId: conversation.conversationId,
+        text: "Hola",
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "provider_rejected" });
+    expect(await messageCount()).toBe(count);
+  });
+
+  it("si la membership se revoca mientras Meta envía, el registro falla cerrado: 500 unrecorded y nada escrito", async () => {
+    const conversation = await conversationOn(LINE_1);
+    const count = await messageCount();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.fetch.mockImplementation(async () => {
+      await db.admin`
+        UPDATE public.memberships SET active = false
+        WHERE user_id = ${USER_C} AND organization_id = ${ORG_1}
+      `;
+      return Response.json(
+        { messages: [{ id: `wamid.META${randomUUID()}` }] },
+        { status: 200 },
+      );
+    });
+
+    try {
+      const response = await handleSendMessage(
+        sendRequest({
+          conversationId: conversation.conversationId,
+          text: "Hola",
+        }),
+      );
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: "unrecorded" });
+      expect(await messageCount()).toBe(count);
+    } finally {
+      await db.admin`
+        UPDATE public.memberships SET active = true
+        WHERE user_id = ${USER_C} AND organization_id = ${ORG_1}
+      `;
+    }
   });
 });
