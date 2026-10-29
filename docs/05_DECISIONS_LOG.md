@@ -53,6 +53,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-037 | Dashboard Directivo y Agregación de Métricas | Aceptada en principio | 2026-10-14 |
 | DEC-038 | Gestión de Equipo, Invitaciones y Configuración de Concesionario | Aceptada en principio | 2026-10-15 |
 | DEC-039 | Procesamiento de Webhooks de WhatsApp e Ingesta de Mensajes | Aceptada en principio | 2026-10-21 |
+| DEC-040 | Interfaz de Bandeja de Entrada y Motor de Envío de WhatsApp | Aceptada en principio | 2026-10-29 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -993,6 +994,82 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Operación: `WHATSAPP_APP_SECRET` se configura en Vercel como variable server-only, y cada línea se registra en `whatsapp_lines` por provisioning. Para suscribir el endpoint en Meta, `WHATSAPP_VERIFY_TOKEN` se configura en Vercel y se carga igual en Meta (Verify token).
   - El runtime acceptance de staging todavía no ejercita la ingesta. Se suma cuando haya una línea de prueba.
   - La limitación C-14 (PII inmutable, sin redacción) también aplica a los mensajes ingeridos y a los nombres de perfil.
+
+## DEC-040 — Interfaz de Bandeja de Entrada y Motor de Envío de WhatsApp
+- **Estado:** Aceptada en principio · 2026-10-29. Formaliza el pedido del fundador "Hito 8: Bandeja de Entrada y Envío de Mensajes (Chat UI)". Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** DEC-039 dejó las conversaciones ingeridas listas para una bandeja (`last_message_at` y `last_message_preview`), pero `/conversations` sigue como placeholder (DEC-001) y nadie puede responder: enviar quedó fuera (DEC-036 §12, DEC-039 §14). El fundador pide la bandeja de dos columnas y el envío de texto por la Cloud API de Meta. El pedido nombra cosas que el schema tiene con otro nombre o que conviene precisar:
+  - `tenant_id` es `organization_id`, como en DEC-036 §4 y DEC-039.
+  - "seller/admin" son los dos roles de `membership_role` (DEC-018): cualquier membership activa.
+  - `direction = 'outbound'` ya existe (DEC-036 §4).
+  - "Componentes de Shadcn UI": el repositorio no usa la CLI ni los paquetes de shadcn. `components/ui/` ya sigue ese patrón (componentes propios sobre Radix, Tailwind y los tokens de DEC-013, DEC-009). La bandeja usa esas primitivas y suma las suyas en `components/inbox/`, sin dependencias nuevas.
+  - "RLS/Middleware": la autorización la dan la resolución del tenant (§3) y RLS. `proxy.ts` refresca la sesión y no es una barrera (DEC-020).
+- **Decisión:**
+  1. **Bandeja (`/conversations`).** Deja de ser placeholder: dos columnas, con Server Components y solo el composer de cliente.
+     - Izquierda: las conversaciones activas (`status = 'open'`, DEC-039 §6) de la organización activa, de la más reciente a la más vieja por `last_message_at`. Las que no tienen mensajes van al final, por alta. Cada una muestra el contacto, el preview y la fecha de Asunción.
+     - Derecha: el historial de la conversación elegida y, al pie, el composer. La elección viaja en la URL (`/conversations?c=<id>`). Sin elección, la columna invita a elegir una. Un id inválido, de otra organización, inexistente o de una conversación cerrada muestra "No encontramos la conversación", sin distinguir.
+     - Los entrantes (del cliente) van a la izquierda, en superficie blanca con borde y autor "Cliente". Los salientes (de un miembro) van a la derecha, en el tono suave de marca y con autor "Vos" u "Otro miembro". Cada mensaje lleva su fecha de Asunción.
+     - El historial ordena por `sent_at` (DEC-039 §10), con desempate por `created_at` e id. Solo muestra mensajes con conversación (los del webhook y los enviados): los registrados a mano en una oportunidad (Hito 4) siguen en su muro.
+     - El encabezado del historial muestra el teléfono enmascarado (`maskPhone()`), nunca completo.
+     - *Propuesta de implementación:* la lista muestra a lo sumo 100 conversaciones y el historial los últimos 200 mensajes. Cada uno dice cuántos hay cuando no los muestra todos.
+  2. **Endpoint.** `POST /api/messages/send` (Route Handler de Next, runtime Node). El pedido es JSON `{ conversationId, text }`, validado con Zod en `domains/conversations/outbound.ts`, puro y apto para el navegador: el composer avisa con el mismo esquema antes de enviar.
+     - `conversationId` es un UUID. `text` se normaliza como un mensaje registrado (DEC-036 §4) y tiene de 1 a 4096 caracteres.
+     - Cualquier otro campo se ignora: organización, contacto, línea, autor y reloj no salen del pedido.
+     - *Propuesta de implementación* (defensas de la request): `Content-Type: application/json` (si no, `415`), un cuerpo de hasta 64 KiB (`413`) y `Origin` igual al host de la request (si falta o difiere, `403`). Las cookies de sesión ya son `SameSite=Lax` (DEC-020); el `Origin` cierra además un pedido cruzado desde otro origen del mismo sitio.
+  3. **Autorización.** Membership activa (`admin` o `seller`) en la organización dueña de la conversación. Cualquier miembro responde cualquier conversación de su organización (DEC-023: sin responsable asignado).
+     - *Propuesta de implementación:* `resolveRequestTenant()` (`lib/tenant/session.ts`) es la misma resolución de DEC-021 sin redirects, para que un Route Handler responda JSON: sin usuario verificado es `401`, y sin organización activa resuelta (sin memberships activas, o varias sin elección válida) es `403`. `requireTenant()` pasa a ser ese mismo resultado con sus redirects: la cadena `usuario verificado → memberships activas → TenantContext → withTenant()` no cambia.
+     - La conversación se lee con `withTenant()` y filtro explícito por `organization_id` sobre RLS. De otra organización, inexistente o cerrada es `404 not_found`, sin distinguir, y no se llama a Meta.
+     - La función de registro (§6) vuelve a exigir, en la base, la membership activa en la organización y que la conversación sea de ella.
+  4. **Línea emisora y destinatario.** El pedido no elige la línea.
+     - *Propuesta de implementación:* se responde desde la línea activa de la organización (`whatsapp_lines.phone_number_id`), y tiene que haber exactamente una. Sin línea, o con varias, es `409 no_line`, sin llamar a Meta: varias líneas por organización siguen fuera (DEC-039 §14).
+     - Para leerla, `authenticated` recibe SELECT sobre `whatsapp_lines`, cubierto por la policy `whatsapp_lines_select_member` (membership activa, el patrón de ADR-001 §4). Sigue sin INSERT, UPDATE ni DELETE: las líneas las da de alta el provisioning. `phone_number_id` es un identificador de Meta, no una credencial.
+     - El destinatario es `contacts.phone_normalized` del contacto de la conversación, sin el `+`. Si faltara, es `409 no_recipient`.
+  5. **Cliente de Meta (`lib/whatsapp/api.ts`).** Es el servicio interno que conoce la Cloud API: el dominio no la conoce (CLAUDE.md §3).
+     - `POST https://graph.facebook.com/v20.0/{PHONE_NUMBER_ID}/messages`, con `Authorization: Bearer <WHATSAPP_API_TOKEN>` y un mensaje de texto (`messaging_product: "whatsapp"`, `type: "text"`, `preview_url: false`).
+     - Éxito es solo un `200` con `messages[0].id` válido, validado con Zod y tolerante a campos nuevos. Ese id (el wamid) es el `external_id` del mensaje.
+     - Un `4xx` de Meta es `502 provider_rejected`; un `5xx`, un error de red, un timeout de 10 segundos o una respuesta inválida son `502 provider_unavailable`. No se escribe nada.
+     - `WHATSAPP_API_TOKEN` es un secreto server-only nuevo, de al menos 32 caracteres, que se lee con `lib/env.server.ts`. Sin él, el endpoint responde `503 not_configured` sin leer la base ni llamar a Meta.
+     - Los logs registran el status y el código de error de Meta. Nunca el token, teléfonos, textos ni ids.
+  6. **Registro, después del `200` de Meta.** `private.record_outbound_whatsapp_message(organización, conversación, wamid, texto, preview)`: `SECURITY DEFINER` (owner `postgres`), con `search_path` vacío y EXECUTE solo para `authenticated`, llamada dentro de `withTenant()`. En una sola transacción:
+     1. sin usuario en los claims, `42501` (`outbound_requires_user`): la identidad de la ingesta (DEC-039 §4) no puede enviar. Sin todos los argumentos, `22004`;
+     2. la organización tiene que estar entre las de membership activa del usuario (`private.user_org_ids()`); si no, `42501`;
+     3. la conversación abierta de esa organización; si no hay, `not_found`;
+     4. la oportunidad abierta del contacto, si hay exactamente una (DEC-039 §9);
+     5. el INSERT del mensaje: `whatsapp`, `outbound`, autor `auth.uid()`, `external_id` (el wamid) y `sent_at = now()`, con la conversación y su contacto. Un choque de idempotencia es `duplicate`;
+     6. `last_message_at = now()` y `last_message_preview` (de `messagePreview()`) de la conversación, solo si no es más viejo que el último;
+     7. el trigger de actividad (DEC-036 §1), si el mensaje tiene oportunidad.
+     - *Propuesta de implementación:* una función en lugar de grants de UPDATE sobre `conversations`. Los miembros siguen sin escribir conversaciones (DEC-039 §6), y el último mensaje solo cambia junto con un mensaje.
+     - *Propuesta de implementación:* el enviado se asocia a la oportunidad abierta única, como el recibido. Aparece en su muro como "Mensaje enviado · WhatsApp" y mueve la recencia: enviar es una interacción con el cliente (DEC-036 §1).
+  7. **Mensajes (amplía DEC-036 §4 y §5 y DEC-039 §10).**
+     - `messages_source_check` suma un tercer origen: un WhatsApp saliente enviado por un miembro, con autor, conversación, `external_id` y `sent_at`, `channel = 'whatsapp'` y `direction = 'outbound'`.
+     - La policy de alta de miembros (`messages_insert_member`) exige además `conversation_id IS NULL`. Un miembro sigue registrando a mano solo mensajes sin conversación; un mensaje de una conversación solo lo escriben la ingesta y la función de envío.
+     - Siguen append-only, también para `service_role` (C-11).
+  8. **Orden, fallas y respuestas.** Leer (una transacción) → Meta → registrar (otra transacción). Ninguna transacción queda abierta durante la llamada a Meta (Supavisor en modo transacción).
+     - Si Meta aceptó y el registro falla (la membership se revocó o la conversación se cerró en el medio, o un error de base), responde `500 unrecorded`. El cliente ya recibió el mensaje: la UI avisa que no lo reenvíe. No hay reintento automático. El log registra solo `{ name, code, constraint_name }`.
+     - Respuestas: `200 { outcome: "sent", messageId }` (también ante un `duplicate`), `400 invalid` con el error de cada campo, y `401`, `403`, `404`, `409`, `413`, `415`, `502`, `503` y `500` como arriba. Ninguna expone SQLSTATE, constraints ni datos de otra organización.
+     - Revalida `/conversations` y, si el mensaje tiene oportunidad, `/opportunities` y `/opportunities/[id]`.
+  9. **Puerta única.** `handleSendMessage()` (`lib/conversations/send.ts`) es el único módulo que importa `db/queries/outbound-message.ts` (la lectura del destino y el registro), y ESLint lo impide en cualquier otro. La ruta solo compone.
+  10. **Migración `0014_whatsapp_outbound`.**
+      - Reemplaza `messages_source_check`, ajusta `messages_insert_member`, crea `whatsapp_lines_select_member` con su grant de SELECT y la función con su grant (EXECUTE solo para `authenticated`).
+      - Postcondiciones: las de 0013, con `whatsapp_lines` solo con la lectura de miembros (ninguna otra policy ni privilegio de `authenticated`), la función de envío `SECURITY DEFINER` de `postgres` con `search_path` vacío, EXECUTE solo para `authenticated` y la regla que exige usuario, y la policy de alta de miembros con `conversation_id IS NULL`.
+      - No toca ninguna fila existente: los mensajes registrados y los ingeridos cumplen el CHECK nuevo tal como están.
+  11. **Fuera de este bloque:** plantillas y la ventana de 24 horas de atención de Meta (un texto fuera de la ventana puede ser aceptado y fallar después, en un estado de entrega); estados de entrega o lectura; media, adjuntos y reacciones; iniciar una conversación nueva; cerrar o reabrir conversaciones; asignación, búsqueda, filtros y no leídos; tiempo real o refresco automático; reintento automático de un envío no registrado; límites de tasa; respuestas sugeridas, IA y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-001: `/conversations` deja de ser placeholder. La navegación no cambia.
+  - DEC-036 §12 y DEC-039 §14: entran la bandeja y el envío de texto. Plantillas, estados y media siguen fuera.
+  - DEC-039 §5: `whatsapp_lines` tiene lectura de miembros. Las escrituras siguen siendo de provisioning.
+  - DEC-039 §6: las conversaciones también las escribe la función de envío. Los miembros siguen sin escribirlas directamente.
+  - DEC-036 §5 y §6: la policy de alta de miembros suma `conversation_id IS NULL`, y `addMessage()` sigue siendo la puerta del registro manual.
+  - DEC-021 y CLAUDE.md §3: un Route Handler tenant-scoped resuelve con `resolveRequestTenant()`, la misma cadena sin redirects.
+  - CLAUDE.md §3: `WHATSAPP_API_TOKEN` es un secreto server-only nuevo, solo para la Cloud API. El service role y la secret key siguen sin aprobarse.
+  - CLAUDE.md §2: enviar es irreversible. Lo dispara siempre un miembro con "Enviar" y nada se envía solo.
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: la función vive en `private` (ADR-001 §3.6) y `withTenant()` sigue siendo la puerta de los datos de un usuario.
+- **Consecuencias:**
+  - `0014_whatsapp_outbound` se aplica a staging después del merge con `preflight → migrate → verify`: `expected_migrations = 0014_whatsapp_outbound` si staging ya tiene `0013`, o con las anteriores que falten delante, en orden. La verificación suma `schema.whatsapp-outbound` y amplía `schema.messages`, `schema.whatsapp-ingestion`, `rls.policies` y `privileges.authenticated`.
+  - Operación: `WHATSAPP_API_TOKEN` se configura en Vercel como variable server-only (un token de la Cloud API con permiso de mensajería sobre la cuenta de la línea), y la línea tiene que estar registrada y activa en `whatsapp_lines`.
+  - La versión `v20.0` de la Graph API es la del pedido. Meta retira las versiones con el tiempo: cambiarla es cambiar la constante `GRAPH_API_VERSION` de `lib/whatsapp/api.ts`.
+  - La limitación C-14 (PII inmutable, sin redacción) también aplica a los mensajes enviados.
+  - El runtime acceptance de staging todavía no ejercita el envío: necesita una línea y un número de prueba.
 
 ---
 
