@@ -25,7 +25,8 @@ import { seedVehicles, VEHICLES } from "./support/vehicles";
 const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
 
 /*
- * Reversión de 0013_whatsapp_ingestion, 0012_team_settings,
+ * Reversión de 0014_whatsapp_outbound, 0013_whatsapp_ingestion,
+ * 0012_team_settings,
  * 0011_conversations_and_activity_trigger,
  * 0010_opportunity_closure_metadata,
  * 0009_opportunity_notes_vehicle_link, 0008_opportunity_stages, 0007_opportunity_demand_facts,
@@ -57,6 +58,15 @@ function function0009(): Promise<string> {
 function function0010(): Promise<string> {
   return stageFunctionOf("0010_opportunity_closure_metadata.sql");
 }
+
+const REVERT_0014 = `
+  REVOKE SELECT ON public.whatsapp_lines FROM authenticated;
+  DROP FUNCTION private.record_outbound_whatsapp_message(uuid, uuid, text, text, text);
+  DROP POLICY whatsapp_lines_select_member ON public.whatsapp_lines;
+  ALTER POLICY messages_insert_member ON public.messages TO authenticated WITH CHECK (organization_id IN (SELECT private.user_org_ids()) AND recorded_by = (SELECT auth.uid()) AND created_at = now());
+  ALTER TABLE public.messages DROP CONSTRAINT messages_source_check;
+  ALTER TABLE public.messages ADD CONSTRAINT messages_source_check CHECK ((recorded_by IS NOT NULL AND conversation_id IS NULL AND external_id IS NULL AND sent_at IS NULL) OR (recorded_by IS NULL AND conversation_id IS NOT NULL AND external_id IS NOT NULL AND sent_at IS NOT NULL AND channel = 'whatsapp' AND direction = 'inbound'));
+`;
 
 const REVERT_0013 = `
   DROP FUNCTION private.ingest_whatsapp_message(text, text, text, text, text, text, text, timestamp with time zone);
@@ -292,14 +302,14 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     ]);
   });
 
-  it("registra 0000 a 0013 en el historial de drizzle", async () => {
-    expect(await appliedMigrations()).toBe(14);
+  it("registra 0000 a 0014 en el historial de drizzle", async () => {
+    expect(await appliedMigrations()).toBe(15);
   });
 
   it("volver a migrar no cambia nada", async () => {
     await runMigrations(db.migrationUrl);
 
-    expect(await appliedMigrations()).toBe(14);
+    expect(await appliedMigrations()).toBe(15);
     expect(await catalogSnapshot(db.admin)).toEqual(afterMigration);
   });
 
@@ -322,6 +332,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
       "0011_conversations_and_activity_trigger.sql",
       "0012_team_settings.sql",
       "0013_whatsapp_ingestion.sql",
+      "0014_whatsapp_outbound.sql",
     ]);
     for (const file of files) {
       const content = await readFile(new URL(file, MIGRATIONS_DIR), "utf8");
@@ -335,6 +346,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     try {
       // La reversión corre con la credencial de migración, dueña de todo.
       await revert.begin(async (tx) => {
+        await tx.unsafe(REVERT_0014);
         await tx.unsafe(REVERT_0013);
         await tx.unsafe(REVERT_0012);
         await tx.unsafe(REVERT_0011);
@@ -477,7 +489,7 @@ describe("0002 sobre una base en Foundation", () => {
     expect(await foundationCount(foundation.admin)).toEqual({
       organizations: 3,
       memberships: MEMBERSHIPS.length,
-      history: 14,
+      history: 15,
     });
     expect(await catalogSnapshot(foundation.admin)).toEqual(afterMigration);
   });
@@ -586,7 +598,7 @@ describe("0003 sobre una base en H1.1", () => {
     const [history] = await h11.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
     `;
-    expect(history?.count).toBe(14);
+    expect(history?.count).toBe(15);
     expect(await h11Snapshot(h11.admin)).toEqual(before);
     // Sin backfill: los contactos existentes quedan sin teléfono normalizado.
     const [normalized] = await h11.admin<{ count: number }[]>`
@@ -721,7 +733,7 @@ describe("0004 sobre una base en H1.2", () => {
 
     await runMigrations(h12.migrationUrl);
 
-    expect(await history(h12.admin)).toBe(14);
+    expect(await history(h12.admin)).toBe(15);
     expect(await h12Snapshot(h12.admin)).toEqual(before);
     // Sin seeds: vehicles nace vacía.
     const [vehicles] = await h12.admin<{ count: number }[]>`
@@ -865,7 +877,7 @@ describe("0005 sobre una base en H1.3A", () => {
 
     await runMigrations(h13a.migrationUrl);
 
-    expect(await history(h13a.admin)).toBe(14);
+    expect(await history(h13a.admin)).toBe(15);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13aSnapshot(h13a.admin)).toEqual(before);
     expect(await vehiclePolicies(h13a.admin)).toEqual([
@@ -1031,7 +1043,7 @@ describe("0006 sobre una base en H1.3B", () => {
 
     await runMigrations(h13b.migrationUrl);
 
-    expect(await history(h13b.admin)).toBe(14);
+    expect(await history(h13b.admin)).toBe(15);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13bSnapshot(h13b.admin)).toEqual(before);
     expect(await vehiclePolicies(h13b.admin)).toEqual([
@@ -1205,7 +1217,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
 
     await runMigrations(h13c.migrationUrl);
 
-    expect(await history(h13c.admin)).toBe(14);
+    expect(await history(h13c.admin)).toBe(15);
     // Ninguna fila cambia: interest_model e interest_version quedan como
     // legado de solo lectura.
     expect(await h13cSnapshot(h13c.admin)).toEqual(before);
@@ -1361,7 +1373,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
 
     await runMigrations(h14.migrationUrl);
 
-    expect(await history(h14.admin)).toBe(14);
+    expect(await history(h14.admin)).toBe(15);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia.
     expect(await h14Snapshot(h14.admin)).toEqual(before);
     const [reasons] = await h14.admin<{ count: number }[]>`
@@ -1418,7 +1430,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
       UPDATE public.opportunities SET stage = 'new' WHERE id = ${OPPORTUNITIES[0]!.id}
     `;
     await runMigrations(h14.migrationUrl);
-    expect(await history(h14.admin)).toBe(14);
+    expect(await history(h14.admin)).toBe(15);
     expect(await catalogSnapshot(h14.admin)).toEqual(afterMigration);
   });
 
@@ -1653,7 +1665,7 @@ describe("0009 sobre una base en H1.6", () => {
 
     await runMigrations(h16.migrationUrl);
 
-    expect(await history(h16.admin)).toBe(14);
+    expect(await history(h16.admin)).toBe(15);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia, ni stock.
     expect(await h16Snapshot(h16.admin)).toEqual(before);
     const [linked] = await h16.admin<{ count: number }[]>`
@@ -1907,7 +1919,7 @@ describe("0010 sobre una base en el Hito 2", () => {
 
     await runMigrations(hito2.migrationUrl);
 
-    expect(await history(hito2.admin)).toBe(14);
+    expect(await history(hito2.admin)).toBe(15);
     // Ninguna fila cambia: ni etapas, ni motivos, ni timestamps, ni stock.
     expect(await hito2Snapshot(hito2.admin)).toEqual(before);
     const [metadata] = await hito2.admin<{ count: number }[]>`
@@ -1950,7 +1962,7 @@ describe("0010 sobre una base en el Hito 2", () => {
     // Quien lo decide la corrige a mano (acá, la descarta) y 0010 se aplica.
     await hito2.admin`DELETE FROM public.opportunities WHERE id = ${won}`;
     await runMigrations(hito2.migrationUrl);
-    expect(await history(hito2.admin)).toBe(14);
+    expect(await history(hito2.admin)).toBe(15);
     expect(await catalogSnapshot(hito2.admin)).toEqual(afterMigration);
   });
 
@@ -1986,7 +1998,7 @@ describe("0010 sobre una base en el Hito 2", () => {
         await tx`ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_stage_transition`;
       });
       await runMigrations(hito2.migrationUrl);
-      expect(await history(hito2.admin)).toBe(14);
+      expect(await history(hito2.admin)).toBe(15);
       expect(await catalogSnapshot(hito2.admin)).toEqual(afterMigration);
     },
   );
@@ -2136,7 +2148,7 @@ describe("0010 sobre una base en el Hito 2", () => {
 
       await runMigrations(hito2.migrationUrl);
 
-      expect(await history(hito2.admin)).toBe(14);
+      expect(await history(hito2.admin)).toBe(15);
       expect(
         await hito2.admin`
           SELECT to_jsonb(op) AS row FROM public.opportunities op ORDER BY op.id
@@ -2169,7 +2181,7 @@ describe("0010 sobre una base en el Hito 2", () => {
       // La transacción se revirtió: el CHECK de motivos que la segunda
       // pasada borró antes de fallar sigue ahí, igual que todo lo demás.
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(14);
+      expect(await history(fresh.admin)).toBe(15);
     });
 
     it("se revierte sola al catálogo del Hito 2 y se vuelve a aplicar idéntica", async () => {
@@ -2204,7 +2216,7 @@ describe("0010 sobre una base en el Hito 2", () => {
       expect(await history(fresh.admin)).toBe(10);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(14);
+      expect(await history(fresh.admin)).toBe(15);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -2271,7 +2283,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
     return base;
   }
 
-  it("pnpm db:migrate aplica 0011 a 0013, conserva los datos (sin backfill de la recencia desde las notas) y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0011 a 0014, conserva los datos (sin backfill de la recencia desde las notas) y deja el mismo catálogo", async () => {
     const hito2a = await hito2aBase();
     const before = await hito2aSnapshot(hito2a.admin);
     expect(await history(hito2a.admin)).toBe(11);
@@ -2282,7 +2294,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
 
     await runMigrations(hito2a.migrationUrl);
 
-    expect(await history(hito2a.admin)).toBe(14);
+    expect(await history(hito2a.admin)).toBe(15);
     // Ninguna fila cambia: ni la recencia, ni updated_at, ni las notas.
     expect(await hito2aSnapshot(hito2a.admin)).toEqual(before);
     const [messages] = await hito2a.admin<{ count: number }[]>`
@@ -2480,7 +2492,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
 
       await runMigrations(hito2a.migrationUrl);
 
-      expect(await history(hito2a.admin)).toBe(14);
+      expect(await history(hito2a.admin)).toBe(15);
       expect(await hito2aSnapshot(hito2a.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito2a.admin)).toEqual(catalog);
     });
@@ -2508,7 +2520,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(14);
+      expect(await history(fresh.admin)).toBe(15);
     });
 
     it("se revierte sola al catálogo del Hito 2A y se vuelve a aplicar idéntica", async () => {
@@ -2525,7 +2537,9 @@ describe("0011 sobre una base en el Hito 2A", () => {
       try {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
-          // 0013 y 0012 se revierten antes: dependen de lo que deja 0011.
+          // 0014, 0013 y 0012 se revierten antes: dependen de lo que deja
+          // 0011.
+          await tx.unsafe(REVERT_0014);
           await tx.unsafe(REVERT_0013);
           await tx.unsafe(REVERT_0012);
           await tx.unsafe(REVERT_0011);
@@ -2534,7 +2548,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
             DELETE FROM drizzle.__drizzle_migrations
             WHERE created_at >= (
               SELECT created_at FROM drizzle.__drizzle_migrations
-              ORDER BY created_at DESC OFFSET 2 LIMIT 1
+              ORDER BY created_at DESC OFFSET 3 LIMIT 1
             )
           `);
         });
@@ -2545,7 +2559,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
       expect(await history(fresh.admin)).toBe(11);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(14);
+      expect(await history(fresh.admin)).toBe(15);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -2619,7 +2633,7 @@ describe("0012 sobre una base en el Hito 5", () => {
     return base;
   }
 
-  it("pnpm db:migrate aplica 0012 y 0013, conserva los datos (las organizaciones existentes quedan en PYG) y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0012 a 0014, conserva los datos (las organizaciones existentes quedan en PYG) y deja el mismo catálogo", async () => {
     const hito5 = await hito5Base();
     const before = await teamSnapshot(hito5.admin);
     expect(await history(hito5.admin)).toBe(12);
@@ -2630,7 +2644,7 @@ describe("0012 sobre una base en el Hito 5", () => {
 
     await runMigrations(hito5.migrationUrl);
 
-    expect(await history(hito5.admin)).toBe(14);
+    expect(await history(hito5.admin)).toBe(15);
     // Ninguna fila cambia: ni nombres, ni roles, ni timestamps.
     expect(await teamSnapshot(hito5.admin)).toEqual(before);
     const currencies = await hito5.admin<{ currency: string }[]>`
@@ -2661,7 +2675,7 @@ describe("0012 sobre una base en el Hito 5", () => {
     // Corregido a mano (decisión humana, no de la migración), se aplica.
     await hito5.admin`UPDATE public.organizations SET name = 'Con espacios' WHERE id = ${ORG_1}`;
     await runMigrations(hito5.migrationUrl);
-    expect(await history(hito5.admin)).toBe(14);
+    expect(await history(hito5.admin)).toBe(15);
   });
 
   /*
@@ -2835,7 +2849,7 @@ describe("0012 sobre una base en el Hito 5", () => {
 
       await runMigrations(hito5.migrationUrl);
 
-      expect(await history(hito5.admin)).toBe(14);
+      expect(await history(hito5.admin)).toBe(15);
       expect(await teamSnapshot(hito5.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito5.admin)).toEqual(catalog);
     });
@@ -2863,7 +2877,7 @@ describe("0012 sobre una base en el Hito 5", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(14);
+      expect(await history(fresh.admin)).toBe(15);
     });
 
     it("se revierte sola al catálogo del Hito 5 y se vuelve a aplicar idéntica", async () => {
@@ -2880,14 +2894,16 @@ describe("0012 sobre una base en el Hito 5", () => {
       try {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
-          // 0013 se revierte antes: es posterior a 0012 (DEC-039).
+          // 0014 y 0013 se revierten antes: son posteriores a 0012
+          // (DEC-039, DEC-040).
+          await tx.unsafe(REVERT_0014);
           await tx.unsafe(REVERT_0013);
           await tx.unsafe(REVERT_0012);
           await tx.unsafe(`
             DELETE FROM drizzle.__drizzle_migrations
             WHERE created_at >= (
               SELECT created_at FROM drizzle.__drizzle_migrations
-              ORDER BY created_at DESC OFFSET 1 LIMIT 1
+              ORDER BY created_at DESC OFFSET 2 LIMIT 1
             )
           `);
         });
@@ -2898,7 +2914,7 @@ describe("0012 sobre una base en el Hito 5", () => {
       expect(await history(fresh.admin)).toBe(12);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(14);
+      expect(await history(fresh.admin)).toBe(15);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -2986,7 +3002,7 @@ describe("0013 sobre una base en el Hito 6", () => {
     return base;
   }
 
-  it("pnpm db:migrate aplica solo 0013, conserva los datos (los mensajes de los miembros cumplen el CHECK de origen) y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0013 y 0014, conserva los datos (los mensajes de los miembros cumplen el CHECK de origen) y deja el mismo catálogo", async () => {
     const hito6 = await hito6Base();
     const before = await hito6Snapshot(hito6.admin);
     expect(await history(hito6.admin)).toBe(13);
@@ -2998,7 +3014,7 @@ describe("0013 sobre una base en el Hito 6", () => {
 
     await runMigrations(hito6.migrationUrl);
 
-    expect(await history(hito6.admin)).toBe(14);
+    expect(await history(hito6.admin)).toBe(15);
     expect(await hito6Snapshot(hito6.admin)).toEqual(before);
     // Las columnas nuevas nacen NULL: el mensaje sigue siendo de su autor.
     const messages = await hito6.admin`
@@ -3100,8 +3116,10 @@ describe("0013 sobre una base en el Hito 6", () => {
     const block = sql.split("--> statement-breakpoint").at(-1)!.trim();
     expect(block).toMatch(/^-- Custom SQL · postcondiciones[\s\S]*DO \$\$/);
 
+    // Sobre el catálogo que deja 0013: 0014 abre la lectura de las líneas
+    // (DEC-040 §4) y tiene sus propias postcondiciones.
     const fresh = await createDatabase();
-    await runMigrations(fresh.migrationUrl);
+    await migrateUpTo(fresh.migrationUrl, "0013_whatsapp_ingestion");
     // Control: sobre el catálogo real, la postcondición pasa.
     await fresh.admin.begin(async (tx) => {
       await tx.unsafe(block);
@@ -3194,7 +3212,7 @@ describe("0013 sobre una base en el Hito 6", () => {
 
       await runMigrations(hito6.migrationUrl);
 
-      expect(await history(hito6.admin)).toBe(14);
+      expect(await history(hito6.admin)).toBe(15);
       expect(await hito6Snapshot(hito6.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito6.admin)).toEqual(catalog);
     });
@@ -3222,7 +3240,7 @@ describe("0013 sobre una base en el Hito 6", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(14);
+      expect(await history(fresh.admin)).toBe(15);
     });
 
     it("se revierte sola al catálogo del Hito 6 y se vuelve a aplicar idéntica", async () => {
@@ -3239,10 +3257,15 @@ describe("0013 sobre una base en el Hito 6", () => {
       try {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
+          // 0014 se revierte antes: es posterior a 0013 (DEC-040).
+          await tx.unsafe(REVERT_0014);
           await tx.unsafe(REVERT_0013);
           await tx.unsafe(`
             DELETE FROM drizzle.__drizzle_migrations
-            WHERE created_at = (SELECT max(created_at) FROM drizzle.__drizzle_migrations)
+            WHERE created_at >= (
+              SELECT created_at FROM drizzle.__drizzle_migrations
+              ORDER BY created_at DESC OFFSET 1 LIMIT 1
+            )
           `);
         });
       } finally {
@@ -3252,7 +3275,346 @@ describe("0013 sobre una base en el Hito 6", () => {
       expect(await history(fresh.admin)).toBe(13);
 
       await runMigrations(fresh.migrationUrl);
+      expect(await history(fresh.admin)).toBe(15);
+      expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+    });
+  });
+});
+
+/*
+ * Una base en el Hito 7 (0000 a 0013, DEC-039) recibe 0014 (DEC-040): el
+ * CHECK de origen con el envío de un miembro, la policy de alta de los
+ * miembros sin conversación, la lectura de las líneas y la función de envío,
+ * sin roles nuevos y sin tocar ninguna fila: los mensajes registrados y los
+ * ingeridos cumplen el CHECK nuevo tal como están.
+ */
+describe("0014 sobre una base en el Hito 7", () => {
+  const HITO_7 = "0013_whatsapp_ingestion";
+  const OUTBOUND_FUNCTION =
+    "private.record_outbound_whatsapp_message(uuid, uuid, text, text, text)";
+  const LINE = "100000000000099";
+
+  // Como en los bloques anteriores: cada caso borra sus bases.
+  const created: TestDatabase[] = [];
+  async function createDatabase(): Promise<TestDatabase> {
+    const database = await server.createDatabase();
+    created.push(database);
+    return database;
+  }
+  afterEach(async () => {
+    for (const database of created.splice(0)) {
+      await server.dropDatabase(database);
+    }
+  });
+
+  async function history(sql: TestDatabase["admin"]): Promise<number> {
+    const [row] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+    `;
+    return row?.count ?? 0;
+  }
+
+  /** Todo lo que puede tener staging, fila por fila. */
+  async function hito7Snapshot(sql: TestDatabase["admin"]) {
+    const [snapshot] = await sql<{ data: unknown }[]>`
+      SELECT jsonb_build_object(
+        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'profiles', (SELECT jsonb_agg(p ORDER BY p.id) FROM public.profiles p),
+        'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
+        'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
+        'opportunities', (SELECT jsonb_agg(op ORDER BY op.id) FROM public.opportunities op),
+        'vehicles', (SELECT jsonb_agg(v ORDER BY v.id) FROM public.vehicles v),
+        'notes', (SELECT jsonb_agg(n ORDER BY n.id) FROM public.opportunity_notes n),
+        'messages', (SELECT jsonb_agg(me ORDER BY me.id) FROM public.messages me),
+        'conversations', (SELECT jsonb_agg(cv ORDER BY cv.id) FROM public.conversations cv),
+        'lines', (SELECT jsonb_agg(l ORDER BY l.id) FROM public.whatsapp_lines l)
+      ) AS data
+    `;
+    return snapshot?.data;
+  }
+
+  /** Si existen la función de envío y la policy de lectura de las líneas. */
+  async function hito8Objects(sql: TestDatabase["admin"]) {
+    const [row] = await sql<{ send: boolean; linesPolicy: boolean }[]>`
+      SELECT
+        to_regprocedure(${OUTBOUND_FUNCTION}) IS NOT NULL AS send,
+        EXISTS (
+          SELECT FROM pg_policies
+          WHERE schemaname = 'public' AND tablename = 'whatsapp_lines'
+        ) AS "linesPolicy"
+    `;
+    return row;
+  }
+
+  /**
+   * Una base en el Hito 7 con datos: un mensaje registrado por un miembro y
+   * uno ingerido por la función de ingesta (sin claims, como el webhook).
+   */
+  async function hito7Base(): Promise<TestDatabase> {
+    const base = await createDatabase();
+    await migrateUpTo(base.migrationUrl, HITO_7);
+    await seedTenants(base.admin);
+    await seedOpportunities(base.admin);
+    await seedVehicles(base.admin);
+    const [first] = OPPORTUNITIES;
+    await base.admin`
+      INSERT INTO public.messages (organization_id, contact_id, opportunity_id,
+        channel, direction, content, recorded_by)
+      VALUES (${first!.organizationId}, ${first!.contact.id}, ${first!.id},
+        'whatsapp', 'inbound', 'Mensaje del Hito 4', ${USER_A})
+    `;
+    await base.admin`
+      INSERT INTO public.whatsapp_lines (organization_id, phone_number_id)
+      VALUES (${ORG_1}, ${LINE})
+    `;
+    await base.admin`
+      SELECT * FROM private.ingest_whatsapp_message(${LINE}, 'wamid.HITO7',
+        '+595981777001', '+595981777001', 'Cliente del Hito 7', 'Hola',
+        'Hola', '2026-10-21T12:00:00Z')
+    `;
+    return base;
+  }
+
+  it("pnpm db:migrate aplica solo 0014, conserva los datos (los mensajes registrados e ingeridos cumplen el CHECK nuevo) y deja el mismo catálogo", async () => {
+    const hito7 = await hito7Base();
+    const before = await hito7Snapshot(hito7.admin);
+    expect(await history(hito7.admin)).toBe(14);
+    expect(await hito8Objects(hito7.admin)).toEqual({
+      send: false,
+      linesPolicy: false,
+    });
+
+    await runMigrations(hito7.migrationUrl);
+
+    expect(await history(hito7.admin)).toBe(15);
+    expect(await hito7Snapshot(hito7.admin)).toEqual(before);
+    expect(await hito8Objects(hito7.admin)).toEqual({
+      send: true,
+      linesPolicy: true,
+    });
+    const messages = await hito7.admin`
+      SELECT direction, recorded_by IS NOT NULL AS "byMember",
+        conversation_id IS NOT NULL AS "inConversation"
+      FROM public.messages ORDER BY created_at, id
+    `;
+    expect(messages).toEqual([
+      { direction: "inbound", byMember: true, inConversation: false },
+      { direction: "inbound", byMember: false, inConversation: true },
+    ]);
+    expect(await catalogSnapshot(hito7.admin)).toEqual(afterMigration);
+  });
+
+  /*
+   * Postcondiciones de 0014: las de 0013 más las de DEC-040. Si la base no
+   * las cumple, 0014 falla y no aplica nada.
+   */
+  const RUNTIME_0014 =
+    /app_runtime must be LOGIN NOINHERIT NOBYPASSRLS and only a member of authenticated/;
+  const COVERAGE_0014 =
+    /every privilege of authenticated on public tables must be covered by a policy/;
+  const unsafeStates: [string, string, string, RegExp][] = [
+    [
+      "app_runtime miembro de service_role (el envío no agrega roles)",
+      "GRANT service_role TO app_runtime WITH INHERIT FALSE, SET TRUE",
+      "REVOKE service_role FROM app_runtime",
+      RUNTIME_0014,
+    ],
+    [
+      "authenticated con INSERT sobre las líneas (sin policy: provisioning)",
+      "GRANT INSERT ON public.whatsapp_lines TO authenticated",
+      "REVOKE INSERT ON public.whatsapp_lines FROM authenticated",
+      COVERAGE_0014,
+    ],
+  ];
+
+  it.each(unsafeStates)(
+    "0014 falla cerrada ante %s",
+    async (_, unsafe, restore, reason) => {
+      const hito7 = await createDatabase();
+      await migrateUpTo(hito7.migrationUrl, HITO_7);
+      await hito7.admin.unsafe(unsafe);
+      try {
+        await expect(runMigrations(hito7.migrationUrl)).rejects.toThrow(
+          "pnpm db:migrate failed",
+        );
+        await expect(
+          migrateReportingErrors(hito7.migrationUrl),
+        ).rejects.toMatchObject({
+          cause: { message: expect.stringMatching(reason) },
+        });
+        // Nada se aplicó: ni la función ni la policy de las líneas.
+        expect(await history(hito7.admin)).toBe(14);
+        expect(await hito8Objects(hito7.admin)).toEqual({
+          send: false,
+          linesPolicy: false,
+        });
+      } finally {
+        await hito7.admin.unsafe(restore);
+      }
+      // Corregido el estado, 0014 se aplica.
+      await runMigrations(hito7.migrationUrl);
+      expect(await catalogSnapshot(hito7.admin)).toEqual(afterMigration);
+    },
+  );
+
+  /*
+   * Las postcondiciones que dependen de lo que crea la misma migración (la
+   * función de envío, la policy de las líneas y la de alta de mensajes) se
+   * corren contra una base ya migrada: pasan sobre el catálogo real y fallan
+   * cerradas ante cada mutación.
+   */
+  it("la postcondición de 0014 exige la función de envío SECURITY DEFINER con EXECUTE solo para authenticated y sus reglas, las líneas de solo lectura para los miembros y el alta de mensajes sin conversación", async () => {
+    const sql = await readFile(
+      new URL("0014_whatsapp_outbound.sql", MIGRATIONS_DIR),
+      "utf8",
+    );
+    const block = sql.split("--> statement-breakpoint").at(-1)!.trim();
+    expect(block).toMatch(/^-- Custom SQL · postcondiciones[\s\S]*DO \$\$/);
+
+    const fresh = await createDatabase();
+    await runMigrations(fresh.migrationUrl);
+    // Control: sobre el catálogo real, la postcondición pasa.
+    await fresh.admin.begin(async (tx) => {
+      await tx.unsafe(block);
+    });
+
+    const FUNCTION =
+      /^DEC-040: private\.record_outbound_whatsapp_message\(\) must be SECURITY DEFINER owned by postgres, with an empty search_path, EXECUTE only for authenticated and the rules that require an active member/;
+    const LINES = /^DEC-040: whatsapp_lines is read-only for members/;
+    const INSERT_POLICY =
+      /^DEC-040: the member insert policy on messages must require conversation_id IS NULL/;
+    const SOURCE =
+      /^DEC-039: messages need the validated source CHECK and conversations the composite contact foreign key/;
+    // Versiones de la función sin cada una de sus reglas.
+    const definition = sql
+      .slice(
+        sql.indexOf(
+          'CREATE FUNCTION "private"."record_outbound_whatsapp_message"',
+        ),
+        sql.indexOf("$$;", sql.indexOf("AS $$")) + 3,
+      )
+      .replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION");
+    const broken: [string, RegExp][] = [
+      [`ALTER FUNCTION ${OUTBOUND_FUNCTION} SECURITY INVOKER`, FUNCTION],
+      [`ALTER FUNCTION ${OUTBOUND_FUNCTION} RESET search_path`, FUNCTION],
+      [`GRANT EXECUTE ON FUNCTION ${OUTBOUND_FUNCTION} TO anon`, FUNCTION],
+      [`GRANT EXECUTE ON FUNCTION ${OUTBOUND_FUNCTION} TO PUBLIC`, FUNCTION],
+      [
+        `GRANT EXECUTE ON FUNCTION ${OUTBOUND_FUNCTION} TO app_runtime`,
+        FUNCTION,
+      ],
+      [
+        `REVOKE EXECUTE ON FUNCTION ${OUTBOUND_FUNCTION} FROM authenticated`,
+        FUNCTION,
+      ],
+      [definition.replace(/outbound_requires_user/g, "no guard"), FUNCTION],
+      [definition.replace(/outbound_not_member/g, "no guard"), FUNCTION],
+      [
+        "CREATE POLICY probe ON public.whatsapp_lines FOR SELECT TO authenticated USING (true)",
+        LINES,
+      ],
+      [
+        "DROP POLICY whatsapp_lines_select_member ON public.whatsapp_lines; CREATE POLICY whatsapp_lines_select_member ON public.whatsapp_lines FOR SELECT TO authenticated USING (true)",
+        LINES,
+      ],
+      [
+        "GRANT UPDATE (active) ON public.whatsapp_lines TO authenticated",
+        /must be covered by a policy/,
+      ],
+      [
+        "CREATE POLICY probe ON public.whatsapp_lines FOR DELETE TO authenticated USING (true); GRANT DELETE ON public.whatsapp_lines TO authenticated",
+        /authenticated must not delete or truncate public tables/,
+      ],
+      [
+        "ALTER POLICY messages_insert_member ON public.messages TO authenticated WITH CHECK (organization_id IN (SELECT private.user_org_ids()) AND recorded_by = (SELECT auth.uid()) AND created_at = now())",
+        INSERT_POLICY,
+      ],
+      [
+        "ALTER TABLE public.messages DROP CONSTRAINT messages_source_check",
+        SOURCE,
+      ],
+      ["ALTER ROLE app_runtime BYPASSRLS", RUNTIME_0014],
+    ];
+    for (const [statement, reason] of broken) {
+      await expect(
+        fresh.admin.begin(async (tx) => {
+          await tx.unsafe(statement);
+          await tx.unsafe(block);
+        }),
+        statement.slice(0, 80),
+      ).rejects.toMatchObject({ message: expect.stringMatching(reason) });
+    }
+  });
+
+  describe("idempotencia", () => {
+    it("pnpm db:migrate dos veces: la segunda no aplica nada, ni toca los datos", async () => {
+      const hito7 = await hito7Base();
+      await runMigrations(hito7.migrationUrl);
+      const rows = await hito7Snapshot(hito7.admin);
+      const catalog = await catalogSnapshot(hito7.admin);
+
+      await runMigrations(hito7.migrationUrl);
+
+      expect(await history(hito7.admin)).toBe(15);
+      expect(await hito7Snapshot(hito7.admin)).toEqual(rows);
+      expect(await catalogSnapshot(hito7.admin)).toEqual(catalog);
+    });
+
+    it("volver a ejecutar su SQL fuera del historial falla entero y no deja nada a medias", async () => {
+      const sql = await readFile(
+        new URL("0014_whatsapp_outbound.sql", MIGRATIONS_DIR),
+        "utf8",
+      );
+      const statements = sql.split("--> statement-breakpoint");
+      const fresh = await createDatabase();
+      await runMigrations(fresh.migrationUrl);
+      const owner = postgres(fresh.migrationUrl, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        // El CHECK se reemplaza sin error, pero la policy de las líneas ya
+        // existe: 42710 y la transacción entera se revierte.
+        await expect(
+          owner.begin(async (tx) => {
+            for (const statement of statements) await tx.unsafe(statement);
+          }),
+        ).rejects.toMatchObject({ code: "42710" });
+      } finally {
+        await owner.end();
+      }
+      expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+      expect(await history(fresh.admin)).toBe(15);
+    });
+
+    it("se revierte sola al catálogo del Hito 7 y se vuelve a aplicar idéntica", async () => {
+      const reference = await createDatabase();
+      await migrateUpTo(reference.migrationUrl, HITO_7);
+      const hito7Catalog = await catalogSnapshot(reference.admin);
+
+      const fresh = await createDatabase();
+      await runMigrations(fresh.migrationUrl);
+      const owner = postgres(fresh.migrationUrl, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        // La reversión corre con la credencial de migración, dueña de todo.
+        await owner.begin(async (tx) => {
+          await tx.unsafe(REVERT_0014);
+          await tx.unsafe(`
+            DELETE FROM drizzle.__drizzle_migrations
+            WHERE created_at = (SELECT max(created_at) FROM drizzle.__drizzle_migrations)
+          `);
+        });
+      } finally {
+        await owner.end();
+      }
+      expect(await catalogSnapshot(fresh.admin)).toEqual(hito7Catalog);
       expect(await history(fresh.admin)).toBe(14);
+
+      await runMigrations(fresh.migrationUrl);
+      expect(await history(fresh.admin)).toBe(15);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });

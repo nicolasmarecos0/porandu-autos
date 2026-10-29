@@ -3,14 +3,17 @@ import {
   boolean,
   check,
   index,
+  pgPolicy,
   pgTable,
   text,
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import { authenticatedRole } from "drizzle-orm/supabase";
 
 import { timestamps } from "./columns";
 import { organizations } from "./organizations";
+import { userOrgIds } from "./policies";
 
 /*
  * Líneas de WhatsApp de cada organización (Hito 7, DEC-039 §5): el
@@ -26,9 +29,11 @@ import { organizations } from "./organizations";
  * - Borrar una organización con líneas se rechaza (RESTRICT).
  *
  * Las da de alta el provisioning con el rol dueño, como las cuentas
- * (DEC-038 §3). RLS habilitado y sin policies ni grants para
- * `authenticated` (default deny): ningún miembro las lee ni las escribe. La
- * función de ingesta (SECURITY DEFINER, 0013) las lee como dueña.
+ * (DEC-038 §3). La función de ingesta (SECURITY DEFINER, 0013) las lee como
+ * dueña. Lectura (Hito 8, DEC-040 §4): las líneas de las organizaciones con
+ * membership activa, para responder desde la línea de la organización. Sin
+ * INSERT, UPDATE ni DELETE para `authenticated`: siguen siendo de
+ * provisioning.
  */
 export const whatsappLines = pgTable(
   "whatsapp_lines",
@@ -48,5 +53,10 @@ export const whatsappLines = pgTable(
       "whatsapp_lines_phone_number_id_check",
       sql`${t.phoneNumberId} ~ '^[0-9]{1,32}$'`,
     ),
+    pgPolicy("whatsapp_lines_select_member", {
+      for: "select",
+      to: authenticatedRole,
+      using: sql`${t.organizationId} IN ${userOrgIds}`,
+    }),
   ],
 ).enableRLS();

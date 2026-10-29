@@ -616,13 +616,14 @@ describe("messages (Hito 4)", () => {
       messages_content_check:
         "CHECK ((((char_length(content) >= 1) AND (char_length(content) <= 4096)) AND (content = btrim(content, (' '::text || chr(10)))) AND (translate(content, chr(10), ''::text) !~ '[[:cntrl:]]'::text)))",
       // Hito 7 (DEC-039 §10): la conversación del mismo contacto, el id del
-      // proveedor y el origen (miembro o ingesta).
+      // proveedor y el origen (miembro, ingesta o, desde el Hito 8, envío
+      // de un miembro, DEC-040 §7).
       messages_conversation_fk:
         "FOREIGN KEY (organization_id, conversation_id, contact_id) REFERENCES conversations(organization_id, id, contact_id) ON DELETE RESTRICT",
       messages_external_id_check:
         "CHECK ((((char_length(external_id) >= 1) AND (char_length(external_id) <= 256)) AND (external_id !~ '[[:space:][:cntrl:]]'::text)))",
       messages_source_check:
-        "CHECK ((((recorded_by IS NOT NULL) AND (conversation_id IS NULL) AND (external_id IS NULL) AND (sent_at IS NULL)) OR ((recorded_by IS NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'inbound'::text))))",
+        "CHECK ((((recorded_by IS NOT NULL) AND (conversation_id IS NULL) AND (external_id IS NULL) AND (sent_at IS NULL)) OR ((recorded_by IS NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'inbound'::text)) OR ((recorded_by IS NOT NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'outbound'::text))))",
     });
   });
 

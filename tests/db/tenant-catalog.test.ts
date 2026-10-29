@@ -18,14 +18,18 @@ import {
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
- * 0012_team_settings y 0013_whatsapp_ingestion, leídos del catálogo de
+ * 0012_team_settings, 0013_whatsapp_ingestion y 0014_whatsapp_outbound,
+ * leídos del catálogo de
  * PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2,
  * C3 y C9). El acceso a datos se prueba en tenant-isolation.test.ts,
  * opportunities.test.ts, vehicles.test.ts, demand-facts.test.ts y los tests
  * de cada escritura.
  */
 
-/** Tablas que leen los miembros (todas salvo whatsapp_lines, DEC-039 §5). */
+/**
+ * Tablas que leen los miembros: todas, también whatsapp_lines desde el Hito 8
+ * (DEC-040 §4).
+ */
 const TABLES = [
   "contacts",
   "conversations",
@@ -37,6 +41,7 @@ const TABLES = [
   "organizations",
   "profiles",
   "vehicles",
+  "whatsapp_lines",
 ];
 
 let server: TestServer;
@@ -246,7 +251,7 @@ describe("policies (ADR-001 §4)", () => {
         command: "INSERT",
         using: null,
         withCheck:
-          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (recorded_by = ( SELECT auth.uid() AS uid)) AND (created_at = now()))",
+          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (recorded_by = ( SELECT auth.uid() AS uid)) AND (created_at = now()) AND (conversation_id IS NULL))",
       },
       {
         table: "messages",
@@ -388,6 +393,16 @@ describe("policies (ADR-001 §4)", () => {
           "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'in_preparation'::text))",
         withCheck:
           "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'available'::text))",
+      },
+      {
+        table: "whatsapp_lines",
+        name: "whatsapp_lines_select_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
       },
     ]);
   });
@@ -729,7 +744,7 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
   });
 
-  it("conversations y whatsapp_lines (Hito 7, DEC-039 §5 y §6): los miembros solo leen las conversaciones; las líneas no tienen policies ni privilegios de authenticated", async () => {
+  it("conversations y whatsapp_lines (Hito 7, DEC-039 §6; Hito 8, DEC-040 §4): los miembros solo leen las conversaciones y las líneas de su organización", async () => {
     expect(
       (
         await tablePrivileges(db.admin, [
@@ -741,14 +756,58 @@ describe("grants (ADR-001 §3.6)", () => {
         (grant) =>
           grant.endsWith(" conversations") || grant.endsWith(" whatsapp_lines"),
       ),
-    ).toEqual(["authenticated SELECT conversations"]);
+    ).toEqual([
+      "authenticated SELECT conversations",
+      "authenticated SELECT whatsapp_lines",
+    ]);
     expect(
       (await policies(db.admin))
         .filter((policy) =>
           ["conversations", "whatsapp_lines"].includes(policy.table),
         )
         .map((policy) => `${policy.table}.${policy.name} ${policy.command}`),
-    ).toEqual(["conversations.conversations_select_member SELECT"]);
+    ).toEqual([
+      "conversations.conversations_select_member SELECT",
+      "whatsapp_lines.whatsapp_lines_select_member SELECT",
+    ]);
+  });
+
+  it("envío (Hito 8, DEC-040 §6): private.record_outbound_whatsapp_message() es SECURITY DEFINER de postgres, de search_path vacío, con EXECUTE solo para authenticated y las reglas que exigen un miembro activo", async () => {
+    const signature =
+      "private.record_outbound_whatsapp_message(uuid,uuid,text,text,text)";
+    const [fn] = await db.admin<
+      {
+        securityDefiner: boolean;
+        volatility: string;
+        config: string[] | null;
+        owner: string;
+        acl: string[] | null;
+        guards: boolean;
+      }[]
+    >`
+      SELECT p.prosecdef AS "securityDefiner", p.provolatile::text AS volatility,
+        p.proconfig AS config, p.proowner::regrole::text AS owner,
+        p.proacl::text[] AS acl,
+        position('outbound_requires_user' in p.prosrc) > 0
+          AND position('outbound_not_member' in p.prosrc) > 0 AS guards
+      FROM pg_proc p
+      WHERE p.oid = to_regprocedure(${signature})
+    `;
+    expect(fn).toEqual({
+      securityDefiner: true,
+      volatility: "v",
+      config: ['search_path=""'],
+      owner: "postgres",
+      acl: ["postgres=X/postgres", "authenticated=X/postgres"],
+      guards: true,
+    });
+    const executors = await db.admin<{ role: string }[]>`
+      SELECT rolname AS role FROM pg_roles
+      WHERE has_function_privilege(oid, to_regprocedure(${signature}), 'EXECUTE')
+        AND NOT rolsuper
+      ORDER BY 1
+    `;
+    expect(executors.map((r) => r.role)).toEqual(["authenticated", "postgres"]);
   });
 
   it("ingesta (Hito 7, DEC-039 §4 y §7): private.ingest_whatsapp_message() es SECURITY DEFINER de postgres, de search_path vacío, con EXECUTE solo para authenticated y la regla que rechaza las claims; app_runtime sigue sin privilegios directos", async () => {

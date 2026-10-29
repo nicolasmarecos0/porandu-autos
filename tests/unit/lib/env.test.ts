@@ -4,6 +4,7 @@ import {
   EnvValidationError,
   parsePublicEnv,
   parseServerEnv,
+  parseWhatsAppApiEnv,
   parseWhatsAppEnv,
   parseWhatsAppVerifyEnv,
 } from "@/lib/env";
@@ -179,5 +180,39 @@ describe("parseWhatsAppVerifyEnv (verificación de la suscripción)", () => {
       "WHATSAPP_VERIFY_TOKEN must be at least 16 characters long.",
     ]);
     expect(issues.join()).not.toContain("corto-corto");
+  });
+});
+
+describe("parseWhatsAppApiEnv (envío por la Cloud API, DEC-040 §5)", () => {
+  const TOKEN = "token-de-la-cloud-api-de-meta-0123456789";
+
+  it("acepta un token de al menos 32 caracteres", () => {
+    expect(parseWhatsAppApiEnv({ WHATSAPP_API_TOKEN: TOKEN })).toEqual({
+      apiToken: TOKEN,
+    });
+  });
+
+  it("exige WHATSAPP_API_TOKEN y no toma los otros secretos ni una variable pública", () => {
+    const expected = ["WHATSAPP_API_TOKEN is required."];
+    expect(issuesOf(() => parseWhatsAppApiEnv({}))).toEqual(expected);
+    for (const name of [
+      "WHATSAPP_APP_SECRET",
+      "WHATSAPP_VERIFY_TOKEN",
+      "NEXT_PUBLIC_WHATSAPP_API_TOKEN",
+    ]) {
+      expect(issuesOf(() => parseWhatsAppApiEnv({ [name]: TOKEN }))).toEqual(
+        expected,
+      );
+    }
+  });
+
+  it("rechaza un token corto sin exponerlo", () => {
+    const issues = issuesOf(() =>
+      parseWhatsAppApiEnv({ WHATSAPP_API_TOKEN: "token-corto-1234" }),
+    );
+    expect(issues).toEqual([
+      "WHATSAPP_API_TOKEN must be at least 32 characters long.",
+    ]);
+    expect(issues.join()).not.toContain("token-corto-1234");
   });
 });

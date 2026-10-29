@@ -73,9 +73,12 @@ export const messageExternalIdMaxLength = 256;
  *   `sent_at` (cuándo lo envió el cliente, según el proveedor).
  * - `messages_source_check`: o lo registró un miembro (con autor, sin
  *   conversación, id ni `sent_at`), o es un WhatsApp entrante ingerido (sin
- *   autor, con conversación, id y `sent_at`). La policy de INSERT exige
- *   `recorded_by = auth.uid()`, así que un miembro solo escribe la primera
- *   forma; la segunda solo la escribe `private.ingest_whatsapp_message()`.
+ *   autor, con conversación, id y `sent_at`), o es un WhatsApp saliente que
+ *   envió un miembro (Hito 8, DEC-040 §7: con autor, conversación, id y
+ *   `sent_at`). La policy de INSERT exige `recorded_by = auth.uid()` y
+ *   `conversation_id IS NULL`, así que un miembro solo escribe la primera
+ *   forma; la segunda solo la escribe `private.ingest_whatsapp_message()` y
+ *   la tercera, `private.record_outbound_whatsapp_message()`.
  * - Índices (organization_id, opportunity_id, created_at DESC) para el muro
  *   de una oportunidad y (organization_id, contact_id, created_at DESC) para
  *   la FK y la conversación de un contacto.
@@ -86,8 +89,9 @@ export const messageExternalIdMaxLength = 256;
  * modela triggers).
  *
  * Lectura: los mensajes de las organizaciones con membership activa. Alta:
- * un miembro activo, como autor de la request y con el reloj de la base, o
- * la función de ingesta (SECURITY DEFINER, 0013), como dueña. Sin
+ * un miembro activo, como autor de la request, con el reloj de la base y sin
+ * conversación, o las funciones de ingesta (SECURITY DEFINER, 0013) y de
+ * envío (SECURITY DEFINER, 0014), como dueñas. Sin
  * policies ni grants de UPDATE o DELETE: append-only (también para
  * service_role, como C-11; el owner `postgres` es la limitación documentada).
  */
@@ -167,19 +171,20 @@ export const messages = pgTable(
     ),
     check(
       "messages_source_check",
-      sql`(${t.recordedBy} IS NOT NULL AND ${t.conversationId} IS NULL AND ${t.externalId} IS NULL AND ${t.sentAt} IS NULL) OR (${t.recordedBy} IS NULL AND ${t.conversationId} IS NOT NULL AND ${t.externalId} IS NOT NULL AND ${t.sentAt} IS NOT NULL AND ${t.channel} = 'whatsapp' AND ${t.direction} = 'inbound')`,
+      sql`(${t.recordedBy} IS NOT NULL AND ${t.conversationId} IS NULL AND ${t.externalId} IS NULL AND ${t.sentAt} IS NULL) OR (${t.recordedBy} IS NULL AND ${t.conversationId} IS NOT NULL AND ${t.externalId} IS NOT NULL AND ${t.sentAt} IS NOT NULL AND ${t.channel} = 'whatsapp' AND ${t.direction} = 'inbound') OR (${t.recordedBy} IS NOT NULL AND ${t.conversationId} IS NOT NULL AND ${t.externalId} IS NOT NULL AND ${t.sentAt} IS NOT NULL AND ${t.channel} = 'whatsapp' AND ${t.direction} = 'outbound')`,
     ),
     pgPolicy("messages_select_member", {
       for: "select",
       to: authenticatedRole,
       using: sql`${t.organizationId} IN ${userOrgIds}`,
     }),
-    // Alta: un miembro activo de la organización, como autor de la request
-    // y con el reloj de la base.
+    // Alta: un miembro activo de la organización, como autor de la request,
+    // con el reloj de la base y sin conversación: los mensajes de una
+    // conversación solo los escriben las funciones de ingesta y de envío.
     pgPolicy("messages_insert_member", {
       for: "insert",
       to: authenticatedRole,
-      withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.recordedBy} = ${authUid} AND ${t.createdAt} = now()`,
+      withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.recordedBy} = ${authUid} AND ${t.createdAt} = now() AND ${t.conversationId} IS NULL`,
     }),
   ],
 ).enableRLS();

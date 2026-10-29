@@ -11,9 +11,10 @@ import { finding, type Finding } from "./report.mts";
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
- * 0012_team_settings y 0013_whatsapp_ingestion, leído del catálogo real
- * (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033,
- * DEC-034, DEC-036, DEC-038, DEC-039). Espeja tests/db/tenant-catalog y
+ * 0012_team_settings, 0013_whatsapp_ingestion y 0014_whatsapp_outbound,
+ * leído del catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4,
+ * DEC-030, DEC-032, DEC-033, DEC-034, DEC-036, DEC-038, DEC-039, DEC-040).
+ * Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
  */
@@ -31,10 +32,11 @@ const APP_TABLES = [
   "vehicles",
   "whatsapp_lines",
 ];
-/** Las que leen los miembros: whatsapp_lines es de provisioning (DEC-039). */
-const MEMBER_READABLE_TABLES = APP_TABLES.filter(
-  (table) => table !== "whatsapp_lines",
-);
+/**
+ * Las que leen los miembros: todas, también whatsapp_lines desde el Hito 8
+ * (DEC-040 §4).
+ */
+const MEMBER_READABLE_TABLES = APP_TABLES;
 const PRIVILEGES = [
   "SELECT",
   "INSERT",
@@ -74,8 +76,9 @@ type Policy = {
  * el alta y la edición de memberships, solo para admin activo
  * (private.user_admin_org_ids()); qué cambio de membership vale lo decide su
  * trigger (EXPECTED_TEAM_SETTINGS). El Hito 7 (DEC-039) suma la lectura de
- * conversations; whatsapp_lines no tiene policies. Tal como las deparsea
- * PostgreSQL 17.
+ * conversations, y el Hito 8 (DEC-040), la de whatsapp_lines y
+ * `conversation_id IS NULL` en el alta de mensajes de los miembros. Tal como
+ * las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -147,7 +150,7 @@ export const EXPECTED_POLICIES: Policy[] = [
     command: "INSERT",
     using: null,
     withCheck:
-      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (recorded_by = ( SELECT auth.uid() AS uid)) AND (created_at = now()))",
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (recorded_by = ( SELECT auth.uid() AS uid)) AND (created_at = now()) AND (conversation_id IS NULL))",
   },
   {
     table: "messages",
@@ -290,6 +293,16 @@ export const EXPECTED_POLICIES: Policy[] = [
     withCheck:
       "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'available'::text))",
   },
+  {
+    table: "whatsapp_lines",
+    name: "whatsapp_lines_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
 ];
 
 /** `contacts.phone_normalized` tal como lo deja 0003 (PostgreSQL 17). */
@@ -384,12 +397,12 @@ export const EXPECTED_OPPORTUNITY_NOTES = {
 };
 
 /**
- * Mensajes (Hito 4, 0011; Hito 7, 0013), tal como los deja PostgreSQL 17:
- * FKs RESTRICT a la organización, al contacto y a la oportunidad y a la
- * conversación de la misma organización y del mismo contacto, y al autor;
- * los CHECKs de canal, dirección, texto, id del proveedor y origen (miembro
- * o ingesta); y la unique de opportunities que es destino de la FK
- * compuesta.
+ * Mensajes (Hito 4, 0011; Hito 7, 0013; Hito 8, 0014), tal como los deja
+ * PostgreSQL 17: FKs RESTRICT a la organización, al contacto y a la
+ * oportunidad y a la conversación de la misma organización y del mismo
+ * contacto, y al autor; los CHECKs de canal, dirección, texto, id del
+ * proveedor y origen (miembro, ingesta o envío de un miembro); y la unique
+ * de opportunities que es destino de la FK compuesta.
  */
 export const EXPECTED_MESSAGES = {
   constraints: [
@@ -402,7 +415,7 @@ export const EXPECTED_MESSAGES = {
     "messages_opportunity_fk FOREIGN KEY (organization_id, opportunity_id, contact_id) REFERENCES opportunities(organization_id, id, contact_id) ON DELETE RESTRICT",
     "messages_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
     "messages_recorded_by_profiles_id_fk FOREIGN KEY (recorded_by) REFERENCES profiles(id) ON DELETE RESTRICT",
-    "messages_source_check CHECK ((((recorded_by IS NOT NULL) AND (conversation_id IS NULL) AND (external_id IS NULL) AND (sent_at IS NULL)) OR ((recorded_by IS NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'inbound'::text))))",
+    "messages_source_check CHECK ((((recorded_by IS NOT NULL) AND (conversation_id IS NULL) AND (external_id IS NULL) AND (sent_at IS NULL)) OR ((recorded_by IS NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'inbound'::text)) OR ((recorded_by IS NOT NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'outbound'::text))))",
   ],
   opportunitiesContactKey: "UNIQUE (organization_id, id, contact_id)",
 };
@@ -410,10 +423,11 @@ export const EXPECTED_MESSAGES = {
 /**
  * Ingesta de WhatsApp (Hito 7, 0013, DEC-039): las conversaciones y las
  * líneas con sus constraints, las dos uniques que son la autoridad de la
- * idempotencia y de la conversación abierta, ninguna policy sobre
- * whatsapp_lines y la función de ingesta (SECURITY DEFINER de postgres,
- * search_path vacío, EXECUTE solo para authenticated y la regla que rechaza
- * una llamada con claims).
+ * idempotencia y de la conversación abierta, la única policy de
+ * whatsapp_lines (la lectura de miembros del Hito 8, DEC-040 §4) y la
+ * función de ingesta (SECURITY DEFINER de postgres, search_path vacío,
+ * EXECUTE solo para authenticated y la regla que rechaza una llamada con
+ * claims).
  */
 export const EXPECTED_WHATSAPP_INGESTION = {
   constraints: [
@@ -432,9 +446,19 @@ export const EXPECTED_WHATSAPP_INGESTION = {
     "CREATE UNIQUE INDEX conversations_open_contact_channel_key ON public.conversations USING btree (organization_id, contact_id, channel) WHERE (status = 'open'::text)",
     "CREATE UNIQUE INDEX messages_organization_id_external_id_key ON public.messages USING btree (organization_id, external_id) WHERE (external_id IS NOT NULL)",
   ],
-  linePolicies: 0,
+  linePolicies: 1,
   function:
     'private.ingest_whatsapp_message(text,text,text,text,text,text,text,timestamp with time zone) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false guard=true',
+};
+
+/**
+ * Envío de WhatsApp (Hito 8, 0014, DEC-040 §6): la función de registro
+ * (SECURITY DEFINER de postgres, search_path vacío, EXECUTE solo para
+ * authenticated y las reglas que exigen un usuario con membership activa).
+ */
+export const EXPECTED_WHATSAPP_OUTBOUND = {
+  function:
+    'private.record_outbound_whatsapp_message(uuid,uuid,text,text,text) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false guards=true',
 };
 
 /**
@@ -482,8 +506,8 @@ export const EXPECTED_TEAM_SETTINGS = {
 };
 
 /**
- * Privilegios de authenticated: lectura en todo salvo whatsapp_lines
- * (provisioning, DEC-039), las altas de H1.2
+ * Privilegios de authenticated: lectura en todo (whatsapp_lines desde el
+ * Hito 8, DEC-040 §4), las altas de H1.2
  * (contacts, opportunities), H1.3B (vehicles), H1.4
  * (opportunity_demand_facts), el Hito 2 (opportunity_notes), el Hito 4
  * (messages) y el Hito 6 (memberships), estas cuatro de tabla (diseño A), y
@@ -1047,6 +1071,37 @@ export async function verifyCatalog(
     ),
   );
 
+  // Envío de WhatsApp (Hito 8): la función de registro.
+  const [outboundFn] = await tx<{ function: string | null }[]>`
+    SELECT (
+      SELECT p.oid::regprocedure::text
+        || ' SECURITY DEFINER=' || p.prosecdef
+        || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+        || ' owner=' || p.proowner::regrole::text
+        || ' EXECUTE PUBLIC=' || EXISTS (
+          SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+          WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+        )
+        || ' authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+        || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+        || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+        || ' guards=' || (
+          position('outbound_requires_user' in p.prosrc) > 0
+          AND position('outbound_not_member' in p.prosrc) > 0
+        )
+      FROM pg_proc p
+      WHERE p.oid = to_regprocedure('private.record_outbound_whatsapp_message(uuid, uuid, text, text, text)')
+    ) AS function
+  `;
+  const outboundFound = { function: outboundFn?.function ?? null };
+  findings.push(
+    finding(
+      "schema.whatsapp-outbound",
+      equal(outboundFound, EXPECTED_WHATSAPP_OUTBOUND),
+      `outbound function: ${outboundFound.function ?? "missing"}`,
+    ),
+  );
+
   // Schema private y private.user_org_ids() (ADR-001 §4).
   const [privateSchema] = await tx<
     {
@@ -1219,7 +1274,7 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table but whatsapp_lines, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages and memberships, UPDATE on opportunities, vehicles, organizations and memberships only; no DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages and memberships, UPDATE on opportunities, vehicles, organizations and memberships only; no DELETE)`,
     ),
   );
 

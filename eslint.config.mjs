@@ -263,6 +263,30 @@ const ingestWhatsAppImport = {
   message: INGEST_WHATSAPP_MESSAGE,
 };
 
+// Hito 8 (DEC-040 §9): el envío de mensajes de WhatsApp tiene una sola
+// puerta, POST /api/messages/send (lib/conversations/send.ts), que resuelve
+// el tenant y valida el pedido antes de leer el destino y registrar.
+const SEND_MESSAGE_MESSAGE =
+  "WhatsApp messages are sent only through POST /api/messages/send (lib/conversations/send.ts): resolveRequestTenant(), server-side validation, then withTenant().";
+const sendMessageImport = {
+  regex: "(^|/)db/queries/outbound-message$|^\\.{1,2}/outbound-message$",
+  // Los tipos de los resultados (SendTarget, OutboundMessageOutcome) no
+  // escriben nada.
+  allowTypeImports: true,
+  message: SEND_MESSAGE_MESSAGE,
+};
+
+// Hito 8 (DEC-040 §5): el cliente de la Cloud API de Meta envía mensajes
+// irreversibles. Solo lo usa la puerta del envío, que dispara un miembro.
+const WHATSAPP_API_MESSAGE =
+  "The Meta Cloud API client (lib/whatsapp/api.ts) is used only by POST /api/messages/send (lib/conversations/send.ts): a member always triggers a send.";
+const whatsappApiImport = {
+  regex: "(^|/)lib/whatsapp/api$|^\\./api$",
+  // Los tipos del cliente no envían nada.
+  allowTypeImports: true,
+  message: WHATSAPP_API_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -312,6 +336,8 @@ const basePatterns = [
   recordMessageImport,
   settingsWriteImport,
   ingestWhatsAppImport,
+  sendMessageImport,
+  whatsappApiImport,
   demandFactsImport,
   phoneLibraryImport,
 ];
@@ -471,6 +497,8 @@ const eslintConfig = defineConfig([
             recordMessageImport,
             settingsWriteImport,
             ingestWhatsAppImport,
+            sendMessageImport,
+            whatsappApiImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -500,6 +528,8 @@ const eslintConfig = defineConfig([
             recordMessageImport,
             settingsWriteImport,
             ingestWhatsAppImport,
+            sendMessageImport,
+            whatsappApiImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
@@ -526,6 +556,8 @@ const eslintConfig = defineConfig([
             recordMessageImport,
             settingsWriteImport,
             ingestWhatsAppImport,
+            sendMessageImport,
+            whatsappApiImport,
             phoneLibraryImport,
           ],
         },
@@ -582,10 +614,28 @@ const eslintConfig = defineConfig([
             recordMessageImport,
             settingsWriteImport,
             ingestWhatsAppImport,
+            sendMessageImport,
+            whatsappApiImport,
             demandFactsImport,
             phoneLibraryImport,
             stockMockImport,
           ],
+        },
+      ],
+    },
+  },
+  // Única puerta del envío de mensajes de WhatsApp (Hito 8, DEC-040 §9): la
+  // lectura del destino, el registro y el cliente de Meta.
+  {
+    files: ["lib/conversations/send.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) =>
+              pattern !== sendMessageImport && pattern !== whatsappApiImport,
+          ),
         },
       ],
     },
@@ -645,6 +695,8 @@ const eslintConfig = defineConfig([
             recordMessageImport,
             settingsWriteImport,
             ingestWhatsAppImport,
+            sendMessageImport,
+            whatsappApiImport,
             demandFactsImport,
           ],
         },
@@ -673,6 +725,8 @@ const eslintConfig = defineConfig([
             recordMessageImport,
             settingsWriteImport,
             ingestWhatsAppImport,
+            sendMessageImport,
+            whatsappApiImport,
             demandFactsImport,
             phoneLibraryImport,
           ],
