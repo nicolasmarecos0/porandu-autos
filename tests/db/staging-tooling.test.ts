@@ -140,6 +140,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ]);
   });
 
@@ -370,6 +371,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.quotes",
         "schema.whatsapp-outbound",
         "schema.conversation-reads",
+        "schema.message-statuses",
         "private.schema",
         "private.user_org_ids",
         "app_runtime.attributes",
@@ -383,6 +385,7 @@ describe("migración oficial y verificación post-migración", () => {
         "privileges.service_role-demand-facts",
         "privileges.service_role-opportunity-notes",
         "privileges.service_role-messages",
+        "privileges.service_role-message-statuses",
         "privileges.create",
         "public.security-definer",
         "privileges.default-acl",
@@ -935,6 +938,72 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta estados de entrega con otra lectura, la ingesta de estados ejecutable por anon o sin sus reglas, un CHECK o una FK cambiados, una unique de mensajes ausente y un service_role que puede borrarlos (Hito 12C, DEC-044)", async () => {
+    async function failedChecks(): Promise<string[]> {
+      const sql = connect(migrated.migrationUrl);
+      try {
+        const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+        return findings.filter((f) => !f.ok).map((f) => f.check);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+
+    const signature =
+      "private.ingest_whatsapp_status(text, text, text, timestamp with time zone)";
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef(${signature}::regprocedure) AS definition
+    `;
+    const fk =
+      "ALTER TABLE public.message_statuses DROP CONSTRAINT message_statuses_message_fk; ALTER TABLE public.message_statuses ADD CONSTRAINT message_statuses_message_fk FOREIGN KEY (organization_id, message_id) REFERENCES public.messages (organization_id, id) ON DELETE";
+    for (const [broken, restore, expected] of [
+      [
+        "ALTER POLICY message_statuses_select_member ON public.message_statuses USING (true)",
+        "ALTER POLICY message_statuses_select_member ON public.message_statuses USING (organization_id IN (SELECT private.user_org_ids()))",
+        ["rls.policies"],
+      ],
+      [
+        `GRANT EXECUTE ON FUNCTION ${signature} TO anon`,
+        `REVOKE EXECUTE ON FUNCTION ${signature} FROM anon`,
+        ["schema.message-statuses"],
+      ],
+      [
+        current!.definition.replace(/AND m\.direction = 'outbound'/, ""),
+        current!.definition,
+        ["schema.message-statuses"],
+      ],
+      [
+        current!.definition.replace(/ingestion_without_user/g, "no guard"),
+        current!.definition,
+        ["schema.message-statuses"],
+      ],
+      [
+        "ALTER TABLE public.message_statuses DROP CONSTRAINT message_statuses_status_check; ALTER TABLE public.message_statuses ADD CONSTRAINT message_statuses_status_check CHECK (status IN ('sent', 'delivered', 'read', 'failed', 'deleted'))",
+        "ALTER TABLE public.message_statuses DROP CONSTRAINT message_statuses_status_check; ALTER TABLE public.message_statuses ADD CONSTRAINT message_statuses_status_check CHECK (status IN ('sent', 'delivered', 'read', 'failed'))",
+        ["schema.message-statuses"],
+      ],
+      [`${fk} CASCADE`, `${fk} RESTRICT`, ["schema.message-statuses"]],
+      [
+        "ALTER TABLE public.message_statuses DROP CONSTRAINT message_statuses_message_fk; ALTER TABLE public.messages DROP CONSTRAINT messages_organization_id_id_key",
+        "ALTER TABLE public.messages ADD CONSTRAINT messages_organization_id_id_key UNIQUE (organization_id, id); ALTER TABLE public.message_statuses ADD CONSTRAINT message_statuses_message_fk FOREIGN KEY (organization_id, message_id) REFERENCES public.messages (organization_id, id) ON DELETE RESTRICT",
+        ["schema.messages", "schema.message-statuses"],
+      ],
+      [
+        "GRANT DELETE ON public.message_statuses TO service_role",
+        "REVOKE DELETE ON public.message_statuses FROM service_role",
+        ["privileges.service_role-message-statuses"],
+      ],
+    ] as const) {
+      await migrated.admin.unsafe(broken);
+      try {
+        expect(await failedChecks(), broken.slice(0, 60)).toEqual(expected);
+      } finally {
+        await migrated.admin.unsafe(restore);
+      }
+    }
+    expect(await failedChecks()).toEqual([]);
+  });
+
   it("la verificación detecta cursores legibles por otros miembros, marcar visto ejecutable por anon o sin sus reglas, sin el índice de los no leídos o con el perfil en RESTRICT (Hito 12B, DEC-044)", async () => {
     await migrated.admin.unsafe(`
       ALTER POLICY conversation_reads_select_own ON public.conversation_reads
@@ -1049,9 +1118,9 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-044): 0018 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 11 (0000 a 0017) si
- * 0017 ya se aplicó; si no, en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * El próximo rollout real (DEC-044 §3.3): 0019 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 12B (0000 a 0018) si
+ * 0018 ya se aplicó; si no, en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
@@ -1076,6 +1145,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1094,6 +1164,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1111,6 +1182,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1127,6 +1199,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1142,6 +1215,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1156,6 +1230,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1169,6 +1244,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1181,6 +1257,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1192,6 +1269,7 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
@@ -1202,22 +1280,33 @@ describe.each([
       "0016_quotes",
       "0017_dashboard_indexes",
       "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
     ],
   },
   {
     stagingAt: "0016_quotes",
     label: "Hito 10",
     applied: 17,
-    expected: ["0017_dashboard_indexes", "0018_conversation_reads"],
+    expected: [
+      "0017_dashboard_indexes",
+      "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
+    ],
   },
   {
     stagingAt: "0017_dashboard_indexes",
     label: "Hito 11",
     applied: 18,
-    expected: ["0018_conversation_reads"],
+    expected: ["0018_conversation_reads", "0019_whatsapp_delivery_status"],
+  },
+  {
+    stagingAt: "0018_conversation_reads",
+    label: "Hito 12B",
+    applied: 19,
+    expected: ["0019_whatsapp_delivery_status"],
   },
 ])(
-  "staging en $label: rollout hasta 0018",
+  "staging en $label: rollout hasta 0019",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

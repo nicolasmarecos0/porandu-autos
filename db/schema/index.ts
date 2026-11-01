@@ -26,7 +26,9 @@
  * los modela. 0015 da además SELECT e INSERT de test_drives y su UPDATE de
  * `status` y `updated_at`, por columna; 0016, lo mismo para quotes. 0018 da
  * solo SELECT de conversation_reads (las filas propias): la escribe
- * `private.mark_conversation_read()`, también SQL custom.
+ * `private.mark_conversation_read()`, también SQL custom. 0019 da solo
+ * SELECT de message_statuses: la escribe `private.ingest_whatsapp_status()`,
+ * la ingesta de los estados de entrega, también SQL custom.
  */
 export * from "./organizations";
 export * from "./profiles";
@@ -42,3 +44,4 @@ export * from "./conversations";
 export * from "./test-drives";
 export * from "./quotes";
 export * from "./conversation-reads";
+export * from "./message-statuses";

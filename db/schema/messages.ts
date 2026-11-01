@@ -7,6 +7,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -79,6 +80,9 @@ export const messageExternalIdMaxLength = 256;
  *   `conversation_id IS NULL`, así que un miembro solo escribe la primera
  *   forma; la segunda solo la escribe `private.ingest_whatsapp_message()` y
  *   la tercera, `private.record_outbound_whatsapp_message()`.
+ * - unique (organization_id, id) (Hito 12C, DEC-044 §3.3): destino de la FK
+ *   compuesta de `message_statuses`, que impide registrar un estado de
+ *   entrega en el mensaje de otra organización.
  * - Índices (organization_id, opportunity_id, created_at DESC) para el muro
  *   de una oportunidad y (organization_id, contact_id, created_at DESC) para
  *   la FK y la conversación de un contacto. El parcial (organization_id,
@@ -147,6 +151,8 @@ export const messages = pgTable(
         conversations.contactId,
       ],
     }).onDelete("restrict"),
+    // Destino de la FK compuesta de los estados de entrega (DEC-044 §3.3).
+    unique("messages_organization_id_id_key").on(t.organizationId, t.id),
     // Idempotencia de la ingesta: un mensaje del proveedor, una sola fila.
     uniqueIndex("messages_organization_id_external_id_key")
       .on(t.organizationId, t.externalId)

@@ -16,6 +16,7 @@ import {
   CONVERSATION_STATUSES,
   MESSAGE_PREVIEW_MAX_LENGTH,
 } from "@/domains/conversations/conversations";
+import { DELIVERY_STATUSES as MESSAGE_DELIVERY_STATUSES } from "@/domains/conversations/delivery";
 import {
   MESSAGE_CHANNELS,
   MESSAGE_DIRECTIONS,
@@ -75,12 +76,13 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives), la del Hito 10 (quotes) y la del Hito 12B (conversation_reads)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives), la del Hito 10 (quotes), la del Hito 12B (conversation_reads) y la del Hito 12C (message_statuses)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "conversation_reads",
       "conversations",
       "memberships",
+      "message_statuses",
       "messages",
       "opportunities",
       "opportunity_demand_facts",
@@ -171,7 +173,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4; conversation_reads, solo las filas propias, desde el Hito 12B) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9) y quotes (Hito 10) la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4; conversation_reads, solo las filas propias, desde el Hito 12B; message_statuses desde el Hito 12C) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9) y quotes (Hito 10) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -263,6 +265,18 @@ describe("db/schema", () => {
           '"memberships"."organization_id" IN (SELECT private.user_admin_org_ids())',
         withCheck:
           '"memberships"."organization_id" IN (SELECT private.user_admin_org_ids())',
+      },
+      {
+        // Hito 12C (DEC-044 §3.3): lectura de los miembros; la escribe la
+        // función de ingesta de estados.
+        table: "message_statuses",
+        name: "message_statuses_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"message_statuses"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
       },
       {
         table: "messages",
@@ -1074,9 +1088,26 @@ describe("db/schema", () => {
     ).toEqual([
       { unique: false, where: '"messages"."conversation_id" IS NOT NULL' },
     ]);
+    // Destino de la FK compuesta de message_statuses (Hito 12C).
+    expect(
+      table("messages").uniqueConstraints.map((u) => ({
+        name: u.getName(),
+        columns: u.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "messages_organization_id_id_key",
+        columns: ["organization_id", "id"],
+      },
+    ]);
     // Append-only: no hay updated_at ni nada que se edite.
     expect(table("messages").columns.map((c) => c.name)).not.toContain(
       "updated_at",
+    );
+    // El estado de entrega no es una columna del mensaje (C-11, DEC-044
+    // §3.3): vive en message_statuses.
+    expect(table("messages").columns.map((c) => c.name)).not.toContain(
+      "status",
     );
   });
 
@@ -1212,6 +1243,63 @@ describe("db/schema", () => {
     ).toEqual(["conversation_reads_select_own select"]);
   });
 
+  it("message_statuses: un estado de entrega por saliente y estado, append-only, de la misma organización y de solo lectura para los miembros (Hito 12C)", () => {
+    expect(
+      table("message_statuses").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["organization_id", "PgUUID", true, false],
+      ["message_id", "PgUUID", true, false],
+      ["status", "PgText", true, false],
+      ["occurred_at", "PgTimestamp", true, false],
+      ["created_at", "PgTimestamp", true, true],
+    ]);
+    // Reloj de la base, nunca de la aplicación.
+    expect(column("message_statuses", "created_at").defaultFn).toBeUndefined();
+    // La PK es la autoridad de la idempotencia (DEC-044 §3.3).
+    expect(
+      table("message_statuses").primaryKeys.map((pk) => ({
+        name: pk.getName(),
+        columns: pk.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "message_statuses_pkey",
+        columns: ["organization_id", "message_id", "status"],
+      },
+    ]);
+    expect(foreignKeys("message_statuses")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,message_id -> public.messages(organization_id,id) ON DELETE restrict",
+    ]);
+    const dialect = new PgDialect();
+    expect(
+      table("message_statuses").checks.map((c) => ({
+        name: c.name,
+        sql: dialect.sqlToQuery(c.value).sql,
+      })),
+    ).toEqual([
+      {
+        name: "message_statuses_status_check",
+        sql: `"message_statuses"."status" IN ('sent', 'delivered', 'read', 'failed')`,
+      },
+    ]);
+    // Los estados de la base son los del dominio (DEC-044 §3.1).
+    expect(schema.messageStatusValues).toEqual(MESSAGE_DELIVERY_STATUSES);
+    // Lectura de los miembros; ninguna escritura de authenticated.
+    expect(
+      table("message_statuses").policies.map((p) => `${p.name} ${p.for}`),
+    ).toEqual(["message_statuses_select_member select"]);
+    // Append-only: no hay updated_at ni nada que se edite.
+    expect(table("message_statuses").columns.map((c) => c.name)).not.toContain(
+      "updated_at",
+    );
+  });
+
   it("whatsapp_lines: la línea receptora, única global, de una organización y de solo lectura para los miembros (Hito 7, Hito 8)", () => {
     expect(
       table("whatsapp_lines").columns.map((c) => [
@@ -1275,6 +1363,7 @@ describe("db/schema", () => {
       "conversation_reads",
       "conversations",
       "memberships",
+      "message_statuses",
       "messages",
       "opportunities",
       "opportunity_demand_facts",
@@ -1290,7 +1379,8 @@ describe("db/schema", () => {
       expect(foreignKeys(t.name)).toContain(
         "organization_id -> public.organizations(id) ON DELETE restrict",
       );
-      // La PK compuesta también es un índice (conversation_reads, Hito 12B).
+      // La PK compuesta también es un índice (conversation_reads, Hito 12B;
+      // message_statuses, Hito 12C).
       const leading = [
         ...t.indexes.map((i) => i.config.columns[0]),
         ...t.uniqueConstraints.map((u) => u.columns[0]),

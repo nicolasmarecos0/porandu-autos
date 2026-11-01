@@ -627,6 +627,8 @@ describe("messages (Hito 4)", () => {
         "CHECK ((((char_length(external_id) >= 1) AND (char_length(external_id) <= 256)) AND (external_id !~ '[[:space:][:cntrl:]]'::text)))",
       messages_source_check:
         "CHECK ((((recorded_by IS NOT NULL) AND (conversation_id IS NULL) AND (external_id IS NULL) AND (sent_at IS NULL)) OR ((recorded_by IS NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'inbound'::text)) OR ((recorded_by IS NOT NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'outbound'::text))))",
+      // Destino de la FK compuesta de message_statuses (DEC-044 §3.3).
+      messages_organization_id_id_key: "UNIQUE (organization_id, id)",
     });
   });
 
@@ -641,6 +643,8 @@ describe("messages (Hito 4)", () => {
       // Idempotencia de la ingesta (DEC-039 §8).
       messages_organization_id_external_id_key:
         "CREATE UNIQUE INDEX messages_organization_id_external_id_key ON public.messages USING btree (organization_id, external_id) WHERE (external_id IS NOT NULL)",
+      messages_organization_id_id_key:
+        "CREATE UNIQUE INDEX messages_organization_id_id_key ON public.messages USING btree (organization_id, id)",
       // Los no leídos de cada conversación de la bandeja (DEC-044 §2.9).
       messages_organization_id_conversation_id_idx:
         "CREATE INDEX messages_organization_id_conversation_id_idx ON public.messages USING btree (organization_id, conversation_id, created_at) WHERE (conversation_id IS NOT NULL)",
@@ -755,6 +759,140 @@ describe("conversations y whatsapp_lines (Hito 7)", () => {
         "CREATE UNIQUE INDEX whatsapp_lines_phone_number_id_key ON public.whatsapp_lines USING btree (phone_number_id)",
       whatsapp_lines_organization_id_idx:
         "CREATE INDEX whatsapp_lines_organization_id_idx ON public.whatsapp_lines USING btree (organization_id)",
+    });
+  });
+});
+
+describe("message_statuses (Hito 12C)", () => {
+  const CONVERSATION_1 = "c0000000-0000-4000-8000-000000000011";
+  const CONVERSATION_2 = "c0000000-0000-4000-8000-000000000012";
+  const OUTBOUND_1 = "d0000000-0000-4000-8000-000000000011";
+  const OUTBOUND_2 = "d0000000-0000-4000-8000-000000000012";
+  const AT = "2026-11-01T12:00:00Z";
+
+  it("columnas: el estado de un mensaje, cuándo ocurrió según el proveedor y cuándo se registró", async () => {
+    expect(await columns(db.admin, "message_statuses")).toEqual([
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "message_id", type: "uuid", notNull: true, default: null },
+      { name: "status", type: "text", notNull: true, default: null },
+      {
+        name: "occurred_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: null,
+      },
+      {
+        name: "created_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+    ]);
+  });
+
+  it("PK (organization_id, message_id, status), CHECK de los cuatro estados y FK compuesta al mensaje (RESTRICT)", async () => {
+    expect(await constraints(db.admin, "message_statuses")).toEqual({
+      message_statuses_pkey:
+        "PRIMARY KEY (organization_id, message_id, status)",
+      message_statuses_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      message_statuses_message_fk:
+        "FOREIGN KEY (organization_id, message_id) REFERENCES messages(organization_id, id) ON DELETE RESTRICT",
+      message_statuses_status_check:
+        "CHECK ((status = ANY (ARRAY['sent'::text, 'delivered'::text, 'read'::text, 'failed'::text])))",
+    });
+    // La PK es el índice que empieza por organization_id (ADR-001 §3.6).
+    expect(await indexes(db.admin, "message_statuses")).toEqual({
+      message_statuses_pkey:
+        "CREATE UNIQUE INDEX message_statuses_pkey ON public.message_statuses USING btree (organization_id, message_id, status)",
+    });
+  });
+
+  /** Una conversación por organización y un saliente en cada una. */
+  async function seedOutbound(tx: TransactionSql): Promise<void> {
+    await seed(tx);
+    await tx`
+      INSERT INTO public.conversations (id, organization_id, contact_id, channel)
+      VALUES (${CONVERSATION_1}, ${ORG_1}, ${CONTACT_1}, 'whatsapp'),
+        (${CONVERSATION_2}, ${ORG_2}, ${CONTACT_2}, 'whatsapp')
+    `;
+    await tx`
+      INSERT INTO public.messages (id, organization_id, contact_id, conversation_id,
+        channel, direction, content, recorded_by, external_id, sent_at)
+      VALUES
+        (${OUTBOUND_1}, ${ORG_1}, ${CONTACT_1}, ${CONVERSATION_1}, 'whatsapp',
+          'outbound', 'Hola', ${USER_A}, 'wamid.SCHEMA1', ${AT}),
+        (${OUTBOUND_2}, ${ORG_2}, ${CONTACT_2}, ${CONVERSATION_2}, 'whatsapp',
+          'outbound', 'Hola', ${USER_B}, 'wamid.SCHEMA2', ${AT})
+    `;
+  }
+
+  it("un estado por mensaje y estado, de un mensaje de la misma organización y de los cuatro del contrato", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedOutbound(tx);
+      await tx`
+        INSERT INTO public.message_statuses (organization_id, message_id, status, occurred_at)
+        VALUES (${ORG_1}, ${OUTBOUND_1}, 'sent', ${AT}),
+          (${ORG_1}, ${OUTBOUND_1}, 'delivered', ${AT}),
+          (${ORG_1}, ${OUTBOUND_1}, 'read', ${AT}),
+          (${ORG_1}, ${OUTBOUND_1}, 'failed', ${AT})
+      `;
+      // El mismo estado del mismo mensaje: 23505 (la idempotencia).
+      await expectSqlError(
+        tx,
+        "23505",
+        (sp) => sp`
+        INSERT INTO public.message_statuses (organization_id, message_id, status, occurred_at)
+        VALUES (${ORG_1}, ${OUTBOUND_1}, 'read', ${AT})
+      `,
+      );
+      // El mensaje de otra organización: 23503.
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) => sp`
+        INSERT INTO public.message_statuses (organization_id, message_id, status, occurred_at)
+        VALUES (${ORG_1}, ${OUTBOUND_2}, 'read', ${AT})
+      `,
+      );
+      // Un estado fuera del contrato: 23514.
+      await expectSqlError(
+        tx,
+        "23514",
+        (sp) => sp`
+        INSERT INTO public.message_statuses (organization_id, message_id, status, occurred_at)
+        VALUES (${ORG_2}, ${OUTBOUND_2}, 'deleted', ${AT})
+      `,
+      );
+      // Sin el instante del proveedor: 23502.
+      await expectSqlError(
+        tx,
+        "23502",
+        (sp) => sp`
+        INSERT INTO public.message_statuses (organization_id, message_id, status)
+        VALUES (${ORG_2}, ${OUTBOUND_2}, 'read')
+      `,
+      );
+      const [row] = await tx<{ count: number; recorded: boolean }[]>`
+        SELECT count(*)::int AS count, bool_and(created_at = now()) AS recorded
+        FROM public.message_statuses
+      `;
+      expect(row).toEqual({ count: 4, recorded: true });
+    });
+  });
+
+  it("no se borra un mensaje con estados registrados", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedOutbound(tx);
+      await tx`
+        INSERT INTO public.message_statuses (organization_id, message_id, status, occurred_at)
+        VALUES (${ORG_1}, ${OUTBOUND_1}, 'delivered', ${AT})
+      `;
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) => sp`DELETE FROM public.messages WHERE id = ${OUTBOUND_1}`,
+      );
     });
   });
 });
@@ -1263,6 +1401,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
       "conversation_reads",
       "conversations",
       "memberships",
+      "message_statuses",
       "messages",
       "opportunities",
       "opportunity_demand_facts",

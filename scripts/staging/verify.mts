@@ -12,8 +12,9 @@ import { finding, type Finding } from "./report.mts";
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
  * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
- * 0015_test_drives, 0016_quotes, 0017_dashboard_indexes y
- * 0018_conversation_reads, leído del catálogo real (DEC-018, DEC-019,
+ * 0015_test_drives, 0016_quotes, 0017_dashboard_indexes,
+ * 0018_conversation_reads y 0019_whatsapp_delivery_status, leído del
+ * catálogo real (DEC-018, DEC-019,
  * ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034, DEC-036,
  * DEC-038, DEC-039, DEC-040, DEC-041, DEC-042, DEC-044).
  * Espeja tests/db/tenant-catalog y
@@ -26,6 +27,7 @@ const APP_TABLES = [
   "conversation_reads",
   "conversations",
   "memberships",
+  "message_statuses",
   "messages",
   "opportunities",
   "opportunity_demand_facts",
@@ -39,8 +41,8 @@ const APP_TABLES = [
 ];
 /**
  * Las que leen los miembros: todas, también whatsapp_lines desde el Hito 8
- * (DEC-040 §4) y conversation_reads (solo las filas propias) desde el Hito
- * 12B (DEC-044 §2.9).
+ * (DEC-040 §4), conversation_reads (solo las filas propias) desde el Hito
+ * 12B (DEC-044 §2.9) y message_statuses desde el Hito 12C (DEC-044 §3.3).
  */
 const MEMBER_READABLE_TABLES = APP_TABLES;
 const PRIVILEGES = [
@@ -92,6 +94,8 @@ type Policy = {
  * El Hito 12B (DEC-044) suma la lectura de conversation_reads: solo las
  * filas propias (`user_id = auth.uid()`) de una organización con membership
  * activa; la escribe la función de marcar visto (EXPECTED_CONVERSATION_READS).
+ * El Hito 12C (DEC-044) suma la lectura de message_statuses; la escribe la
+ * función de ingesta de estados (EXPECTED_MESSAGE_STATUSES).
  * Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
@@ -165,6 +169,16 @@ export const EXPECTED_POLICIES: Policy[] = [
       "(organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
     withCheck:
       "(organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
+  },
+  {
+    table: "message_statuses",
+    name: "message_statuses_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
   },
   {
     table: "messages",
@@ -487,8 +501,9 @@ export const EXPECTED_OPPORTUNITY_NOTES = {
  * PostgreSQL 17: FKs RESTRICT a la organización, al contacto y a la
  * oportunidad y a la conversación de la misma organización y del mismo
  * contacto, y al autor; los CHECKs de canal, dirección, texto, id del
- * proveedor y origen (miembro, ingesta o envío de un miembro); y la unique
- * de opportunities que es destino de la FK compuesta.
+ * proveedor y origen (miembro, ingesta o envío de un miembro); la unique
+ * (organization_id, id), destino de la FK de message_statuses (Hito 12C); y
+ * la unique de opportunities que es destino de la FK compuesta.
  */
 export const EXPECTED_MESSAGES = {
   constraints: [
@@ -499,6 +514,7 @@ export const EXPECTED_MESSAGES = {
     "messages_direction_check CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text])))",
     "messages_external_id_check CHECK ((((char_length(external_id) >= 1) AND (char_length(external_id) <= 256)) AND (external_id !~ '[[:space:][:cntrl:]]'::text)))",
     "messages_opportunity_fk FOREIGN KEY (organization_id, opportunity_id, contact_id) REFERENCES opportunities(organization_id, id, contact_id) ON DELETE RESTRICT",
+    "messages_organization_id_id_key UNIQUE (organization_id, id)",
     "messages_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
     "messages_recorded_by_profiles_id_fk FOREIGN KEY (recorded_by) REFERENCES profiles(id) ON DELETE RESTRICT",
     "messages_source_check CHECK ((((recorded_by IS NOT NULL) AND (conversation_id IS NULL) AND (external_id IS NULL) AND (sent_at IS NULL)) OR ((recorded_by IS NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'inbound'::text)) OR ((recorded_by IS NOT NULL) AND (conversation_id IS NOT NULL) AND (external_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (channel = 'whatsapp'::text) AND (direction = 'outbound'::text))))",
@@ -569,6 +585,25 @@ export const EXPECTED_CONVERSATION_READS = {
     "CREATE INDEX messages_organization_id_conversation_id_idx ON public.messages USING btree (organization_id, conversation_id, created_at) WHERE (conversation_id IS NOT NULL)",
   function:
     'private.mark_conversation_read(uuid,uuid,uuid) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false guards=true',
+};
+
+/**
+ * Estados de entrega (Hito 12C, 0019, DEC-044 §3.3): la PK por mensaje y
+ * estado (la autoridad de la idempotencia), el CHECK de los cuatro estados
+ * del contrato, la FK compuesta al mensaje (RESTRICT) y a la organización; y
+ * la función de ingesta de estados (SECURITY DEFINER de postgres,
+ * search_path vacío, EXECUTE solo para authenticated, la regla que rechaza
+ * una llamada con claims y la búsqueda solo entre los salientes).
+ */
+export const EXPECTED_MESSAGE_STATUSES = {
+  constraints: [
+    "message_statuses_message_fk FOREIGN KEY (organization_id, message_id) REFERENCES messages(organization_id, id) ON DELETE RESTRICT",
+    "message_statuses_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "message_statuses_pkey PRIMARY KEY (organization_id, message_id, status)",
+    "message_statuses_status_check CHECK ((status = ANY (ARRAY['sent'::text, 'delivered'::text, 'read'::text, 'failed'::text])))",
+  ],
+  function:
+    'private.ingest_whatsapp_status(text,text,text,timestamp with time zone) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false guards=true',
 };
 
 /**
@@ -1057,8 +1092,9 @@ export async function verifyCatalog(
     ),
   );
 
-  // Mensajes (Hito 4): FKs compuestas, CHECKs y el destino de la FK de la
-  // oportunidad con su contacto.
+  // Mensajes (Hito 4): FKs compuestas, CHECKs, la unique (organization_id,
+  // id) que es destino de la FK de los estados de entrega (Hito 12C) y el
+  // destino de la FK de la oportunidad con su contacto.
   const [messages] = await tx<
     { constraints: string[] | null; opportunitiesContactKey: string | null }[]
   >`
@@ -1067,7 +1103,7 @@ export async function verifyCatalog(
         SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
         FROM pg_constraint
         WHERE conrelid = to_regclass('public.messages')
-          AND contype IN ('c', 'f')
+          AND contype IN ('c', 'f', 'u')
       ) AS constraints,
       (
         SELECT pg_get_constraintdef(oid) FROM pg_constraint
@@ -1467,6 +1503,53 @@ export async function verifyCatalog(
     ),
   );
 
+  // Estados de entrega (Hito 12C): constraints de message_statuses y la
+  // función de ingesta de estados. La policy y el SELECT de authenticated
+  // los verifican rls.policies y privileges.authenticated; la unique
+  // (organization_id, id) de messages, schema.messages; el append-only,
+  // privileges.service_role-message-statuses.
+  const [statusCatalog] = await tx<
+    { constraints: string[] | null; function: string | null }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.message_statuses')
+          AND contype IN ('c', 'f', 'p', 'u')
+      ) AS constraints,
+      (
+        SELECT p.oid::regprocedure::text
+          || ' SECURITY DEFINER=' || p.prosecdef
+          || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+          || ' owner=' || p.proowner::regrole::text
+          || ' EXECUTE PUBLIC=' || EXISTS (
+            SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+            WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+          )
+          || ' authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+          || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+          || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+          || ' guards=' || (
+            position('ingestion_without_user' in p.prosrc) > 0
+            AND position('m.direction = ''outbound''' in p.prosrc) > 0
+          )
+        FROM pg_proc p
+        WHERE p.oid = to_regprocedure('private.ingest_whatsapp_status(text, text, text, timestamp with time zone)')
+      ) AS function
+  `;
+  const statusesFound = {
+    constraints: statusCatalog?.constraints ?? [],
+    function: statusCatalog?.function ?? null,
+  };
+  findings.push(
+    finding(
+      "schema.message-statuses",
+      equal(statusesFound, EXPECTED_MESSAGE_STATUSES),
+      `message_statuses: ${statusesFound.constraints.length} constraints (expected: ${EXPECTED_MESSAGE_STATUSES.constraints.length}, exact definitions); status ingest function: ${statusesFound.function ?? "missing"}`,
+    ),
+  );
+
   // Schema private y private.user_org_ids() (ADR-001 §4).
   const [privateSchema] = await tx<
     {
@@ -1705,6 +1788,12 @@ export async function verifyCatalog(
   const serviceMessageWrites = (
     await tablePrivileges(tx, "service_role")
   ).filter((grant) => /^(UPDATE|DELETE|TRUNCATE) messages$/.test(grant));
+  // Y los estados de entrega (Hito 12C, DEC-044 §3.3).
+  const serviceStatusWrites = (
+    await tablePrivileges(tx, "service_role")
+  ).filter((grant) =>
+    /^(UPDATE|DELETE|TRUNCATE) message_statuses$/.test(grant),
+  );
   findings.push(
     finding(
       "privileges.service_role-demand-facts",
@@ -1720,6 +1809,11 @@ export async function verifyCatalog(
       "privileges.service_role-messages",
       serviceMessageWrites.length === 0,
       `service_role on messages: ${list(serviceMessageWrites)} (expected: no UPDATE, DELETE or TRUNCATE)`,
+    ),
+    finding(
+      "privileges.service_role-message-statuses",
+      serviceStatusWrites.length === 0,
+      `service_role on message_statuses: ${list(serviceStatusWrites)} (expected: no UPDATE, DELETE or TRUNCATE)`,
     ),
   );
 
@@ -1831,6 +1925,7 @@ const DATA_API_TABLES = [
   "whatsapp_lines",
   "test_drives",
   "conversation_reads",
+  "message_statuses",
 ];
 /** Nombres que pg_graphql daría a los tipos de la app. */
 const GRAPHQL_APP_TYPES = [
@@ -1848,6 +1943,7 @@ const GRAPHQL_APP_TYPES = [
   "WhatsappLines",
   "TestDrives",
   "ConversationReads",
+  "MessageStatuses",
 ];
 
 /** Campo de colección de pg_graphql con nombres inflectados. */
