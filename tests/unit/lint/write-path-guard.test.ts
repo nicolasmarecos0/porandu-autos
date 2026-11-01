@@ -34,6 +34,8 @@ import { describe, expect, it } from "vitest";
  *   /api/messages/send (lib/conversations/send.ts);
  * - la agenda de pruebas de manejo (Hito 9) (db/queries/test-drives-write),
  *   también: las Server Actions de lib/calendar/actions.ts;
+ * - las cotizaciones (Hito 10) (db/queries/quotes-write), también: las
+ *   Server Actions de lib/quotes/actions.ts;
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -883,6 +885,72 @@ describe(
         await restrictedBy(
           "lib/calendar/requests.ts",
           `import type { ScheduleOutcome } from "@/db/queries/test-drives-write";\nexport type S = ScheduleOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importQuotesWrite = `import { insertQuote } from "@/db/queries/quotes-write";\nexport const use = insertQuote;\n`;
+
+describe(
+  "una sola puerta para las cotizaciones (Hito 10)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/opportunities/[id]/page.tsx",
+      "components/quotes/quotes-panel.tsx",
+      "components/quotes/quote-card.tsx",
+      "components/quotes/new-quote-drawer.tsx",
+      "lib/quotes/requests.ts",
+      "lib/calendar/actions.ts",
+      "lib/opportunities/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/settings/actions.ts",
+      "lib/conversations/actions.ts",
+      "lib/tenant/session.ts",
+      "db/queries/quotes.ts",
+      "db/queries/opportunity-detail.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importQuotesWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/quotes.ts",
+          `import { insertQuote } from "./quotes-write";\nexport const use = insertQuote;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en las Server Actions de lib/quotes/actions.ts", async () => {
+      expect(
+        await restrictedBy("lib/quotes/actions.ts", importQuotesWrite),
+      ).toEqual([]);
+    });
+
+    it("las Server Actions de cotizaciones no importan otras escrituras ni el cliente", async () => {
+      for (const code of [
+        importWrite,
+        importSettingsWrite,
+        importTestDrivesWrite,
+        `import { db } from "@/db/client";\nexport const use = db;\n`,
+      ]) {
+        expect(await restrictedBy("lib/quotes/actions.ts", code)).toContain(
+          "no-restricted-imports",
+        );
+      }
+    });
+
+    it("los tipos de los resultados sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/quotes/requests.ts",
+          `import type { CreateQuoteOutcome } from "@/db/queries/quotes-write";\nexport type S = CreateQuoteOutcome;\n`,
         ),
       ).toEqual([]);
     });
