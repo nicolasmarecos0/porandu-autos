@@ -56,6 +56,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-040 | Interfaz de Bandeja de Entrada y Motor de Envío de WhatsApp | Aceptada en principio | 2026-10-29 |
 | DEC-041 | Agenda de pruebas de manejo (Calendar, Hito 9) | Aceptada | 2026-11-01 |
 | DEC-042 | Cotizaciones formales (Deal Management, Hito 10) | Aceptada | 2026-11-01 |
+| DEC-043 | Dashboard Directivo: KPIs comerciales, rangos de fechas y política de caché | Aceptada en principio | 2026-11-01 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1136,6 +1137,69 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 - **Consecuencias:**
   - `0016_quotes` se aplica a staging después del merge con `preflight → migrate → verify`, con `expected_migrations = 0016_quotes` si staging ya tiene `0015`.
   - Cuando se habilite reservar o vender una unidad, ese flujo tiene que considerar las cotizaciones abiertas que la tienen: hoy aceptar no saca la unidad de `available`.
+
+---
+
+## DEC-043 — Dashboard Directivo: KPIs comerciales, rangos de fechas y política de caché
+- **Estado:** Aceptada en principio · 2026-11-01. Formaliza el pedido del fundador del 1 nov 2026 (arquitectura y reglas de negocio del Dashboard Directivo y de Métricas, con el módulo de Cotizaciones ya mergeado): vista analítica para la gerencia con ventas cerradas, cotizaciones pendientes, tasa de conversión y test drives de la semana, rangos de fechas, caché y eficiencia de las consultas. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR. El punto §3.3 queda **pendiente de confirmación** del fundador.
+- **Contexto:** DEC-037 ya puso el Dashboard Directivo en `/intelligence`, con métricas del mes en curso calculadas en cada lectura. Desde entonces existen dos fuentes nuevas que la gerencia no ve agregadas: las pruebas de manejo (DEC-041) y las cotizaciones con su paso de aprobación humana (DEC-042). DEC-037 §13 dejó fuera los filtros por período y las cachés; el pedido nuevo pide manejar rangos de fechas y definir la caché.
+- **Decisión:**
+  1. **Ruta y navegación.** Sin cambios (DEC-037 §1): el dashboard sigue en `/intelligence` ("Inteligencia"). No se agrega `/dashboard` ni un ítem de navegación. El home sigue siendo el Action Cockpit.
+  2. **Rango de fechas.** Reemplaza el "mes en curso" fijo de DEC-037 §4 por un rango elegido en la URL, puro en `domains/dashboard/range.ts` (`resolveDashboardRange()`, con `now` y la zona explícitos):
+     - Sin parámetros: el mes en curso de Asunción, exactamente la ventana de DEC-037 §4.
+     - *Propuesta de implementación:* presets `?range=` `month` (Mes en curso), `previous_month` (Mes anterior), `last_30_days` (Últimos 30 días: hoy y los 29 anteriores), `quarter` (Trimestre en curso) y `year` (Año en curso), y `?range=custom&from=YYYY-MM-DD&to=YYYY-MM-DD` con los dos días incluidos.
+     - Días de calendario de `America/Asuncion`. El rango es el intervalo de instantes [primer instante de `from`, primer instante del día siguiente a `to`), con límite exclusivo, como DEC-037 §4. La base solo compara instantes.
+     - La URL es input no confiable: fechas inexistentes, fuera de 2000–2100, `from` posterior a `to` o un rango desconocido caen al mes en curso con un aviso visible, nunca a un error. Un `to` posterior a hoy se recorta a hoy.
+     - *Propuesta de implementación:* un rango personalizado tiene a lo sumo 366 días (acota el costo de cada lectura).
+     - **A qué aplica.** El rango aplica a los flujos: ventas cerradas, perdidas, tasa de conversión y unidades vendidas. Las existencias son el estado de hoy y no dependen del rango (DEC-037 §4): oportunidades activas, cotizaciones pendientes, unidades en stock y reservadas, y atención. Las pruebas de manejo son siempre las de la semana en curso (§5).
+  3. **Ventas cerradas y tasa de conversión.**
+     1. *Ventas cerradas:* oportunidades `won` con cierre en el rango. La fecha de cierre sigue siendo `updated_at` (DEC-037 §5, con su requisito sobre el toque de actividad).
+     2. *Tasa de conversión:* ventas cerradas / (ganadas + perdidas) con cierre en el rango, en porcentaje con un decimal y redondeo exacto sobre enteros. Es la regla del win rate de DEC-037 §6 aplicada al rango. Sin cierres en el rango es "Sin dato" (DEC-005), nunca 0 %. La tarjeta "Win rate" pasa a llamarse "Tasa de conversión": un número, un nombre.
+     3. **Pendiente de confirmación del fundador:** si "tasa de conversión" debe medir otra cosa (por ejemplo, cotizaciones aceptadas / cotizaciones decididas, o ventas / oportunidades creadas en el rango), se cambia solo esta regla antes de construir la UI. Mientras tanto rige 3.2.
+  4. **Cotizaciones pendientes.** Estado actual, no del rango. Cuenta las cotizaciones abiertas (`draft`, `approved`, `sent`) de oportunidades cotizables (`qualifying` o `negotiating`):
+     - *Pendientes* = vigentes por aprobar (`draft`) + por enviar (`approved`) + esperando respuesta (`sent`). Vigente = `valid_until` no anterior al día de Asunción (último día inclusive, DEC-042 §4).
+     - El desglose se muestra como contexto de la tarjeta: "N por aprobar · N por enviar · N esperando respuesta". Por aprobar es el paso de aprobación humana obligatorio (DEC-042 §2).
+     - *Vencidas sin cerrar:* abiertas con la validez vencida. No suman a las pendientes y se muestran aparte, con el tono de advertencia junto a su texto, porque piden anularse o rehacerse.
+     - *Propuesta de implementación:* una cotización abierta de una oportunidad ya cerrada no cuenta: ya no se puede aprobar, enviar ni aceptar (DEC-042 §2), así que no está pendiente de nada.
+     - Las terminales (`accepted`, `rejected`, `withdrawn`) nunca cuentan como pendientes.
+  5. **Test drives de la semana.** La semana en curso de lunes a domingo en la hora de Asunción, la misma de `/calendar` (DEC-041 §4), por `scheduled_at`:
+     - *Agendadas* = por realizar (`scheduled` + `confirmed`) + realizadas (`completed`) + no asistió (`no_show`). Las canceladas no ocupan la agenda y se muestran aparte.
+     - La tarjeta enlaza a `/calendar?w=<lunes>`.
+     - *Propuesta de implementación:* la semana no sigue el rango: es una métrica operativa de "esta semana", como pide el pedido.
+  6. **Caché.** Se mantiene DEC-037 §3: tiempo real = cálculo en cada lectura. *Propuesta de implementación:*
+     - **Sin caché compartida entre requests.** No se usan `"use cache"`, `unstable_cache`, `revalidate` ni cachés de `fetch` para datos del dashboard. La lectura corre como `authenticated` con los claims de la request dentro de `withTenant()` (ADR-001): una caché compartida ejecutaría fuera de esa cadena o dependería de una clave por organización que, con un error, mostraría datos de otra organización. Además, la gerencia necesita ver el último dato confirmado (una cotización recién aprobada, un cierre de hace un minuto).
+     - **Memoización por request.** El loader se envuelve en `cache()` de React con argumentos primitivos (`rangeKey()`): si varios Server Components de la misma request lo piden, se hace una sola transacción. No sobrevive a la request.
+     - **Render dinámico.** `/intelligence` ya es dinámica (lee cookies). Los enlaces de rango usan `prefetch={false}`: un prefetch por hover no dispara lecturas agregadas.
+     - **Sin revalidaciones nuevas.** Las Server Actions de cierres, cotizaciones y pruebas no necesitan `revalidatePath("/intelligence")`: no hay nada cacheado que invalidar.
+     - Si el volumen del piloto lo exigiera, la alternativa (vistas materializadas o caché por organización) requiere una decisión nueva con su análisis de aislamiento.
+  7. **Eficiencia de las consultas.**
+     - Una sola transacción `withTenant()` por request con lecturas de una fila (`count(*) FILTER`), además del agregado de inventario y la lista en riesgo de DEC-037 §10: una pasada por organización y por tabla, sin traer filas a la aplicación.
+     - Toda lectura filtra por `organization_id` (ADR-001 §2) y usa índices que empiezan por él: `test_drives (organization_id, scheduled_at)`, `quotes (organization_id, opportunity_id)` y la unique `opportunities (organization_id, id)` para el join.
+     - *Propuesta de implementación:* migración `0017_dashboard_indexes` con un índice parcial `opportunities_organization_id_closed_at_idx` sobre `(organization_id, updated_at) WHERE stage IN ('won', 'lost')`, para que los cierres de un rango (hasta un año) no recorran las abiertas. Solo un índice: sin tablas, policies ni grants nuevos.
+  8. **Capa de datos.**
+     - Dominio puro: `domains/dashboard/range.ts` (rango), `domains/dashboard/commercial.ts` (conversión, cotizaciones pendientes y pruebas de la semana) y `domains/dashboard/metrics.ts` (sin cambios de reglas).
+     - Lecturas: `db/queries/dashboard-commercial.ts` (`selectClosedCounts()`, `selectPendingQuoteCounts()` y `selectWeekTestDriveCounts()`), que reciben la transacción y no son loaders.
+     - Loader: `getExecutiveDashboard(params, now)` (`db/queries/dashboard.ts`), `requireTenant()` → `withTenant()` → todas las lecturas en la misma transacción → dominio → ViewModel.
+     - Solo lectura: no escribe nada ni cambia `last_activity_at`, `updated_at` o estados. No hay Server Actions nuevas: cambiar el rango es una navegación GET.
+  9. **UI de `/intelligence`.** DEC-013 sin cambios (workspace claro, tokens, colores de estado solo junto a un texto).
+     - Encabezado con el rango ("Mes en curso: noviembre de 2026") y un selector: los presets como enlaces de navegación (`aria-current`) y "Personalizado" en un drawer (Radix Dialog, `components/ui/drawer.tsx`) con un formulario GET de dos fechas. Sin dependencias nuevas.
+     - Una fila de cuatro KPIs arriba: Ventas cerradas, Tasa de conversión (con el medidor de DEC-037 §12), Cotizaciones pendientes (con el desglose y las vencidas) y Test drives de la semana (con el desglose y el enlace a la agenda).
+     - Debajo, los bloques de DEC-037 §12 (Pipeline comercial, Salud del inventario y Atención) y el rail de Oportunidades en riesgo.
+     - Server Components; solo el drawer del rango es de cliente.
+  10. **Autorización.** Sin cambios (DEC-037 §11): cualquier membership activa. Restringirlo a `admin` requiere una decisión nueva.
+  11. **Fuera de este bloque:** comparación con el período anterior, gráficos y series históricas, metas, filtros por vendedor, montos (valor cotizado, vendido o pipeline por moneda), tasa de aceptación de cotizaciones, tasa de asistencia a pruebas, exportación, refresco automático o streaming, cachés compartidas o materialización, `closed_at`, la restricción por rol, el Cockpit y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-037 §4: el período fijo pasa a ser un rango elegido en la URL, con el mes en curso como default.
+  - DEC-037 §6 y §12: el win rate se rotula "Tasa de conversión" y se suma la fila de KPIs.
+  - DEC-037 §10: el loader suma las lecturas de cotizaciones y pruebas.
+  - DEC-037 §13: los filtros por período entran; las cachés siguen fuera, ahora con la política de §6.
+  - DEC-041 y DEC-042: el dashboard lee `test_drives` y `quotes` sin cambiarlos.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: el acceso sigue `requireTenant()` → `withTenant()` → RLS (ADR-001).
+- **Consecuencias:**
+  - `0017_dashboard_indexes` se aplica a staging después del merge con `preflight → migrate → verify`, con `expected_migrations = 0017_dashboard_indexes` si staging ya tiene `0016`.
+  - Cada request de `/intelligence` hace seis lecturas agregadas en una transacción. El costo lo acotan el filtro por organización, los índices y el tope de 366 días.
+  - Habilitar la edición de una oportunidad cerrada sigue exigiendo `closed_at` antes (DEC-037 §5).
+  - `domains/dashboard/range.ts` reutiliza la hora de pared de `domains/calendar/zoned-time.ts`. Unificar `domains/dashboard/period.ts` con ese módulo sigue como backlog técnico (DEC-041).
 
 ---
 
