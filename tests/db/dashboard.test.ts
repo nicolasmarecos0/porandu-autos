@@ -3,9 +3,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { getExecutiveDashboard } from "@/db/queries/dashboard";
 import { getOpportunityQueue } from "@/db/queries/opportunities";
-import { opportunities, vehicles } from "@/db/schema";
+import { opportunities, quotes, testDrives, vehicles } from "@/db/schema";
 import { withTenant, type TenantContext } from "@/db/tenant";
 import type { ExecutiveDashboard } from "@/domains/dashboard/metrics";
+import { RANGE_NOTICE_LABELS } from "@/domains/dashboard/range";
 import { isTerminalStage, type Stage } from "@/domains/opportunities/stages";
 import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
 
@@ -31,12 +32,13 @@ import {
 } from "./support/tenants";
 
 /*
- * Dashboard Directivo (Hito 5, DEC-037), de punta a punta contra
+ * Dashboard Directivo (Hito 5, DEC-037; DEC-043), de punta a punta contra
  * PostgreSQL 17 con las migraciones aplicadas:
  *
- *   request → requireTenant() → withTenant(): conteos de oportunidades,
- *   conteos del inventario y oportunidades en riesgo, filtrados por la
- *   organización activa → RLS → dominio → ViewModel
+ *   request → requireTenant() → withTenant(): cierres del rango,
+ *   cotizaciones pendientes, test drives de la semana, conteos de
+ *   oportunidades, conteos del inventario y oportunidades en riesgo,
+ *   filtrados por la organización activa → RLS → dominio → ViewModel
  *
  * El loader es el real, conectado como app_runtime. Supabase Auth (claims ya
  * verificados), la cookie y el redirect de Next son simulados, como en
@@ -67,6 +69,18 @@ import {
  * ORG_4 (F): ninguna oportunidad ni unidad, hasta el caso de microsegundos
  *   (que agrega dos en los bordes de la recencia).
  * ORG_5 (G): 12 oportunidades Inactivas, para el tope de la lista.
+ *
+ * Cotizaciones (hoy es el 14 oct; vigente = válida hasta hoy inclusive):
+ *   ORG_1: 2 borradores vigentes (uno vence hoy), 1 aprobada vigente, 1
+ *   enviada vigente, 1 enviada vencida ayer, 1 borrador de una oportunidad
+ *   ganada (no cuenta), 1 aceptada y 1 anulada (terminales).
+ *   ORG_2: 1 borrador vigente y 1 aprobada de una oportunidad Nueva (no
+ *   cotizable: no cuenta). ORG_3: 1 enviada vigente.
+ * Test drives (semana del lunes 12 al domingo 18 oct de Asunción):
+ *   ORG_1: agendada en el primer instante del lunes, confirmada, realizada,
+ *   no asistió, cancelada, agendada en el último milisegundo del domingo, y
+ *   dos afuera (el lunes siguiente y el último milisegundo del domingo
+ *   anterior). ORG_2: 1 agendada. ORG_3: ninguna.
  */
 
 vi.mock("server-only", () => ({}));
@@ -392,6 +406,179 @@ const OPPORTUNITIES: SeedOpportunity[] = [
   })),
 ];
 
+type QuoteStatus =
+  "draft" | "approved" | "sent" | "accepted" | "rejected" | "withdrawn";
+
+type SeedQuote = Readonly<{
+  organizationId: string;
+  opportunityId: string;
+  vehicleId: string;
+  status: QuoteStatus;
+  /** Último día de validez, inclusive (DEC-042 §4). */
+  validUntil: string;
+  createdBy: string;
+}>;
+
+/** Alta de las cotizaciones: 1 oct en Asunción (la validez va hasta el 31). */
+const QUOTED_AT = new Date("2026-10-01T15:00:00Z");
+
+const QUOTES: SeedQuote[] = [
+  // ORG_1 — pendientes vigentes.
+  {
+    organizationId: ORG_1,
+    opportunityId: O.qualifyingWarning,
+    vehicleId: U(3),
+    status: "draft",
+    validUntil: "2026-10-20",
+    createdBy: USER_A,
+  },
+  {
+    organizationId: ORG_1,
+    opportunityId: O.negotiatingWarning,
+    vehicleId: U(3),
+    status: "draft",
+    // Último día de validez hoy: todavía vigente.
+    validUntil: "2026-10-14",
+    createdBy: USER_A,
+  },
+  {
+    organizationId: ORG_1,
+    opportunityId: O.negotiatingWarning,
+    vehicleId: U(3),
+    status: "approved",
+    validUntil: "2026-10-25",
+    createdBy: USER_A,
+  },
+  {
+    organizationId: ORG_1,
+    opportunityId: O.negotiatingStale,
+    vehicleId: U(4),
+    status: "sent",
+    validUntil: "2026-10-30",
+    createdBy: USER_A,
+  },
+  // ORG_1 — vencida ayer, sin cerrar.
+  {
+    organizationId: ORG_1,
+    opportunityId: O.qualifyingWarning,
+    vehicleId: U(3),
+    status: "sent",
+    validUntil: "2026-10-13",
+    createdBy: USER_A,
+  },
+  // ORG_1 — no cuentan: abierta de una ganada, y dos terminales.
+  {
+    organizationId: ORG_1,
+    opportunityId: O.wonOctober,
+    vehicleId: U(1),
+    status: "draft",
+    validUntil: "2026-10-20",
+    createdBy: USER_A,
+  },
+  {
+    organizationId: ORG_1,
+    opportunityId: O.negotiatingStale,
+    vehicleId: U(4),
+    status: "accepted",
+    validUntil: "2026-10-20",
+    createdBy: USER_A,
+  },
+  {
+    organizationId: ORG_1,
+    opportunityId: O.qualifyingWarning,
+    vehicleId: U(3),
+    status: "withdrawn",
+    validUntil: "2026-10-20",
+    createdBy: USER_A,
+  },
+  // ORG_2.
+  {
+    organizationId: ORG_2,
+    opportunityId: ORG_2_STALE,
+    vehicleId: X(3),
+    status: "draft",
+    validUntil: "2026-10-20",
+    createdBy: USER_B,
+  },
+  {
+    organizationId: ORG_2,
+    opportunityId: id(2004),
+    vehicleId: X(4),
+    status: "approved",
+    validUntil: "2026-10-20",
+    createdBy: USER_B,
+  },
+  // ORG_3.
+  {
+    organizationId: ORG_3,
+    opportunityId: ORG_3_STALE,
+    vehicleId: W(2),
+    status: "sent",
+    validUntil: "2026-10-31",
+    createdBy: USER_C,
+  },
+];
+
+type SeedTestDrive = Readonly<{
+  organizationId: string;
+  opportunityId: string;
+  vehicleId: string;
+  status: "scheduled" | "confirmed" | "completed" | "no_show" | "cancelled";
+  scheduledAt: Date;
+  createdBy: string;
+}>;
+
+/** Lunes 12 de octubre de 2026, 00:00 de Asunción: empieza la semana. */
+const WEEK_START = new Date("2026-10-12T03:00:00.000Z");
+/** Lunes 19 de octubre de 2026, 00:00 de Asunción: empieza la siguiente. */
+const NEXT_WEEK_START = new Date("2026-10-19T03:00:00.000Z");
+
+const testDrive = (
+  status: SeedTestDrive["status"],
+  scheduledAt: Date,
+  organizationId: string = ORG_1,
+): SeedTestDrive =>
+  organizationId === ORG_1
+    ? {
+        organizationId,
+        opportunityId: O.negotiatingWarning,
+        vehicleId: U(3),
+        status,
+        scheduledAt,
+        createdBy: USER_A,
+      }
+    : {
+        organizationId,
+        opportunityId: ORG_2_STALE,
+        vehicleId: X(3),
+        status,
+        scheduledAt,
+        createdBy: USER_B,
+      };
+
+const TEST_DRIVES: SeedTestDrive[] = [
+  testDrive("scheduled", WEEK_START),
+  testDrive("confirmed", new Date("2026-10-15T14:00:00Z")),
+  testDrive("completed", new Date("2026-10-13T13:00:00Z")),
+  testDrive("no_show", new Date("2026-10-13T18:00:00Z")),
+  testDrive("cancelled", new Date("2026-10-16T13:00:00Z")),
+  testDrive("scheduled", new Date(NEXT_WEEK_START.getTime() - 1)),
+  // Afuera: el lunes siguiente y el último milisegundo de la anterior.
+  testDrive("scheduled", NEXT_WEEK_START),
+  testDrive("completed", new Date(WEEK_START.getTime() - 1)),
+  testDrive("scheduled", new Date("2026-10-14T19:00:00Z"), ORG_2),
+];
+
+const isApproved = (status: QuoteStatus) =>
+  status === "approved" ||
+  status === "sent" ||
+  status === "accepted" ||
+  status === "rejected";
+const isSent = (status: QuoteStatus) =>
+  status === "sent" || status === "accepted" || status === "rejected";
+const isDecided = (status: QuoteStatus) =>
+  status === "accepted" || status === "rejected" || status === "withdrawn";
+
 async function seed(admin: TestDatabase["admin"]): Promise<void> {
   await admin.begin(async (tx) => {
     for (const [userId, organizationId] of [
@@ -433,6 +620,41 @@ async function seed(admin: TestDatabase["admin"]): Promise<void> {
           last_activity_at: op.lastActivityAt,
           created_at: ago(60 * DAY),
           updated_at: op.updatedAt,
+        })}
+      `;
+    }
+    // Con el superusuario: los estados y sellos de cada cotización cumplen
+    // los CHECKs de 0016 (el número lo asigna el trigger).
+    for (const quote of QUOTES) {
+      await tx`
+        INSERT INTO public.quotes ${tx({
+          organization_id: quote.organizationId,
+          opportunity_id: quote.opportunityId,
+          vehicle_id: quote.vehicleId,
+          status: quote.status,
+          currency: "USD",
+          list_price: "50000.00",
+          total_price: "50000.00",
+          valid_until: quote.validUntil,
+          created_by: quote.createdBy,
+          approved_by: isApproved(quote.status) ? quote.createdBy : null,
+          approved_at: isApproved(quote.status) ? QUOTED_AT : null,
+          sent_at: isSent(quote.status) ? QUOTED_AT : null,
+          decided_at: isDecided(quote.status) ? QUOTED_AT : null,
+          created_at: QUOTED_AT,
+          updated_at: QUOTED_AT,
+        })}
+      `;
+    }
+    for (const drive of TEST_DRIVES) {
+      await tx`
+        INSERT INTO public.test_drives ${tx({
+          organization_id: drive.organizationId,
+          opportunity_id: drive.opportunityId,
+          vehicle_id: drive.vehicleId,
+          status: drive.status,
+          scheduled_at: drive.scheduledAt,
+          created_by: drive.createdBy,
         })}
       `;
     }
@@ -494,15 +716,61 @@ async function forgedDashboard(
   request(null);
   mocks.forged = ctx;
   try {
-    return await getExecutiveDashboard(NOW);
+    return await getExecutiveDashboard({}, NOW);
   } finally {
     mocks.forged = null;
   }
 }
 
+const OCTOBER_RANGE: ExecutiveDashboard["range"] = {
+  kind: "month",
+  from: "2026-10-01",
+  to: "2026-10-31",
+  days: 31,
+  label: "Mes en curso: octubre de 2026",
+  isDefault: true,
+};
+
+const WEEK = { weekKey: "2026-10-12", weekLabel: "12 – 18 oct 2026" } as const;
+
+const NO_QUOTES: ExecutiveDashboard["pendingQuotes"] = {
+  total: 0,
+  awaitingApproval: 0,
+  readyToSend: 0,
+  awaitingResponse: 0,
+  expired: 0,
+};
+
+const NO_TEST_DRIVES: ExecutiveDashboard["weekTestDrives"] = {
+  ...WEEK,
+  scheduled: 0,
+  pending: 0,
+  completed: 0,
+  noShow: 0,
+  cancelled: 0,
+};
+
 const ORG_1_OCTOBER: ExecutiveDashboard = {
-  periodLabel: "octubre de 2026",
-  pipeline: { open: 6, won: 2, lost: 1, winRate: 66.7 },
+  range: OCTOBER_RANGE,
+  notice: null,
+  today: "2026-10-14",
+  conversion: { won: 2, lost: 1, closed: 3, rate: 66.7 },
+  pendingQuotes: {
+    total: 4,
+    awaitingApproval: 2,
+    readyToSend: 1,
+    awaitingResponse: 1,
+    expired: 1,
+  },
+  weekTestDrives: {
+    ...WEEK,
+    scheduled: 5,
+    pending: 3,
+    completed: 1,
+    noShow: 1,
+    cancelled: 1,
+  },
+  pipeline: { open: 6 },
   inventory: { inStock: 3, reserved: 1, sold: 2 },
   attention: { warning: 2, stale: 2 },
   atRisk: {
@@ -527,8 +795,13 @@ const ORG_1_OCTOBER: ExecutiveDashboard = {
 };
 
 const ORG_2_OCTOBER: ExecutiveDashboard = {
-  periodLabel: "octubre de 2026",
-  pipeline: { open: 2, won: 2, lost: 0, winRate: 100 },
+  range: OCTOBER_RANGE,
+  notice: null,
+  today: "2026-10-14",
+  conversion: { won: 2, lost: 0, closed: 2, rate: 100 },
+  pendingQuotes: { ...NO_QUOTES, total: 1, awaitingApproval: 1 },
+  weekTestDrives: { ...NO_TEST_DRIVES, scheduled: 1, pending: 1 },
+  pipeline: { open: 2 },
   inventory: { inStock: 1, reserved: 1, sold: 2 },
   attention: { warning: 1, stale: 1 },
   atRisk: {
@@ -546,8 +819,13 @@ const ORG_2_OCTOBER: ExecutiveDashboard = {
 };
 
 const ORG_3_OCTOBER: ExecutiveDashboard = {
-  periodLabel: "octubre de 2026",
-  pipeline: { open: 1, won: 1, lost: 2, winRate: 33.3 },
+  range: OCTOBER_RANGE,
+  notice: null,
+  today: "2026-10-14",
+  conversion: { won: 1, lost: 2, closed: 3, rate: 33.3 },
+  pendingQuotes: { ...NO_QUOTES, total: 1, awaitingResponse: 1 },
+  weekTestDrives: NO_TEST_DRIVES,
+  pipeline: { open: 1 },
   inventory: { inStock: 1, reserved: 0, sold: 1 },
   attention: { warning: 0, stale: 1 },
   atRisk: {
@@ -565,49 +843,54 @@ const ORG_3_OCTOBER: ExecutiveDashboard = {
 };
 
 const EMPTY_OCTOBER: ExecutiveDashboard = {
-  periodLabel: "octubre de 2026",
-  pipeline: { open: 0, won: 0, lost: 0, winRate: null },
+  range: OCTOBER_RANGE,
+  notice: null,
+  today: "2026-10-14",
+  conversion: { won: 0, lost: 0, closed: 0, rate: null },
+  pendingQuotes: NO_QUOTES,
+  weekTestDrives: NO_TEST_DRIVES,
+  pipeline: { open: 0 },
   inventory: { inStock: 0, reserved: 0, sold: 0 },
   attention: { warning: 0, stale: 0 },
   atRisk: { items: [], total: 0 },
 };
 
 describe("loader real: requireTenant() → withTenant() → RLS", () => {
-  it("A (ORG_1): pipeline, win rate, inventario, atención y riesgo del mes", async () => {
+  it("A (ORG_1): ventas, conversión, cotizaciones, test drives, pipeline, inventario, atención y riesgo", async () => {
     request(USER_A);
-    expect(await getExecutiveDashboard(NOW)).toEqual(ORG_1_OCTOBER);
+    expect(await getExecutiveDashboard({}, NOW)).toEqual(ORG_1_OCTOBER);
   });
 
   it("B (ORG_2) ve solo los números de ORG_2", async () => {
     request(USER_B);
-    expect(await getExecutiveDashboard(NOW)).toEqual(ORG_2_OCTOBER);
+    expect(await getExecutiveDashboard({}, NOW)).toEqual(ORG_2_OCTOBER);
   });
 
   it("C con ORG_1 activa ve solo ORG_1, aunque RLS también le deja ver ORG_3 (filtro explícito)", async () => {
     request(USER_C, ORG_1);
-    expect(await getExecutiveDashboard(NOW)).toEqual(ORG_1_OCTOBER);
+    expect(await getExecutiveDashboard({}, NOW)).toEqual(ORG_1_OCTOBER);
   });
 
   it("C con ORG_3 activa ve solo ORG_3, nunca ORG_2 (membership inactiva)", async () => {
     request(USER_C, ORG_3);
-    expect(await getExecutiveDashboard(NOW)).toEqual(ORG_3_OCTOBER);
+    expect(await getExecutiveDashboard({}, NOW)).toEqual(ORG_3_OCTOBER);
 
     request(USER_C, ORG_2);
-    expect(await redirectOf(getExecutiveDashboard(NOW))).toBe(
+    expect(await redirectOf(getExecutiveDashboard({}, NOW))).toBe(
       "/select-organization",
     );
   });
 
-  it("una organización sin datos: ceros y win rate sin dato, nunca 0 %", async () => {
+  it("una organización sin datos: ceros y la tasa sin dato, nunca 0 %", async () => {
     request(USER_F);
-    expect(await getExecutiveDashboard(NOW)).toEqual(EMPTY_OCTOBER);
+    expect(await getExecutiveDashboard({}, NOW)).toEqual(EMPTY_OCTOBER);
   });
 
   it("sin sesión o sin membership activa, no llega a la base: redirige", async () => {
     request(null);
-    expect(await redirectOf(getExecutiveDashboard(NOW))).toBe("/login");
+    expect(await redirectOf(getExecutiveDashboard({}, NOW))).toBe("/login");
     request(USER_D);
-    expect(await redirectOf(getExecutiveDashboard(NOW))).toBe("/no-access");
+    expect(await redirectOf(getExecutiveDashboard({}, NOW))).toBe("/no-access");
   });
 
   it("contexto falsificado (A-03): A con ORG_2 no cuenta ni ORG_2 ni ORG_1", async () => {
@@ -622,14 +905,20 @@ describe("el mes en curso es el de Asunción", () => {
     request(USER_A);
     // Octubre (ORG_1_OCTOBER): la ganada del 5 y la del primer instante
     // (U1 y U4); no la del último milisegundo de septiembre (U2).
-    expect((await getExecutiveDashboard(NOW)).pipeline).toEqual(
-      ORG_1_OCTOBER.pipeline,
+    expect((await getExecutiveDashboard({}, NOW)).conversion).toEqual(
+      ORG_1_OCTOBER.conversion,
     );
 
     // Septiembre: la ganada del último milisegundo (U2) y la perdida del 15.
-    const september = await getExecutiveDashboard(NOW_SEPTEMBER);
-    expect(september.periodLabel).toBe("septiembre de 2026");
-    expect(september.pipeline).toMatchObject({ won: 1, lost: 1, winRate: 50 });
+    const september = await getExecutiveDashboard({}, NOW_SEPTEMBER);
+    expect(september.range.label).toBe("Mes en curso: septiembre de 2026");
+    expect(september.today).toBe("2026-09-30");
+    expect(september.conversion).toEqual({
+      won: 1,
+      lost: 1,
+      closed: 2,
+      rate: 50,
+    });
     expect(september.inventory.sold).toBe(1);
   });
 });
@@ -642,7 +931,7 @@ describe("la atención usa la misma regla de recencia que la cola", () => {
     const byState = (state: string) =>
       open.filter((op) => op.lastActivity?.state === state).length;
 
-    const dashboard = await getExecutiveDashboard(NOW);
+    const dashboard = await getExecutiveDashboard({}, NOW);
     expect(dashboard.attention).toEqual({
       warning: byState("warning"),
       stale: byState("stale"),
@@ -659,7 +948,10 @@ describe("la atención usa la misma regla de recencia que la cola", () => {
 
   it("un minuto después, la que llevaba 5 días exactos pasa a Inactiva", async () => {
     request(USER_A);
-    const later = await getExecutiveDashboard(new Date(NOW.getTime() + MINUTE));
+    const later = await getExecutiveDashboard(
+      {},
+      new Date(NOW.getTime() + MINUTE),
+    );
     expect(later.attention).toEqual({ warning: 1, stale: 3 });
     expect(later.atRisk.items.map((item) => item.id)).toEqual([
       O.newStale,
@@ -709,7 +1001,7 @@ describe("la atención usa la misma regla de recencia que la cola", () => {
       ["Borde Enfriándose", "warning"],
       ["Borde Inactiva", "stale"],
     ]);
-    const dashboard = await getExecutiveDashboard(NOW);
+    const dashboard = await getExecutiveDashboard({}, NOW);
     expect(dashboard.attention).toEqual({ warning: 1, stale: 1 });
     expect(dashboard.atRisk.items.map((item) => item.id)).toEqual([id(4001)]);
   });
@@ -718,7 +1010,7 @@ describe("la atención usa la misma regla de recencia que la cola", () => {
 describe("oportunidades en riesgo", () => {
   it("muestra a lo sumo 10, de la más vieja a la más reciente, y dice cuántas hay", async () => {
     request(USER_G);
-    const { attention, atRisk } = await getExecutiveDashboard(NOW);
+    const { attention, atRisk } = await getExecutiveDashboard({}, NOW);
 
     expect(attention).toEqual({ warning: 0, stale: 12 });
     expect(atRisk.total).toBe(12);
@@ -729,8 +1021,214 @@ describe("oportunidades en riesgo", () => {
   });
 });
 
+describe("el rango de la URL (DEC-043 §2)", () => {
+  it("el mes anterior cambia los flujos; el estado de hoy y la semana no", async () => {
+    request(USER_A);
+    const previous = await getExecutiveDashboard(
+      { range: "previous_month" },
+      NOW,
+    );
+
+    expect(previous.range).toEqual({
+      kind: "previous_month",
+      from: "2026-09-01",
+      to: "2026-09-30",
+      days: 30,
+      label: "Mes anterior: septiembre de 2026",
+      isDefault: false,
+    });
+    // Septiembre: la ganada del último milisegundo (U2) y la perdida del 15.
+    expect(previous.conversion).toEqual({
+      won: 1,
+      lost: 1,
+      closed: 2,
+      rate: 50,
+    });
+    expect(previous.inventory).toEqual({
+      ...ORG_1_OCTOBER.inventory,
+      sold: 1,
+    });
+    // Existencias de hoy y la semana en curso: no siguen el rango.
+    expect(previous.pipeline).toEqual(ORG_1_OCTOBER.pipeline);
+    expect(previous.attention).toEqual(ORG_1_OCTOBER.attention);
+    expect(previous.pendingQuotes).toEqual(ORG_1_OCTOBER.pendingQuotes);
+    expect(previous.weekTestDrives).toEqual(ORG_1_OCTOBER.weekTestDrives);
+    expect(previous.atRisk).toEqual(ORG_1_OCTOBER.atRisk);
+  });
+
+  it("un rango personalizado incluye sus dos días, en la hora de Asunción", async () => {
+    request(USER_A);
+    const custom = await getExecutiveDashboard(
+      { range: "custom", from: "2026-09-15", to: "2026-10-05" },
+      NOW,
+    );
+
+    expect(custom.range).toMatchObject({
+      kind: "custom",
+      from: "2026-09-15",
+      to: "2026-10-05",
+      days: 21,
+    });
+    expect(custom.notice).toBeNull();
+    // Las ganadas del 5 oct (U1), del primer instante de octubre (U4) y del
+    // último milisegundo de septiembre (U2), y la perdida del 15 sep. No la
+    // perdida del 10 oct.
+    expect(custom.conversion).toEqual({
+      won: 3,
+      lost: 1,
+      closed: 4,
+      rate: 75,
+    });
+    expect(custom.inventory.sold).toBe(3);
+  });
+
+  it("un solo día va de su primer instante al del día siguiente", async () => {
+    request(USER_A);
+    const october1 = await getExecutiveDashboard(
+      { range: "custom", from: "2026-10-01", to: "2026-10-01" },
+      NOW,
+    );
+    // La ganada del primer instante (U4), no la del último milisegundo de
+    // septiembre (U2).
+    expect(october1.conversion).toEqual({
+      won: 1,
+      lost: 0,
+      closed: 1,
+      rate: 100,
+    });
+
+    const september30 = await getExecutiveDashboard(
+      { range: "custom", from: "2026-09-30", to: "2026-09-30" },
+      NOW,
+    );
+    expect(september30.conversion).toEqual({
+      won: 1,
+      lost: 0,
+      closed: 1,
+      rate: 100,
+    });
+    expect(september30.inventory.sold).toBe(1);
+  });
+
+  it("el año en curso suma todos los cierres del año", async () => {
+    request(USER_A);
+    const year = await getExecutiveDashboard({ range: "year" }, NOW);
+
+    expect(year.range.label).toBe("Año en curso: 2026");
+    expect(year.conversion).toEqual({ won: 3, lost: 2, closed: 5, rate: 60 });
+    expect(year.inventory.sold).toBe(3);
+  });
+
+  it("un rango inválido o demasiado largo cae al mes en curso con un aviso, sin romper", async () => {
+    request(USER_A);
+    expect(
+      await getExecutiveDashboard(
+        { range: "custom", from: "2026-10-10", to: "2026-10-01" },
+        NOW,
+      ),
+    ).toEqual({ ...ORG_1_OCTOBER, notice: RANGE_NOTICE_LABELS.invalid_range });
+    expect(
+      await getExecutiveDashboard(
+        { range: "custom", from: "2025-01-01", to: "2026-10-01" },
+        NOW,
+      ),
+    ).toEqual({
+      ...ORG_1_OCTOBER,
+      notice: RANGE_NOTICE_LABELS.range_too_long,
+    });
+    expect(await getExecutiveDashboard({ range: "forever" }, NOW)).toEqual({
+      ...ORG_1_OCTOBER,
+      notice: RANGE_NOTICE_LABELS.invalid_range,
+    });
+  });
+
+  it("el rango no cruza organizaciones", async () => {
+    request(USER_B);
+    expect(
+      (await getExecutiveDashboard({ range: "year" }, NOW)).conversion,
+    ).toEqual({ won: 2, lost: 0, closed: 2, rate: 100 });
+    request(USER_C, ORG_3);
+    expect(
+      (await getExecutiveDashboard({ range: "year" }, NOW)).conversion,
+    ).toEqual({ won: 1, lost: 2, closed: 3, rate: 33.3 });
+  });
+});
+
+describe("cotizaciones pendientes: estado de hoy (DEC-043 §4)", () => {
+  it("cuenta vigentes por estado, con el último día de validez incluido, y las vencidas aparte", async () => {
+    request(USER_A);
+    const { pendingQuotes } = await getExecutiveDashboard({}, NOW);
+
+    expect(pendingQuotes).toEqual(ORG_1_OCTOBER.pendingQuotes);
+    // De las 8 de ORG_1, no cuentan la abierta de una oportunidad ganada ni
+    // las dos terminales.
+    expect(QUOTES.filter((q) => q.organizationId === ORG_1)).toHaveLength(8);
+    expect(pendingQuotes.total + pendingQuotes.expired).toBe(5);
+  });
+
+  it("al día siguiente del último día de validez, la cotización pasa a vencida", async () => {
+    request(USER_A);
+    const tomorrow = await getExecutiveDashboard(
+      {},
+      new Date(NOW.getTime() + DAY),
+    );
+    expect(tomorrow.today).toBe("2026-10-15");
+    expect(tomorrow.pendingQuotes).toEqual({
+      total: 3,
+      awaitingApproval: 1,
+      readyToSend: 1,
+      awaitingResponse: 1,
+      expired: 2,
+    });
+  });
+
+  it("C con ORG_1 activa no cuenta la enviada de ORG_3, que RLS también le deja ver", async () => {
+    request(USER_C, ORG_1);
+    expect((await getExecutiveDashboard({}, NOW)).pendingQuotes).toEqual(
+      ORG_1_OCTOBER.pendingQuotes,
+    );
+    request(USER_C, ORG_3);
+    expect((await getExecutiveDashboard({}, NOW)).pendingQuotes).toEqual(
+      ORG_3_OCTOBER.pendingQuotes,
+    );
+  });
+});
+
+describe("test drives de la semana (DEC-043 §5)", () => {
+  it("la semana de lunes a domingo de Asunción, con sus dos bordes", async () => {
+    request(USER_A);
+    expect((await getExecutiveDashboard({}, NOW)).weekTestDrives).toEqual(
+      ORG_1_OCTOBER.weekTestDrives,
+    );
+  });
+
+  it("el lunes siguiente es otra semana", async () => {
+    request(USER_A);
+    const nextWeek = await getExecutiveDashboard(
+      {},
+      new Date("2026-10-19T13:30:00Z"),
+    );
+    expect(nextWeek.weekTestDrives).toEqual({
+      weekKey: "2026-10-19",
+      weekLabel: "19 – 25 oct 2026",
+      scheduled: 1,
+      pending: 1,
+      completed: 0,
+      noShow: 0,
+      cancelled: 0,
+    });
+  });
+
+  it("C con ORG_3 activa no cuenta las de ORG_1, que RLS también le deja ver", async () => {
+    request(USER_C, ORG_3);
+    expect((await getExecutiveDashboard({}, NOW)).weekTestDrives).toEqual(
+      NO_TEST_DRIVES,
+    );
+  });
+});
+
 describe("leer no escribe", () => {
-  it("calcular el dashboard no modifica oportunidades ni unidades", async () => {
+  it("calcular el dashboard no modifica oportunidades, unidades, cotizaciones ni test drives", async () => {
     const snapshot = async () => ({
       opportunities: await db.admin`
         SELECT id, stage, vehicle_id, last_activity_at, updated_at
@@ -739,12 +1237,20 @@ describe("leer no escribe", () => {
       vehicles: await db.admin`
         SELECT id, status, updated_at FROM public.vehicles ORDER BY id
       `,
+      quotes: await db.admin`
+        SELECT id, status, number, valid_until, updated_at
+        FROM public.quotes ORDER BY id
+      `,
+      testDrives: await db.admin`
+        SELECT id, status, scheduled_at, updated_at
+        FROM public.test_drives ORDER BY id
+      `,
     });
     const before = await snapshot();
     request(USER_A);
-    await getExecutiveDashboard(NOW);
+    await getExecutiveDashboard({}, NOW);
     request(USER_B);
-    await getExecutiveDashboard(NOW);
+    await getExecutiveDashboard({}, NOW);
     expect(await snapshot()).toEqual(before);
   });
 
@@ -772,10 +1278,10 @@ describe("leer no escribe", () => {
     expect(after.updated_at).toEqual(SEPTEMBER_END);
 
     request(USER_A);
-    expect((await getExecutiveDashboard(NOW_SEPTEMBER)).pipeline).toMatchObject(
-      { won: 1, lost: 1 },
-    );
-    expect(await getExecutiveDashboard(NOW)).toEqual(ORG_1_OCTOBER);
+    expect(
+      (await getExecutiveDashboard({}, NOW_SEPTEMBER)).conversion,
+    ).toMatchObject({ won: 1, lost: 1 });
+    expect(await getExecutiveDashboard({}, NOW)).toEqual(ORG_1_OCTOBER);
   });
 });
 
@@ -792,6 +1298,8 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
       opportunities:
         (await tx.select({ n: count() }).from(opportunities))[0]?.n ?? 0,
       vehicles: (await tx.select({ n: count() }).from(vehicles))[0]?.n ?? 0,
+      quotes: (await tx.select({ n: count() }).from(quotes))[0]?.n ?? 0,
+      testDrives: (await tx.select({ n: count() }).from(testDrives))[0]?.n ?? 0,
     }));
     const seeded = (organizationIds: string[]) => ({
       opportunities: OPPORTUNITIES.filter((op) =>
@@ -800,11 +1308,16 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
       vehicles: VEHICLES.filter((v) =>
         organizationIds.includes(v.organizationId),
       ).length,
+      quotes: QUOTES.filter((q) => organizationIds.includes(q.organizationId))
+        .length,
+      testDrives: TEST_DRIVES.filter((d) =>
+        organizationIds.includes(d.organizationId),
+      ).length,
     });
     expect(unfiltered).toEqual(seeded([ORG_1, ORG_3]));
     // El loader real filtra: el test de aislamiento de C pasa.
     request(USER_C, ORG_3);
-    expect(await getExecutiveDashboard(NOW)).toEqual(ORG_3_OCTOBER);
+    expect(await getExecutiveDashboard({}, NOW)).toEqual(ORG_3_OCTOBER);
   });
 
   it("con RLS desactivado, el contexto falsificado contaría ORG_2: el filtro explícito no alcanza solo", async () => {
@@ -812,6 +1325,8 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
     await db.admin`ALTER TABLE public.opportunities DISABLE ROW LEVEL SECURITY`;
     await db.admin`ALTER TABLE public.vehicles DISABLE ROW LEVEL SECURITY`;
     await db.admin`ALTER TABLE public.contacts DISABLE ROW LEVEL SECURITY`;
+    await db.admin`ALTER TABLE public.quotes DISABLE ROW LEVEL SECURITY`;
+    await db.admin`ALTER TABLE public.test_drives DISABLE ROW LEVEL SECURITY`;
     try {
       // El filtro usa la organización del contexto: la falsificada pasa.
       expect(await forgedDashboard(forged)).toEqual(ORG_2_OCTOBER);
@@ -819,6 +1334,8 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
       await db.admin`ALTER TABLE public.opportunities ENABLE ROW LEVEL SECURITY`;
       await db.admin`ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY`;
       await db.admin`ALTER TABLE public.contacts ENABLE ROW LEVEL SECURITY`;
+      await db.admin`ALTER TABLE public.quotes ENABLE ROW LEVEL SECURITY`;
+      await db.admin`ALTER TABLE public.test_drives ENABLE ROW LEVEL SECURITY`;
     }
     // Con RLS, el mismo contexto no ve nada.
     expect(await forgedDashboard(forged)).toEqual(EMPTY_OCTOBER);

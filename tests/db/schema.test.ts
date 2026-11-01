@@ -335,7 +335,7 @@ describe("opportunities (H1.1)", () => {
     });
   });
 
-  it("índices: la cola por organización y recencia, y la FK al contacto", async () => {
+  it("índices: la cola por organización y recencia, la FK al contacto y los cierres del dashboard", async () => {
     expect(await indexes(db.admin, "opportunities")).toEqual({
       opportunities_pkey:
         "CREATE UNIQUE INDEX opportunities_pkey ON public.opportunities USING btree (id)",
@@ -349,6 +349,9 @@ describe("opportunities (H1.1)", () => {
         "CREATE UNIQUE INDEX opportunities_organization_id_id_contact_id_key ON public.opportunities USING btree (organization_id, id, contact_id)",
       opportunities_organization_id_vehicle_id_idx:
         "CREATE INDEX opportunities_organization_id_vehicle_id_idx ON public.opportunities USING btree (organization_id, vehicle_id) WHERE (vehicle_id IS NOT NULL)",
+      // Los cierres de un rango del Dashboard Directivo (DEC-043 §7).
+      opportunities_organization_id_closed_at_idx:
+        "CREATE INDEX opportunities_organization_id_closed_at_idx ON public.opportunities USING btree (organization_id, updated_at) WHERE (stage = ANY (ARRAY['won'::text, 'lost'::text]))",
     });
   });
 });

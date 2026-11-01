@@ -9,11 +9,13 @@ import type {
 } from "@/domains/dashboard/metrics";
 
 /*
- * Dashboard Directivo de /intelligence (Hito 5, DEC-037 §12), renderizado en
- * el servidor sin DOM: los tres bloques de indicadores en su grilla, los
- * valores con formato es-PY, "Sin dato" sin cierres (DEC-005), los tonos de
- * atención junto a su texto y la lista de oportunidades en riesgo con enlace
- * al detalle.
+ * Dashboard Directivo de /intelligence (Hito 5, DEC-037 §12; DEC-043 §9),
+ * renderizado en el servidor sin DOM: el encabezado con el rango y su
+ * selector, el aviso de un rango ignorado, la fila de cuatro KPIs con su
+ * alcance, los tres bloques de indicadores en su grilla, los valores con
+ * formato es-PY, "Sin dato" sin cierres (DEC-005), los tonos de estado
+ * junto a su texto y la lista de oportunidades en riesgo con enlace al
+ * detalle.
  */
 
 const id = (n: number) =>
@@ -34,8 +36,34 @@ function atRiskItem(
 }
 
 const DASHBOARD: ExecutiveDashboard = {
-  periodLabel: "octubre de 2026",
-  pipeline: { open: 1234, won: 2, lost: 1, winRate: 66.7 },
+  range: {
+    kind: "month",
+    from: "2026-10-01",
+    to: "2026-10-31",
+    days: 31,
+    label: "Mes en curso: octubre de 2026",
+    isDefault: true,
+  },
+  notice: null,
+  today: "2026-10-14",
+  conversion: { won: 2, lost: 1, closed: 3, rate: 66.7 },
+  pendingQuotes: {
+    total: 6,
+    awaitingApproval: 2,
+    readyToSend: 1,
+    awaitingResponse: 3,
+    expired: 1,
+  },
+  weekTestDrives: {
+    weekKey: "2026-10-12",
+    weekLabel: "12 – 18 oct 2026",
+    scheduled: 4,
+    pending: 2,
+    completed: 1,
+    noShow: 1,
+    cancelled: 1,
+  },
+  pipeline: { open: 1234 },
   inventory: { inStock: 18, reserved: 3, sold: 2 },
   attention: { warning: 2, stale: 1 },
   atRisk: {
@@ -64,6 +92,7 @@ function render(dashboard: ExecutiveDashboard = DASHBOARD): string {
 }
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const text = (html: string) => html.replace(/<[^>]+>/g, "");
 
 /** El HTML de una sección por el id de su encabezado. */
 function section(html: string, headingId: string): string {
@@ -79,7 +108,7 @@ type Kpi = {
   hint: string;
 };
 
-/** Una tarjeta de indicador por su rótulo. */
+/** Una tarjeta de los bloques por su rótulo. */
 function kpi(html: string, label: string): Kpi {
   const match = new RegExp(
     `<div class="([^"]*)"><dt class="[^"]*">${escape(label)}</dt><dd class="([^"]*)">([^<]*)</dd><dd class="[^"]*">(.*?)</dd></div>`,
@@ -90,30 +119,62 @@ function kpi(html: string, label: string): Kpi {
     edge: edge?.[0],
     valueClasses: match[2]!,
     value: match[3]!,
-    hint: match[4]!.replace(/<[^>]+>/g, ""),
+    hint: text(match[4]!),
   };
 }
 
+type Headline = {
+  valueClasses: string;
+  value: string;
+  /** HTML del contexto. */
+  context: string;
+  /** HTML del alcance, al pie. */
+  scope: string;
+};
+
+/** Una tarjeta de la fila de KPIs por su rótulo (el dt lleva el ícono). */
+function headline(html: string, label: string): Headline {
+  const match = new RegExp(
+    `<div class="[^"]*"><dt class="[^"]*"><span aria-hidden="true"[^>]*><svg[^]*?</svg></span>${escape(label)}</dt><dd class="([^"]*)">([^<]*)</dd><dd class="[^"]*">(.*?)</dd><dd class="[^"]*">(.*?)</dd></div>`,
+  ).exec(html);
+  if (!match) throw new Error(`headline kpi "${label}" not rendered`);
+  return {
+    valueClasses: match[1]!,
+    value: match[2]!,
+    context: match[3]!,
+    scope: match[4]!,
+  };
+}
+
+const HEADER_END = "</header>";
+
 describe("ExecutiveDashboardView: estructura", () => {
-  it("encabezado con el mes en curso y un solo h1", () => {
+  it("encabezado con un solo h1, el rango elegido y su selector", () => {
     const html = render();
+    const header = html.slice(0, html.indexOf(HEADER_END));
     expect(html.match(/<h1\b/g)).toHaveLength(1);
-    expect(html).toContain(">Inteligencia</h1>");
-    expect(html).toContain("Dashboard directivo");
-    expect(html).toMatch(/Mes en curso:\s*<span[^>]*>octubre de 2026<\/span>/);
+    expect(header).toContain(">Inteligencia</h1>");
+    expect(header).toContain("Dashboard directivo");
+    expect(header).toMatch(
+      /<p aria-live="polite"[^>]*>.*<span[^>]*>Mes en curso: octubre de 2026<\/span><\/p>/,
+    );
+    expect(header).toContain('<nav aria-label="Rango de fechas"');
   });
 
-  it("tres bloques de indicadores, cada uno con su grilla de tarjetas", () => {
+  it("la fila de KPIs y los tres bloques, cada uno con su grilla de tarjetas", () => {
     const html = render();
     for (const [headingId, title, columns] of [
-      ["pipeline-heading", "Pipeline comercial", "sm:grid-cols-3"],
+      ["kpis-heading", "Indicadores clave", "sm:grid-cols-2 xl:grid-cols-4"],
+      ["pipeline-heading", "Pipeline comercial", "sm:grid-cols-2"],
       ["inventory-heading", "Salud del inventario", "sm:grid-cols-3"],
       ["attention-heading", "Atención", "sm:grid-cols-2"],
     ] as const) {
       const block = section(html, headingId);
       expect(block).toContain(`<h2 id="${headingId}"`);
       expect(block).toContain(`>${title}</h2>`);
-      expect(block).toMatch(new RegExp(`<dl class="grid [^"]*${columns}`));
+      expect(block).toMatch(
+        new RegExp(`<dl class="grid [^"]*${escape(columns)}"`),
+      );
     }
     // El rail contextual lleva la lista en riesgo.
     expect(html).toMatch(
@@ -121,54 +182,229 @@ describe("ExecutiveDashboardView: estructura", () => {
     );
   });
 
-  it("el orden de lectura: pipeline, inventario, atención y después el riesgo", () => {
+  it("el orden de lectura: KPIs, pipeline, inventario, atención y después el riesgo", () => {
     const html = render();
     const positions = [
+      "kpis-heading",
       "pipeline-heading",
       "inventory-heading",
       "attention-heading",
       "at-risk-heading",
     ].map((headingId) => html.indexOf(`id="${headingId}"`));
+    expect(positions.every((position) => position > 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
   });
 });
 
-describe("indicadores con formato es-PY", () => {
-  it("pipeline: activas con separador de miles, ganadas con sus perdidas y win rate", () => {
+describe("aviso de un rango ignorado (DEC-043 §2)", () => {
+  it("se anuncia sobre los KPIs, con el tono de advertencia junto al texto", () => {
+    const notice = "El rango pedido no es válido. Se muestra el mes en curso.";
+    const html = render({ ...DASHBOARD, notice });
+
+    expect(html).toContain(
+      `<p role="status" class="rounded-lg border border-warning-border bg-warning-soft px-4 py-2.5 text-label text-warning">${notice}</p>`,
+    );
+    expect(html.indexOf(notice)).toBeLessThan(
+      html.indexOf('id="kpis-heading"'),
+    );
+  });
+
+  it("sin aviso no hay mensaje de estado", () => {
+    expect(render()).not.toContain('role="status"');
+  });
+});
+
+describe("fila de KPIs (DEC-043 §9)", () => {
+  it("ventas cerradas del rango", () => {
+    const tile = headline(section(render(), "kpis-heading"), "Ventas cerradas");
+    expect(tile.value).toBe("2");
+    expect(text(tile.context)).toBe(
+      "Oportunidades ganadas con cierre en el rango",
+    );
+    expect(text(tile.scope)).toBe("En el rango elegido");
+  });
+
+  it("tasa de conversión con su medidor y su base", () => {
+    const tile = headline(
+      section(render(), "kpis-heading"),
+      "Tasa de conversión",
+    );
+    expect(tile.value).toBe("66,7%");
+    expect(tile.valueClasses).toContain("text-text-primary");
+    expect(text(tile.context)).toBe("2 ventas de 3 cierres");
+    // El medidor: decorativo, de la rampa de marca, con el ancho del valor.
+    expect(tile.context).toContain(
+      '<span aria-hidden="true" class="block h-1.5 w-full overflow-hidden rounded-full bg-brand-soft"><span class="block h-full rounded-full bg-brand" style="width:66.7%"></span></span>',
+    );
+    expect(text(tile.scope)).toBe("En el rango elegido");
+  });
+
+  it("cotizaciones pendientes con el desglose y las vencidas aparte, en advertencia", () => {
+    const tile = headline(
+      section(render(), "kpis-heading"),
+      "Cotizaciones pendientes",
+    );
+    expect(tile.value).toBe("6");
+    expect(tile.context).toContain(
+      "<span>2 por aprobar · 1 por enviar · 3 esperando respuesta</span>",
+    );
+    expect(tile.context).toMatch(
+      /<span class="[^"]*border-warning-border bg-warning-soft text-warning[^"]*">1 vencida sin cerrar<\/span>/,
+    );
+    expect(text(tile.scope)).toBe("Estado de hoy");
+  });
+
+  it("sin vencidas no hay advertencia", () => {
+    const tile = headline(
+      section(
+        render({
+          ...DASHBOARD,
+          pendingQuotes: { ...DASHBOARD.pendingQuotes, expired: 0 },
+        }),
+        "kpis-heading",
+      ),
+      "Cotizaciones pendientes",
+    );
+    expect(tile.context).not.toContain("vencida");
+    expect(tile.context).not.toContain("text-warning");
+  });
+
+  it("varias vencidas, en plural", () => {
+    const tile = headline(
+      section(
+        render({
+          ...DASHBOARD,
+          pendingQuotes: { ...DASHBOARD.pendingQuotes, expired: 4 },
+        }),
+        "kpis-heading",
+      ),
+      "Cotizaciones pendientes",
+    );
+    expect(tile.context).toContain(">4 vencidas sin cerrar</span>");
+  });
+
+  it("test drives de la semana con el desglose, las canceladas aparte y el enlace a esa semana de la agenda", () => {
+    const tile = headline(
+      section(render(), "kpis-heading"),
+      "Test drives de la semana",
+    );
+    expect(tile.value).toBe("4");
+    expect(tile.context).toContain(
+      "<span>2 por realizar · 1 realizada · 1 no asistió</span>",
+    );
+    expect(tile.context).toContain(
+      "<span>1 cancelada fuera de la agenda</span>",
+    );
+    expect(tile.scope).toContain("12 – 18 oct 2026");
+    expect(tile.scope).toMatch(
+      /<a [^>]*href="\/calendar\?w=2026-10-12">Ver agenda/,
+    );
+  });
+
+  it("sin canceladas no se mencionan", () => {
+    const tile = headline(
+      section(
+        render({
+          ...DASHBOARD,
+          weekTestDrives: { ...DASHBOARD.weekTestDrives, cancelled: 0 },
+        }),
+        "kpis-heading",
+      ),
+      "Test drives de la semana",
+    );
+    expect(tile.context).not.toContain("cancelada");
+  });
+
+  it("los valores usan cifras tabulares y la tipografía destacada", () => {
+    const html = section(render(), "kpis-heading");
+    for (const label of [
+      "Ventas cerradas",
+      "Tasa de conversión",
+      "Cotizaciones pendientes",
+      "Test drives de la semana",
+    ]) {
+      expect(headline(html, label).valueClasses).toContain("text-display");
+      expect(headline(html, label).valueClasses).toContain("tabular-nums");
+    }
+  });
+});
+
+describe("tasa de conversión sin cierres (DEC-005)", () => {
+  const html = render({
+    ...DASHBOARD,
+    conversion: { won: 0, lost: 0, closed: 0, rate: null },
+  });
+  const tile = headline(section(html, "kpis-heading"), "Tasa de conversión");
+
+  it("dice Sin dato, atenuado, y explica por qué", () => {
+    expect(tile.value).toBe("Sin dato");
+    expect(tile.valueClasses).toContain("text-text-muted");
+    expect(text(tile.context)).toBe("Sin dato: no hubo cierres en el rango");
+  });
+
+  it("no dibuja un 0 % inventado ni el medidor", () => {
+    expect(html).not.toContain("0%");
+    expect(html).not.toContain('style="width:');
+  });
+
+  it("con cierres y ninguna venta sí es 0 %, con el medidor vacío", () => {
+    const zero = render({
+      ...DASHBOARD,
+      conversion: { won: 0, lost: 2, closed: 2, rate: 0 },
+    });
+    const zeroTile = headline(
+      section(zero, "kpis-heading"),
+      "Tasa de conversión",
+    );
+    expect(zeroTile.value).toBe("0%");
+    expect(zeroTile.valueClasses).not.toContain("text-text-muted");
+    expect(text(zeroTile.context)).toBe("0 ventas de 2 cierres");
+    expect(zero).toContain('style="width:0%"');
+  });
+});
+
+describe("bloques con formato es-PY", () => {
+  it("pipeline: activas de hoy con separador de miles y perdidas del rango", () => {
     const html = section(render(), "pipeline-heading");
 
     expect(kpi(html, "Oportunidades activas")).toMatchObject({
       value: "1.234",
-      hint: "Nuevas, en calificación y en negociación",
+      hint: "Nuevas, en calificación y en negociación, hoy",
     });
-    expect(kpi(html, "Ganadas en el mes")).toMatchObject({
-      value: "2",
-      hint: "1 perdida en el mes",
+    expect(kpi(html, "Perdidas")).toMatchObject({
+      value: "1",
+      hint: "Cerradas sin venta en el rango",
     });
-    expect(kpi(html, "Win rate")).toMatchObject({
-      value: "66,7%",
-      hint: "Ganadas sobre cerradas en el mes",
-    });
-    // El medidor: decorativo, de la rampa de marca, con el ancho del valor.
-    expect(html).toContain(
-      '<span aria-hidden="true" class="block h-1.5 w-full overflow-hidden rounded-full bg-brand-soft"><span class="block h-full rounded-full bg-brand" style="width:66.7%"></span></span>',
-    );
   });
 
-  it("inventario: en stock, reservadas y vendidas en el mes", () => {
+  it("un número, un nombre: las ventas y la tasa solo están en la fila de KPIs", () => {
+    const html = render();
+    for (const headingId of [
+      "pipeline-heading",
+      "inventory-heading",
+      "attention-heading",
+    ]) {
+      const block = section(html, headingId);
+      expect(block).not.toContain("Win rate");
+      expect(block).not.toContain("Ganadas");
+      expect(block).not.toContain("Tasa de conversión");
+    }
+  });
+
+  it("inventario: en stock y reservadas de hoy, vendidas en el rango", () => {
     const html = section(render(), "inventory-heading");
 
     expect(kpi(html, "En stock")).toMatchObject({
       value: "18",
-      hint: "Unidades sin reserva ni venta",
+      hint: "Unidades sin reserva ni venta, hoy",
     });
     expect(kpi(html, "Reservadas")).toMatchObject({
       value: "3",
-      hint: "Vinculadas a una oportunidad en negociación",
+      hint: "Vinculadas a una oportunidad en negociación, hoy",
     });
-    expect(kpi(html, "Vendidas en el mes")).toMatchObject({
+    expect(kpi(html, "Vendidas en el rango")).toMatchObject({
       value: "2",
-      hint: "Unidades de oportunidades ganadas en el mes",
+      hint: "Unidades de las ventas cerradas en el rango",
     });
   });
 
@@ -178,49 +414,6 @@ describe("indicadores con formato es-PY", () => {
       expect(kpi(html, label).valueClasses).toContain("text-metric");
       expect(kpi(html, label).valueClasses).toContain("tabular-nums");
     }
-  });
-
-  it("plural de las perdidas", () => {
-    const html = render({
-      ...DASHBOARD,
-      pipeline: { open: 4, won: 1, lost: 3, winRate: 25 },
-    });
-    expect(kpi(html, "Ganadas en el mes").hint).toBe("3 perdidas en el mes");
-    expect(kpi(html, "Win rate").value).toBe("25%");
-  });
-});
-
-describe("win rate sin cierres (DEC-005)", () => {
-  const html = render({
-    ...DASHBOARD,
-    pipeline: { open: 3, won: 0, lost: 0, winRate: null },
-  });
-
-  it("cero perdidas va en plural", () => {
-    expect(kpi(html, "Ganadas en el mes").hint).toBe("0 perdidas en el mes");
-  });
-
-  it("dice Sin dato, atenuado, y explica por qué", () => {
-    expect(kpi(html, "Win rate")).toMatchObject({
-      value: "Sin dato",
-      hint: "Sin dato: no hubo cierres en el mes",
-    });
-    expect(kpi(html, "Win rate").valueClasses).toContain("text-text-muted");
-  });
-
-  it("no dibuja un 0 % inventado ni el medidor", () => {
-    expect(html).not.toContain("0%");
-    expect(html).not.toContain('style="width:');
-  });
-
-  it("con cierres y ninguna ganada sí es 0 %, con el medidor vacío", () => {
-    const zero = render({
-      ...DASHBOARD,
-      pipeline: { open: 3, won: 0, lost: 2, winRate: 0 },
-    });
-    expect(kpi(zero, "Win rate").value).toBe("0%");
-    expect(kpi(zero, "Win rate").valueClasses).not.toContain("text-text-muted");
-    expect(zero).toContain('style="width:0%"');
   });
 });
 
@@ -274,14 +467,24 @@ describe("atención: el color acompaña al texto", () => {
     const html = render();
     for (const label of [
       "Oportunidades activas",
-      "Ganadas en el mes",
-      "Win rate",
+      "Perdidas",
       "En stock",
       "Reservadas",
-      "Vendidas en el mes",
+      "Vendidas en el rango",
     ]) {
       expect(kpi(html, label).edge).toBeUndefined();
       expect(kpi(html, label).valueClasses).not.toMatch(
+        /text-(success|warning|danger)/,
+      );
+    }
+    const row = section(html, "kpis-heading");
+    for (const label of [
+      "Ventas cerradas",
+      "Tasa de conversión",
+      "Cotizaciones pendientes",
+      "Test drives de la semana",
+    ]) {
+      expect(headline(row, label).valueClasses).not.toMatch(
         /text-(success|warning|danger)/,
       );
     }
@@ -354,16 +557,22 @@ describe("oportunidades en riesgo", () => {
 describe("HTML válido de las listas de definición", () => {
   it("cada grupo de la dl contiene solo su dt y sus dd", () => {
     const html = render();
-    const groups = [...html.matchAll(/<dl class="[^"]*">(.*?)<\/dl>/g)].flatMap(
-      (dl) => [...dl[1]!.matchAll(/<div class="[^"]*">(.*?)<\/div>/g)],
+    const groups = [...html.matchAll(/<dl class="[^"]*">(.*?)<\/dl>/g)].map(
+      (dl) => dl[1]!,
     );
-    expect(groups).toHaveLength(8);
-    for (const group of groups) {
-      const children = [...group[1]!.matchAll(/<(\w+)[\s>][^]*?<\/\1>/g)].map(
-        (child) => child[1],
-      );
-      expect(children).toEqual(["dt", "dd", "dd"]);
-    }
+    // Fila de KPIs, pipeline, inventario y atención.
+    expect(groups).toHaveLength(4);
+    const children = groups.flatMap((dl) =>
+      [...dl.matchAll(/<div class="[^"]*">(.*?)<\/div>/g)].map((group) =>
+        [...group[1]!.matchAll(/<(\w+)[\s>][^]*?<\/\1>/g)].map(
+          (child) => child[1],
+        ),
+      ),
+    );
+    expect(children).toEqual([
+      ...Array.from({ length: 4 }, () => ["dt", "dd", "dd", "dd"]),
+      ...Array.from({ length: 7 }, () => ["dt", "dd", "dd"]),
+    ]);
   });
 });
 
