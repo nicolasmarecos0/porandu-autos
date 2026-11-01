@@ -30,6 +30,7 @@ function row(overrides: Partial<ThreadMessageRow>): ThreadMessageRow {
     recordedBy: null,
     sentAt: new Date("2026-10-29T15:00:00Z"),
     createdAt: new Date("2026-10-29T15:00:05Z"),
+    deliveryStatuses: [],
     ...overrides,
   };
 }

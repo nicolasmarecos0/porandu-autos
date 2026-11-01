@@ -11,6 +11,10 @@ import {
  * es decorativo y el estado va siempre en texto: el color nunca es la única
  * señal (DEC-013). Solo "No entregado" usa un tono de estado, junto a su
  * texto, porque pide atención.
+ *
+ * Desde el Hito 12C es el estado real que informó WhatsApp: el vigente de
+ * los recibidos (currentDeliveryStatus(), en el dominio), así que un "No
+ * entregado" que llega tarde nunca reemplaza a un "Entregado" o "Leído".
  */
 
 const ICONS = {

@@ -2,6 +2,7 @@ import { formatDemandDate } from "@/domains/demand/presentation";
 import { initialsOf, maskPhone } from "@/domains/opportunities/prospect";
 
 import { chatListTime } from "./chat-time";
+import type { DeliveryStatus } from "./delivery";
 import type { MessageDirection } from "./messages";
 import type { ConversationOpportunity } from "./opportunity-link";
 import {
@@ -73,6 +74,12 @@ export type ThreadMessageRow = Readonly<{
   /** Cuándo se envió (el proveedor o, al enviar, la base). */
   sentAt: Date | null;
   createdAt: Date;
+  /**
+   * Los estados de entrega que WhatsApp informó de un saliente (Hito 12C,
+   * DEC-044 §3), en cualquier orden. Vacío en un entrante y en un saliente
+   * del que todavía no llegó ninguno.
+   */
+  deliveryStatuses: readonly DeliveryStatus[];
 }>;
 
 /** Un mensaje del historial, listo para mostrar. */

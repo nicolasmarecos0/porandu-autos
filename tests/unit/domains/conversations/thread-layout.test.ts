@@ -28,6 +28,7 @@ function row(
     recordedBy: null,
     sentAt: new Date(sentAt),
     createdAt: new Date(sentAt),
+    deliveryStatuses: [],
     ...overrides,
   };
 }
@@ -126,7 +127,7 @@ describe("threadSections", () => {
     ]);
   });
 
-  it("solo los salientes tienen estado de entrega: enviado hasta que se ingieran estados", () => {
+  it("solo los salientes tienen estado de entrega: enviado mientras WhatsApp no informó otro", () => {
     const bubbles = threadSections(
       [
         row("in", "2026-10-29T15:00:00Z"),
@@ -142,6 +143,51 @@ describe("threadSections", () => {
       ["in", null],
       ["out", "sent"],
     ]);
+  });
+
+  it("cada saliente muestra el vigente de sus estados recibidos (Hito 12C, DEC-044 §3.2)", () => {
+    const outbound = (
+      id: string,
+      deliveryStatuses: ThreadMessageRow["deliveryStatuses"],
+    ) =>
+      row(id, "2026-10-29T15:01:00Z", {
+        direction: "outbound",
+        recordedBy: VIEWER,
+        deliveryStatuses,
+      });
+    const bubbles = threadSections(
+      [
+        outbound("delivered", ["sent", "delivered"]),
+        outbound("read", ["delivered", "read", "sent"]),
+        outbound("failed", ["sent", "failed"]),
+        // Un "No entregado" que llegó tarde no pisa lo entregado ni lo leído.
+        outbound("late-failure-delivered", ["delivered", "failed"]),
+        outbound("late-failure-read", ["read", "failed", "delivered"]),
+        // Un estado inferior repetido o tardío no hace retroceder.
+        outbound("late-sent", ["read", "sent", "sent"]),
+      ],
+      VIEWER,
+      NOW,
+    ).flatMap((section) => section.bubbles);
+    expect(
+      Object.fromEntries(bubbles.map((bubble) => [bubble.id, bubble.delivery])),
+    ).toEqual({
+      delivered: "delivered",
+      read: "read",
+      failed: "failed",
+      "late-failure-delivered": "delivered",
+      "late-failure-read": "read",
+      "late-sent": "read",
+    });
+  });
+
+  it("un entrante nunca tiene estado de entrega, aunque la fila trajera alguno", () => {
+    const [bubble] = threadSections(
+      [row("in", "2026-10-29T15:00:00Z", { deliveryStatuses: ["read"] })],
+      VIEWER,
+      NOW,
+    ).flatMap((section) => section.bubbles);
+    expect(bubble?.delivery).toBeNull();
   });
 
   it("sin mensajes no hay secciones", () => {
