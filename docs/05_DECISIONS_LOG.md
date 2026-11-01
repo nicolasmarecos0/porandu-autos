@@ -54,7 +54,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-038 | Gestión de Equipo, Invitaciones y Configuración de Concesionario | Aceptada en principio | 2026-10-15 |
 | DEC-039 | Procesamiento de Webhooks de WhatsApp e Ingesta de Mensajes | Aceptada en principio | 2026-10-21 |
 | DEC-040 | Interfaz de Bandeja de Entrada y Motor de Envío de WhatsApp | Aceptada en principio | 2026-10-29 |
-| DEC-041 | Agenda de pruebas de manejo (Calendar, Hito 9) | Aceptada en principio | 2026-11-01 |
+| DEC-041 | Agenda de pruebas de manejo (Calendar, Hito 9) | Aceptada | 2026-11-01 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1073,7 +1073,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - El runtime acceptance de staging todavía no ejercita el envío: necesita una línea y un número de prueba.
 
 ## DEC-041 — Agenda de pruebas de manejo (Calendar, Hito 9)
-- **Estado:** Aceptada en principio · 2026-11-01. Formaliza la elección del fundador del 1 nov 2026 ("Calendar: test drives" como Hito 9, entre las opciones que dejó abiertas el cierre del Hito 8). Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Estado:** Aceptada · 2026-11-01. Formaliza la elección del fundador del 1 nov 2026 ("Calendar: test drives" como Hito 9, entre las opciones que dejó abiertas el cierre del Hito 8). El fundador aprobó la decisión completa el mismo día, incluidas las *propuestas de implementación* (horizonte de 180 días, tolerancia de 5 minutos, superposición como aviso no bloqueante y reprogramación como cancelar y agendar otra).
 - **Contexto:** `/calendar` sigue como placeholder (DEC-001, B1 §6). El Master Context §34 ubica la Agenda y el test drive en el Hito 4 de su orden oficial ("Reactivación + Agenda"), y el Technical Blueprint (Agenda) pide "próximos test drives y conflictos" con los estados pendiente, confirmado, completado, cancelado y no-show. No existía ninguna tabla de agenda.
 - **Decisión:**
   1. **Alcance.** `/calendar` deja de ser placeholder y muestra la agenda semanal de pruebas de manejo de la organización activa. Una prueba es de una oportunidad abierta y de una unidad del stock, a una hora. Nada más entra en la agenda en este bloque.
