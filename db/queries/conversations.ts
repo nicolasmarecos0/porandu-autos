@@ -7,6 +7,7 @@ import {
   INBOX_CONVERSATION_LIMIT,
   THREAD_MESSAGE_LIMIT,
   threadContact,
+  threadRead,
   type Inbox,
   type InboxThread,
 } from "@/domains/conversations/inbox";
@@ -20,6 +21,7 @@ import { requireTenant } from "@/lib/tenant/session";
 
 import { contacts, conversations, messages, opportunities } from "../schema";
 import { withTenant } from "../tenant";
+import { selectReadCursor, selectUnreadCounts } from "./conversation-reads";
 
 /*
  * Bandeja de /conversations (Hito 8, DEC-040 §1; Hito 12, DEC-044). Solo lee:
@@ -42,8 +44,13 @@ import { withTenant } from "../tenant";
  *   organización activa (a lo sumo OPPORTUNITY_LINK_LIMIT, por actividad
  *   más reciente) con su total. El dominio dice si hay una, ninguna o
  *   varias: la misma regla con la que la base asocia cada mensaje.
+ * - Los no leídos de quien mira (Hito 12B, DEC-044 §2): el contador de cada
+ *   conversación de la lista y, en la elegida, su cursor y su última
+ *   respuesta, de los que el dominio saca el separador "Mensajes nuevos" y
+ *   hasta dónde marcar visto (./conversation-reads.ts).
  * - Todo en la misma transacción. Leer no cambia nada: tampoco marca leído
  *   (un prefetch de la lista no puede marcar una conversación como vista).
+ *   Marcar visto es la Server Action markConversationRead().
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -93,6 +100,12 @@ export async function getInbox(
         desc(conversations.id),
       )
       .limit(INBOX_CONVERSATION_LIMIT);
+
+    const unread = await selectUnreadCounts(
+      tx,
+      ctx,
+      list.map((row) => row.id),
+    );
 
     let thread: InboxThread = { kind: "none" };
     if (selected !== undefined) thread = { kind: "not_found" };
@@ -167,6 +180,8 @@ export async function getInbox(
           .orderBy(desc(opportunities.lastActivityAt), desc(opportunities.id))
           .limit(OPPORTUNITY_LINK_LIMIT);
 
+        const cursor = await selectReadCursor(tx, ctx, conversation.id);
+
         thread = {
           kind: "found",
           conversationId: conversation.id,
@@ -179,6 +194,7 @@ export async function getInbox(
             candidates[0]?.total ?? 0,
           ),
           sections: threadSections(rows, ctx.userId, now),
+          read: threadRead(rows, cursor),
           shown: rows.length,
           total: rows[0]?.total ?? 0,
         };
@@ -186,7 +202,10 @@ export async function getInbox(
     }
 
     return {
-      conversations: inboxItems(list, now),
+      conversations: inboxItems(
+        list.map((row) => ({ ...row, unread: unread.get(row.id) ?? 0 })),
+        now,
+      ),
       total: list[0]?.total ?? 0,
       selectedId,
       thread,

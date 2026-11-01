@@ -4,15 +4,22 @@ import { initialsOf, maskPhone } from "@/domains/opportunities/prospect";
 import { chatListTime } from "./chat-time";
 import type { MessageDirection } from "./messages";
 import type { ConversationOpportunity } from "./opportunity-link";
+import {
+  threadReadState,
+  unreadState,
+  type ReadCursor,
+  type ThreadReadState,
+  type UnreadState,
+} from "./read-state";
 import type { ThreadSection } from "./thread-layout";
 
 /*
  * Bandeja de conversaciones (Hito 8, DEC-040 §1; Hito 12, DEC-044): la lista
  * de conversaciones activas y el historial de la elegida, listos para
  * mostrar. Puro y determinista: la presentación (autor "Cliente", "Vos" u
- * "Otro miembro", fecha de Asunción, teléfono enmascarado) se arma contra el
- * usuario que mira y el instante de la request, y no expone ids de usuario
- * ni teléfonos completos.
+ * "Otro miembro", fecha de Asunción, teléfono enmascarado, mensajes sin leer
+ * de quien mira) se arma contra el usuario que mira y el instante de la
+ * request, y no expone ids de usuario ni teléfonos completos.
  */
 
 /** Cuántas conversaciones muestra la lista, las más recientes. */
@@ -33,6 +40,11 @@ export type InboxConversationRow = Readonly<{
   contactName: string;
   lastMessageAt: Date | null;
   lastMessagePreview: string | null;
+  /**
+   * Entrantes sin leer para quien mira (DEC-044 §2): los registrados después
+   * de su cursor o de su última respuesta. Los cuenta la base.
+   */
+  unread: number;
 }>;
 
 /** Una conversación de la lista, lista para mostrar. */
@@ -47,6 +59,8 @@ export type InboxItem = Readonly<{
   time: string | null;
   /** El instante del último mensaje en ISO 8601, para `<time dateTime>`. */
   dateTime: string | null;
+  /** El contador de no leídos de quien mira ("3", "99+"), o leída. */
+  unread: UnreadState;
 }>;
 
 /** Un mensaje de una conversación tal como lo lee la capa de datos. */
@@ -95,6 +109,11 @@ export type InboxThread =
       opportunity: ConversationOpportunity;
       /** Por día de Asunción, del más viejo al más nuevo. */
       sections: readonly ThreadSection[];
+      /**
+       * El leído de quien mira (DEC-044 §2): el separador "Mensajes nuevos"
+       * y hasta dónde marca visto el historial cuando está a la vista.
+       */
+      read: ThreadReadState;
       /** Mensajes que se muestran: a lo sumo THREAD_MESSAGE_LIMIT. */
       shown: number;
       /** Mensajes de la conversación, también los que no se muestran. */
@@ -129,6 +148,7 @@ export function inboxItems(
     at: row.lastMessageAt ? formatDemandDate(row.lastMessageAt) : null,
     time: row.lastMessageAt ? chatListTime(row.lastMessageAt, now) : null,
     dateTime: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
+    unread: unreadState(row.unread),
   }));
 }
 
@@ -184,6 +204,19 @@ export function threadMessage(
     author: authorOf(row, viewerUserId),
     at: formatDemandDate(threadInstant(row)),
   };
+}
+
+/**
+ * El leído del historial que se muestra (DEC-044 §2), contra el cursor de
+ * quien mira: los mensajes en el orden del chat (compareThreadRows()), así
+ * que el separador "Mensajes nuevos" va antes del primero sin leer tal como
+ * se ve.
+ */
+export function threadRead(
+  rows: readonly ThreadMessageRow[],
+  cursor: ReadCursor,
+): ThreadReadState {
+  return threadReadState(rows.toSorted(compareThreadRows), cursor);
 }
 
 /**

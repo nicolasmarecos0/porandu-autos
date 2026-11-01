@@ -13,6 +13,7 @@ import {
 import {
   inboxItems,
   threadContact,
+  threadRead,
   type Inbox,
   type InboxThread,
 } from "@/domains/conversations/inbox";
@@ -49,12 +50,14 @@ const conversations = inboxItems(
       contactName: "Ramón Benítez",
       lastMessageAt: new Date("2026-10-29T15:32:00Z"),
       lastMessagePreview: "Sí, sigue disponible",
+      unread: 0,
     },
     {
       id: SECOND,
       contactName: "Ana Ríos",
       lastMessageAt: null,
       lastMessagePreview: null,
+      unread: 0,
     },
   ],
   NOW,
@@ -134,6 +137,8 @@ const foundThread: Extract<InboxThread, { kind: "found" }> = {
     VIEWER,
     NOW,
   ),
+  // La UI de los no leídos llega con el commit de la bandeja.
+  read: threadRead([], { readUpTo: null, lastOwnReplyAt: null }),
   shown: 5,
   total: 5,
 };
