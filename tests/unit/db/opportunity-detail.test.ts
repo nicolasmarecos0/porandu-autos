@@ -248,6 +248,8 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
       "vehicles",
       "opportunity_notes",
       "messages",
+      "quotes",
+      "vehicles",
     ]);
   });
 
@@ -257,11 +259,29 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
     await getOpportunityDetail(OPPORTUNITY);
 
     expect(mocks.withTenant).toHaveBeenCalledTimes(1);
-    const messages = mocks.queries.at(-1);
+    const messages = mocks.queries.find((q) => /from "messages"/.test(q.sql));
     expect(messages?.sql).toMatch(
       /^select "id", "channel", "direction", "content", "recorded_by", "created_at" from "messages" where \("messages"\."organization_id" = \$1 and "messages"\."opportunity_id" = \$2\) order by "messages"\."created_at" desc, "messages"\."id" desc$/,
     );
     expect(messages?.params).toEqual([ORG, OPPORTUNITY]);
+  });
+
+  it("Hito 10: lee las cotizaciones de la oportunidad y las unidades cotizables en la misma transacción, filtradas por organización", async () => {
+    mocks.results = [[OPPORTUNITY_ROW], [], [], [], [], [], []];
+
+    await getOpportunityDetail(OPPORTUNITY);
+
+    expect(mocks.withTenant).toHaveBeenCalledTimes(1);
+    const [quotes, vehicles] = mocks.queries.slice(-2);
+    expect(quotes?.sql).toMatch(/from "quotes" inner join "vehicles"/);
+    expect(quotes?.sql).toMatch(
+      /where \("quotes"\."organization_id" = \$1 and "quotes"\."opportunity_id" = \$2\) order by "quotes"\."number" desc limit \$3$/,
+    );
+    expect(quotes?.params).toEqual([ORG, OPPORTUNITY, 100]);
+    expect(vehicles?.sql).toMatch(
+      /from "vehicles" where \("vehicles"\."organization_id" = \$1 and "vehicles"\."status" in \(\$2, \$3\) and "vehicles"\."price" is not null and "vehicles"\."currency" is not null\)/,
+    );
+    expect(vehicles?.params).toEqual([ORG, "available", "reserved", 200]);
   });
 });
 

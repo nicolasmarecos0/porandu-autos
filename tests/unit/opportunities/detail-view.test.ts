@@ -36,6 +36,10 @@ vi.mock("@/lib/opportunities/actions", () => ({
   createOpportunity: vi.fn(),
 }));
 vi.mock("@/lib/conversations/actions", () => ({ addMessage: vi.fn() }));
+vi.mock("@/lib/quotes/actions", () => ({
+  createQuote: vi.fn(),
+  changeQuoteStatus: vi.fn(),
+}));
 
 const ID = "10000000-0000-4000-8000-000000000101";
 const TOP = "20000000-0000-4000-8000-000000000101";
@@ -129,6 +133,15 @@ function render({
       matches,
       vehicleLink: { canChange, linked },
       activity,
+      quotes: {
+        quotes: [],
+        canCreate: stage === "qualifying" || stage === "negotiating",
+        createHint: null,
+        vehicleOptions: [],
+        suggestedVehicleId: null,
+        today: "2026-11-01",
+        acceptedTotal: null,
+      },
     }),
   );
 }
