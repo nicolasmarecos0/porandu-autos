@@ -217,6 +217,11 @@ export const opportunities = pgTable(
     index("opportunities_organization_id_vehicle_id_idx")
       .on(t.organizationId, t.vehicleId)
       .where(sql`${t.vehicleId} IS NOT NULL`),
+    // Los cierres de un rango del Dashboard Directivo (DEC-043 §7): la fecha
+    // de cierre es `updated_at` (DEC-037 §5). Parcial: las abiertas no entran.
+    index("opportunities_organization_id_closed_at_idx")
+      .on(t.organizationId, t.updatedAt)
+      .where(sql`${t.stage} IN ('won', 'lost')`),
     unique("opportunities_organization_id_id_key").on(t.organizationId, t.id),
     // Destino de la FK compuesta de `messages` (Hito 4, DEC-036 §4): un
     // mensaje asociado a una oportunidad es con su contacto.

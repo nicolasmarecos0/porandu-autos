@@ -48,6 +48,7 @@ describe("readRepoMigrations", () => {
       [14, "0014_whatsapp_outbound"],
       [15, "0015_test_drives"],
       [16, "0016_quotes"],
+      [17, "0017_dashboard_indexes"],
     ]);
   });
 
@@ -76,79 +77,34 @@ describe("compareHistory", () => {
       applied: [REPO[0]],
       pending: REPO.slice(1),
     });
-    // Staging con H1.4/H1.5: 0008 a 0016 pendientes.
-    expect(compareHistory(REPO, applied(8))).toEqual({
+    // Cada etapa de staging: lo aplicado es un prefijo y lo pendiente, el
+    // resto del journal, en orden.
+    for (const [count, stage] of [
+      [8, "H1.4/H1.5: 0008 a 0017 pendientes"],
+      [9, "H1.6: 0009 a 0017 pendientes"],
+      [10, "Hito 2: 0010 a 0017 pendientes"],
+      [11, "Hito 2A: 0011 a 0017 pendientes"],
+      [12, "Hito 4/5: 0012 a 0017 pendientes"],
+      [13, "Hito 6: 0013 a 0017 pendientes"],
+      [14, "Hito 7: 0014 a 0017 pendientes"],
+      [15, "Hito 8: 0015 a 0017 pendientes"],
+      [16, "Hito 9: 0016 y 0017 pendientes"],
+    ] as const) {
+      expect(compareHistory(REPO, applied(count)), stage).toEqual({
+        kind: "consistent",
+        applied: REPO.slice(0, count),
+        pending: REPO.slice(count),
+      });
+    }
+    expect(REPO.slice(8)).toHaveLength(10);
+    // Staging con el Hito 10: solo 0017 pendiente (DEC-043).
+    expect(compareHistory(REPO, applied(17))).toEqual({
       kind: "consistent",
-      applied: REPO.slice(0, 8),
-      pending: REPO.slice(8),
+      applied: REPO.slice(0, 17),
+      pending: [REPO[17]],
     });
-    expect(REPO.slice(8)).toHaveLength(9);
-    // Staging con H1.6: 0009 a 0016 pendientes.
-    expect(compareHistory(REPO, applied(9))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 9),
-      pending: [
-        REPO[9],
-        REPO[10],
-        REPO[11],
-        REPO[12],
-        REPO[13],
-        REPO[14],
-        REPO[15],
-        REPO[16],
-      ],
-    });
-    // Staging con el Hito 2: 0010 a 0016 pendientes.
-    expect(compareHistory(REPO, applied(10))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 10),
-      pending: [
-        REPO[10],
-        REPO[11],
-        REPO[12],
-        REPO[13],
-        REPO[14],
-        REPO[15],
-        REPO[16],
-      ],
-    });
-    // Staging con el Hito 2A: 0011 a 0016 pendientes.
-    expect(compareHistory(REPO, applied(11))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 11),
-      pending: [REPO[11], REPO[12], REPO[13], REPO[14], REPO[15], REPO[16]],
-    });
-    // Staging con el Hito 4/5: 0012 a 0016 pendientes.
-    expect(compareHistory(REPO, applied(12))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 12),
-      pending: [REPO[12], REPO[13], REPO[14], REPO[15], REPO[16]],
-    });
-    // Staging con el Hito 6: 0013 a 0016 pendientes.
-    expect(compareHistory(REPO, applied(13))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 13),
-      pending: [REPO[13], REPO[14], REPO[15], REPO[16]],
-    });
-    // Staging con el Hito 7: 0014 a 0016 pendientes.
-    expect(compareHistory(REPO, applied(14))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 14),
-      pending: [REPO[14], REPO[15], REPO[16]],
-    });
-    // Staging con el Hito 8: 0015 y 0016 pendientes.
-    expect(compareHistory(REPO, applied(15))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 15),
-      pending: [REPO[15], REPO[16]],
-    });
-    // Staging con el Hito 9: solo 0016 pendiente (DEC-042).
-    expect(compareHistory(REPO, applied(16))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 16),
-      pending: [REPO[16]],
-    });
-    expect(compareHistory(REPO, [...applied(17)].reverse())).toMatchObject({
+    expect(REPO[17]?.tag).toBe("0017_dashboard_indexes");
+    expect(compareHistory(REPO, [...applied(18)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -168,8 +124,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(17), { id: 18, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 17",
+      [...applied(18), { id: 19, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 18",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -208,7 +164,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0016: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0017: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -404,6 +360,9 @@ describe("expectedFootprint", () => {
         "quotes.quotes_update_member",
       ].sort(),
     };
+    expect(expectedFootprint(REPO.slice(0, 17))).toEqual(hito10);
+    // 0017 solo suma un índice (DEC-043 §7): ni tablas, ni enums, ni
+    // policies.
     expect(expectedFootprint(REPO)).toEqual(hito10);
   });
 });

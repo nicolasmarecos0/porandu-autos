@@ -665,6 +665,11 @@ describe("db/schema", () => {
         name: "opportunities_organization_id_vehicle_id_idx",
         columns: ["organization_id", "vehicle_id"],
       },
+      // DEC-043 §7: los cierres de un rango del Dashboard Directivo.
+      {
+        name: "opportunities_organization_id_closed_at_idx",
+        columns: ["organization_id", "updated_at"],
+      },
     ]);
     // H1.1: scores, urgencia, NBA, señales, matches, trade-in y responsable
     // no tienen fuente todavía y no se persisten.

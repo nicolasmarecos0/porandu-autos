@@ -120,6 +120,13 @@
       "when": 1793497771177,
       "tag": "0016_quotes",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793546009219,
+      "tag": "0017_dashboard_indexes",
+      "breakpoints": true
     }
   ]
 }

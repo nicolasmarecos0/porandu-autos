@@ -138,6 +138,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0014_whatsapp_outbound",
       "0015_test_drives",
       "0016_quotes",
+      "0017_dashboard_indexes",
     ]);
   });
 
@@ -983,9 +984,9 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-042): 0016 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 9 (0000 a 0015) si
- * 0015 ya se aplicó; si no, en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * El próximo rollout real (DEC-043): 0017 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 10 (0000 a 0016) si
+ * 0016 ya se aplicó; si no, en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
@@ -1008,6 +1009,7 @@ describe.each([
       "0014_whatsapp_outbound",
       "0015_test_drives",
       "0016_quotes",
+      "0017_dashboard_indexes",
     ],
   },
   {
@@ -1024,6 +1026,7 @@ describe.each([
       "0014_whatsapp_outbound",
       "0015_test_drives",
       "0016_quotes",
+      "0017_dashboard_indexes",
     ],
   },
   {
@@ -1039,6 +1042,7 @@ describe.each([
       "0014_whatsapp_outbound",
       "0015_test_drives",
       "0016_quotes",
+      "0017_dashboard_indexes",
     ],
   },
   {
@@ -1053,6 +1057,7 @@ describe.each([
       "0014_whatsapp_outbound",
       "0015_test_drives",
       "0016_quotes",
+      "0017_dashboard_indexes",
     ],
   },
   {
@@ -1066,6 +1071,7 @@ describe.each([
       "0014_whatsapp_outbound",
       "0015_test_drives",
       "0016_quotes",
+      "0017_dashboard_indexes",
     ],
   },
   {
@@ -1078,6 +1084,7 @@ describe.each([
       "0014_whatsapp_outbound",
       "0015_test_drives",
       "0016_quotes",
+      "0017_dashboard_indexes",
     ],
   },
   {
@@ -1089,28 +1096,40 @@ describe.each([
       "0014_whatsapp_outbound",
       "0015_test_drives",
       "0016_quotes",
+      "0017_dashboard_indexes",
     ],
   },
   {
     stagingAt: "0013_whatsapp_ingestion",
     label: "Hito 7",
     applied: 14,
-    expected: ["0014_whatsapp_outbound", "0015_test_drives", "0016_quotes"],
+    expected: [
+      "0014_whatsapp_outbound",
+      "0015_test_drives",
+      "0016_quotes",
+      "0017_dashboard_indexes",
+    ],
   },
   {
     stagingAt: "0014_whatsapp_outbound",
     label: "Hito 8",
     applied: 15,
-    expected: ["0015_test_drives", "0016_quotes"],
+    expected: ["0015_test_drives", "0016_quotes", "0017_dashboard_indexes"],
   },
   {
     stagingAt: "0015_test_drives",
     label: "Hito 9",
     applied: 16,
-    expected: ["0016_quotes"],
+    expected: ["0016_quotes", "0017_dashboard_indexes"],
+  },
+  {
+    stagingAt: "0016_quotes",
+    label: "Hito 10",
+    applied: 17,
+    expected: ["0017_dashboard_indexes"],
   },
 ])(
-  "staging en $label: rollout hasta 0016",
+  "staging en $label: rollout hasta 0017",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 
