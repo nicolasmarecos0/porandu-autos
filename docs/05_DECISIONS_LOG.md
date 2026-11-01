@@ -54,6 +54,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-038 | Gestión de Equipo, Invitaciones y Configuración de Concesionario | Aceptada en principio | 2026-10-15 |
 | DEC-039 | Procesamiento de Webhooks de WhatsApp e Ingesta de Mensajes | Aceptada en principio | 2026-10-21 |
 | DEC-040 | Interfaz de Bandeja de Entrada y Motor de Envío de WhatsApp | Aceptada en principio | 2026-10-29 |
+| DEC-041 | Agenda de pruebas de manejo (Calendar, Hito 9) | Aceptada en principio | 2026-11-01 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1070,6 +1071,33 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - La versión `v20.0` de la Graph API es la del pedido. Meta retira las versiones con el tiempo: cambiarla es cambiar la constante `GRAPH_API_VERSION` de `lib/whatsapp/api.ts`.
   - La limitación C-14 (PII inmutable, sin redacción) también aplica a los mensajes enviados.
   - El runtime acceptance de staging todavía no ejercita el envío: necesita una línea y un número de prueba.
+
+## DEC-041 — Agenda de pruebas de manejo (Calendar, Hito 9)
+- **Estado:** Aceptada en principio · 2026-11-01. Formaliza la elección del fundador del 1 nov 2026 ("Calendar: test drives" como Hito 9, entre las opciones que dejó abiertas el cierre del Hito 8). Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** `/calendar` sigue como placeholder (DEC-001, B1 §6). El Master Context §34 ubica la Agenda y el test drive en el Hito 4 de su orden oficial ("Reactivación + Agenda"), y el Technical Blueprint (Agenda) pide "próximos test drives y conflictos" con los estados pendiente, confirmado, completado, cancelado y no-show. No existía ninguna tabla de agenda.
+- **Decisión:**
+  1. **Alcance.** `/calendar` deja de ser placeholder y muestra la agenda semanal de pruebas de manejo de la organización activa. Una prueba es de una oportunidad abierta y de una unidad del stock, a una hora. Nada más entra en la agenda en este bloque.
+  2. **Modelo (`test_drives`).** Tenant-scoped (ADR-001 §3.6): `organization_id` NOT NULL con FK, `opportunity_id` y `vehicle_id` obligatorios con FKs compuestas `(organization_id, …)` RESTRICT, `scheduled_at` (`timestamptz`, acotado a 2000–2100), `status` con CHECK, `created_by` (FK a `profiles`, RESTRICT), `created_at` y `updated_at`. Índices `(organization_id, scheduled_at)` y `(organization_id, opportunity_id)`.
+  3. **Estados y escrituras.**
+     - `scheduled` (Agendada) → `confirmed` (Confirmada) | `completed` (Realizada) | `no_show` (No asistió) | `cancelled` (Cancelada); `confirmed` → `completed` | `no_show` | `cancelled`. Las terminales no se reabren: reprogramar es cancelar y agendar otra.
+     - `completed` y `no_show` solo desde la hora agendada, con el reloj de la base.
+     - Alta: cualquier membership activa (admin o seller), en una oportunidad `new`, `qualifying` o `negotiating` y una unidad `available` o `reserved` de la organización activa. La policy de INSERT exige membership activa, `created_by = auth.uid()`, `status = 'scheduled'`, el reloj de la base y una hora no anterior a `now()` menos 5 minutos (*propuesta de implementación*: la tolerancia cubre el tiempo entre abrir el formulario y enviarlo). El horizonte es de 180 días (*propuesta de implementación*, validado en el servidor).
+     - Edición: solo `status` y `updated_at`, por columna, con la policy `test_drives_update_member` y el trigger `test_drives_status_transition`, que exige la matriz y la hora, deja inmutable el resto de la fila (también para el rol dueño) y fija `updated_at`. Sin DELETE.
+     - Única puerta: las Server Actions `scheduleTestDrive()` y `changeTestDriveStatus()` de `lib/calendar/actions.ts` (`requireTenant()` → validación → `withTenant()`). ESLint impide importar `db/queries/test-drives-write.ts` desde cualquier otro módulo. El cambio de estado es compare-and-set sobre la fila bloqueada: si otra persona ya la movió, responde `unchanged` con el estado real.
+  4. **Vista.** Semana de lunes a domingo en la hora de Asunción, en la URL (`/calendar?w=YYYY-MM-DD`; cualquier día identifica su semana). Siete columnas en desktop, dos en tablet y una lista de días en teléfono. Cada tarjeta muestra hora, cliente (lleva a su oportunidad), unidad, estado y quién la agendó ("Vos" u "Otro miembro"). Cada cambio de estado pasa por una confirmación.
+     - *Propuesta de implementación:* "conflictos" se muestra como el aviso "Unidad superpuesta" cuando la misma unidad tiene otra prueba abierta a menos de 60 minutos. Es solo un aviso: no bloquea.
+     - *Propuesta de implementación:* a lo sumo 500 pruebas por semana y 200 opciones en cada select del alta.
+  5. **Sin envíos.** Agendar, confirmar o cancelar no le manda nada al cliente (CLAUDE.md §2). La agenda es interna.
+  6. **Migración `0015_test_drives`.** Crea la tabla con RLS, sus policies, la función y el trigger de estados, los grants (`SELECT`, `INSERT` y `UPDATE (status, updated_at)` para `authenticated`) y repite las postcondiciones de 0014 con `test_drives` entre las altas y las ediciones aprobadas, más las del trigger y las FKs compuestas. No toca filas existentes.
+  7. **Fuera de este bloque:** recordatorios y mensajes automáticos, reprogramar (editar la hora), duración y franjas configurables, bloqueo de superposiciones, asignación a un vendedor, otros tipos de evento (entregas, visitas, llamadas), sincronización con calendarios externos, vista mensual o diaria, el feed de agenda del Cockpit y que una prueba mueva la recencia de la oportunidad.
+- **Aclara / supersede:**
+  - DEC-001 y B1 §4 y §6: `/calendar` deja de ser placeholder. La navegación no cambia. Recovery sigue como placeholder.
+  - MC §34: la Agenda (test drive) entra antes que el resto del Hito 4 de ese orden (borradores, envío controlado), que sigue pendiente.
+  - DEC-009: sin dependencias nuevas (la hora de Asunción usa `Intl`).
+  - Prevalece según DEC-002. No requiere un ADR nuevo: el acceso sigue `requireTenant()` → `withTenant()` → RLS (ADR-001).
+- **Consecuencias:**
+  - `0015_test_drives` se aplica a staging después del merge con `preflight → migrate → verify`, con `expected_migrations = 0015_test_drives` si staging ya tiene `0014` (o con las anteriores que falten delante, en orden).
+  - `domains/calendar/zoned-time.ts` repite la conversión de hora de pared de `domains/dashboard/period.ts`. Unificarlas queda como backlog técnico.
 
 ---
 
