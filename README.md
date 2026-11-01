@@ -832,8 +832,33 @@ domains/conversations (inbox, thread-layout, chat-time, opportunity-link) → In
 - **Orden:** el historial sigue por `sent_at` (desempate `created_at` e id), separado por día de Asunción ("Hoy", "Ayer", "Lunes 26 de octubre") y con las burbujas seguidas del mismo autor, a 5 minutos o menos, en un grupo. La lista usa la hora de chat ("14:32", "Ayer", "Lunes", "26 oct"), con la fecha completa en el `title`.
 - **Oportunidad:** el encabezado del historial dice a qué se suma lo que se responde, con la regla con la que la base asocia cada mensaje: la abierta única del contacto (con enlace), varias (no se asocia; menú de Radix con hasta cinco) o ninguna.
 - **Estado de entrega:** todo saliente registrado se muestra "Enviado", porque la base lo registra después del `200` de Meta. La regla de los estados siguientes (`delivered`, `read`, `failed`) ya está en `domains/conversations/delivery.ts`; su ingesta es 12C.
-- **No leídos:** la regla por miembro (cursor por `created_at`, responder es leer, solo avanza) y el pedido de marcar visto están en `domains/conversations/read-state.ts`; la tabla, la función y la Server Action son 12B.
+- **No leídos:** la regla por miembro (cursor por `created_at`, responder es leer, solo avanza) y el pedido de marcar visto están en `domains/conversations/read-state.ts`; la tabla, la función y la Server Action son 12B (abajo).
 - **Teléfono:** debajo de `lg`, maestro/detalle por URL: sin `?c=` la lista, con `?c=` el chat con "Volver". En pantallas táctiles, Enter es una línea nueva y se envía con el botón.
+
+## Bandeja: no leídos por miembro (Hito 12B)
+
+Cada miembro tiene su propio cursor de leído por conversación (DEC-044 §2): que un vendedor lea no marca leído para otro. Es interno del equipo: no se le envía nada al cliente ni a Meta (DEC-044 §3.4).
+
+```text
+Lectura: getInbox() → requireTenant() → withTenant() → la lista con el contador de
+cada conversación (selectUnreadCounts(): count(*) FILTER sobre el índice parcial de
+messages) y, en la elegida, el cursor y la última respuesta propia
+(selectReadCursor()) → domains/conversations (read-state, inbox) → InboxView
+
+Marcar visto: ThreadLog (historial a la vista: pestaña visible + IntersectionObserver,
+solo con entrantes sin leer) → markConversationRead({ conversationId, upToMessageId })
+→ requireTenant() → parseMarkRead() (Zod) → recordConversationRead() → withTenant()
+→ private.mark_conversation_read(): usuario, membership activa, conversación abierta
+y mensaje de ella, cursor = created_at con GREATEST → revalidar /conversations
+```
+
+- **Regla:** solo cuentan los entrantes; hasta dónde leyó un miembro es el más nuevo entre su cursor y su última respuesta (responder es leer); sin cursor ni respuesta, todo entrante está sin leer (no se siembran cursores); el cursor solo avanza. Todo se mide con `created_at` (el reloj de la base), así que un mensaje que llegó después o uno viejo entregado tarde sigue sin leer. La base guarda el instante completo, y la lista y el historial comparan al milisegundo (la precisión de `Date` en el dominio): cuentan lo mismo y marcar el mensaje más nuevo en pantalla siempre deja la conversación en cero.
+- **GET no marca:** un prefetch, un enlace compartido o una pestaña en segundo plano no cambian nada. Marcar es la Server Action, que solo dispara el historial en el navegador.
+- **UI:** la lista muestra el contador (`UnreadBadge`, "99+" desde 100, con "N mensajes sin leer" en texto y en un tooltip de Radix) y el nombre en negrita; los no leídos no reordenan. La conversación elegida no muestra el contador: está a la vista. El historial muestra "Mensajes nuevos" antes del primer entrante sin leer; si el cursor avanza, la acción revalida `/conversations` (el contador se actualiza y el botón atrás no vuelve a mostrarla sin leer) y el separador queda donde estaba mientras la conversación sigue abierta.
+- **Base (`0018_conversation_reads`):** tabla `conversation_reads` con PK `(organization_id, conversation_id, user_id)`, FK compuesta a `conversations` (RESTRICT, sobre la unique nueva `(organization_id, id)`), FK al perfil (CASCADE: el cursor es estado del miembro) y RLS: cada miembro lee solo sus filas, sin INSERT, UPDATE ni DELETE para `authenticated`. Escribe solo `private.mark_conversation_read()` (`SECURITY DEFINER` de `postgres`, `search_path` vacío, EXECUTE solo para `authenticated`). Índice parcial `messages (organization_id, conversation_id, created_at) WHERE conversation_id IS NOT NULL`. Repite las postcondiciones de 0016 y 0017 y suma las de DEC-044. No toca filas existentes.
+- **Puerta única:** ESLint impide importar `recordConversationRead()` de `db/queries/conversation-reads.ts` fuera de `lib/conversations/read.ts`; las lecturas del mismo módulo las usa el loader.
+- **Fuera de este bloque:** tiempo real o refresco automático, el contador en la navegación, "solo no leídos", desplazarse hasta el separador al abrir y los estados de entrega de 12C.
+- `0018_conversation_reads` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0018_conversation_reads` si staging ya tiene `0017` (o con las anteriores que falten delante, en orden). La verificación suma `schema.conversation-reads` y amplía `schema.tables`, `rls.policies`, `schema.whatsapp-ingestion` y `privileges.authenticated`.
 
 ## Convenciones
 
