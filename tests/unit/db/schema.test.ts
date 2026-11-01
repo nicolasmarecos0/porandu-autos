@@ -75,9 +75,10 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives) y la del Hito 10 (quotes)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives), la del Hito 10 (quotes) y la del Hito 12B (conversation_reads)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
+      "conversation_reads",
       "conversations",
       "memberships",
       "messages",
@@ -170,7 +171,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9) y quotes (Hito 10) la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4; conversation_reads, solo las filas propias, desde el Hito 12B) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9) y quotes (Hito 10) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -208,6 +209,18 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using:
           '"contacts"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        // Hito 12B (DEC-044 §2.9): solo las filas propias, de las
+        // organizaciones con membership activa.
+        table: "conversation_reads",
+        name: "conversation_reads_select_own",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"conversation_reads"."organization_id" IN (SELECT private.user_org_ids()) AND "conversation_reads"."user_id" = (select auth.uid())',
         withCheck: undefined,
       },
       {
@@ -1041,6 +1054,25 @@ describe("db/schema", () => {
         name: "messages_organization_id_contact_id_idx",
         columns: ["organization_id", "contact_id", "created_at"],
       },
+      // Los no leídos de la bandeja (DEC-044 §2.9), parcial sobre los
+      // mensajes de una conversación.
+      {
+        name: "messages_organization_id_conversation_id_idx",
+        columns: ["organization_id", "conversation_id", "created_at"],
+      },
+    ]);
+    expect(
+      table("messages")
+        .indexes.filter(
+          (i) =>
+            i.config.name === "messages_organization_id_conversation_id_idx",
+        )
+        .map((i) => ({
+          unique: i.config.unique,
+          where: i.config.where && dialect.sqlToQuery(i.config.where).sql,
+        })),
+    ).toEqual([
+      { unique: false, where: '"messages"."conversation_id" IS NOT NULL' },
     ]);
     // Append-only: no hay updated_at ni nada que se edite.
     expect(table("messages").columns.map((c) => c.name)).not.toContain(
@@ -1126,7 +1158,58 @@ describe("db/schema", () => {
         name: "conversations_organization_id_id_contact_id_key",
         columns: ["organization_id", "id", "contact_id"],
       },
+      // Destino de la FK compuesta de conversation_reads (Hito 12B).
+      {
+        name: "conversations_organization_id_id_key",
+        columns: ["organization_id", "id"],
+      },
     ]);
+  });
+
+  it("conversation_reads: un cursor por miembro y conversación, de la misma organización, que solo leen sus dueños (Hito 12B)", () => {
+    expect(
+      table("conversation_reads").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["organization_id", "PgUUID", true, false],
+      ["conversation_id", "PgUUID", true, false],
+      ["user_id", "PgUUID", true, false],
+      ["read_up_to", "PgTimestamp", true, false],
+      ["updated_at", "PgTimestamp", true, true],
+    ]);
+    // El cursor y su sello los pone la base (la función), nunca la app.
+    expect(
+      column("conversation_reads", "read_up_to").defaultFn,
+    ).toBeUndefined();
+    expect(
+      column("conversation_reads", "updated_at").defaultFn,
+    ).toBeUndefined();
+    expect(
+      table("conversation_reads").primaryKeys.map((pk) => ({
+        name: pk.getName(),
+        columns: pk.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "conversation_reads_pkey",
+        columns: ["organization_id", "conversation_id", "user_id"],
+      },
+    ]);
+    // CASCADE al perfil: el cursor es estado del miembro, como memberships.
+    expect(foreignKeys("conversation_reads")).toEqual([
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,conversation_id -> public.conversations(organization_id,id) ON DELETE restrict",
+      "user_id -> public.profiles(id) ON DELETE cascade",
+    ]);
+    expect(table("conversation_reads").checks).toEqual([]);
+    // Lectura de las filas propias; ninguna escritura de authenticated.
+    expect(
+      table("conversation_reads").policies.map((p) => `${p.name} ${p.for}`),
+    ).toEqual(["conversation_reads_select_own select"]);
   });
 
   it("whatsapp_lines: la línea receptora, única global, de una organización y de solo lectura para los miembros (Hito 7, Hito 8)", () => {
@@ -1189,6 +1272,7 @@ describe("db/schema", () => {
     );
     expect(tenantScoped.map((t) => t.name).sort()).toEqual([
       "contacts",
+      "conversation_reads",
       "conversations",
       "memberships",
       "messages",
@@ -1206,9 +1290,11 @@ describe("db/schema", () => {
       expect(foreignKeys(t.name)).toContain(
         "organization_id -> public.organizations(id) ON DELETE restrict",
       );
+      // La PK compuesta también es un índice (conversation_reads, Hito 12B).
       const leading = [
         ...t.indexes.map((i) => i.config.columns[0]),
         ...t.uniqueConstraints.map((u) => u.columns[0]),
+        ...t.primaryKeys.map((pk) => pk.columns[0]),
       ].map((c) => (c && "name" in c ? c.name : undefined));
       expect(leading).toContain("organization_id");
     }

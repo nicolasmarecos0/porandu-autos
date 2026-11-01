@@ -12,9 +12,10 @@ import { finding, type Finding } from "./report.mts";
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
  * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
- * 0015_test_drives y 0016_quotes, leído del catálogo real (DEC-018, DEC-019,
+ * 0015_test_drives, 0016_quotes, 0017_dashboard_indexes y
+ * 0018_conversation_reads, leído del catálogo real (DEC-018, DEC-019,
  * ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034, DEC-036,
- * DEC-038, DEC-039, DEC-040, DEC-041, DEC-042).
+ * DEC-038, DEC-039, DEC-040, DEC-041, DEC-042, DEC-044).
  * Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
@@ -22,6 +23,7 @@ import { finding, type Finding } from "./report.mts";
 
 const APP_TABLES = [
   "contacts",
+  "conversation_reads",
   "conversations",
   "memberships",
   "messages",
@@ -37,7 +39,8 @@ const APP_TABLES = [
 ];
 /**
  * Las que leen los miembros: todas, también whatsapp_lines desde el Hito 8
- * (DEC-040 §4).
+ * (DEC-040 §4) y conversation_reads (solo las filas propias) desde el Hito
+ * 12B (DEC-044 §2.9).
  */
 const MEMBER_READABLE_TABLES = APP_TABLES;
 const PRIVILEGES = [
@@ -86,6 +89,9 @@ type Policy = {
  * Hito 10 (DEC-042) suma la lectura, el alta (oportunidad cotizable y
  * unidad en stock con el precio publicado como lista) y la edición de
  * quotes: qué cambio de estado vale lo decide su trigger (EXPECTED_QUOTES).
+ * El Hito 12B (DEC-044) suma la lectura de conversation_reads: solo las
+ * filas propias (`user_id = auth.uid()`) de una organización con membership
+ * activa; la escribe la función de marcar visto (EXPECTED_CONVERSATION_READS).
  * Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
@@ -107,6 +113,16 @@ export const EXPECTED_POLICIES: Policy[] = [
     command: "SELECT",
     using:
       "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "conversation_reads",
+    name: "conversation_reads_select_own",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (user_id = ( SELECT auth.uid() AS uid)))",
     withCheck: null,
   },
   {
@@ -492,8 +508,10 @@ export const EXPECTED_MESSAGES = {
 
 /**
  * Ingesta de WhatsApp (Hito 7, 0013, DEC-039): las conversaciones y las
- * líneas con sus constraints, las dos uniques que son la autoridad de la
- * idempotencia y de la conversación abierta, la única policy de
+ * líneas con sus constraints (también la unique (organization_id, id) de
+ * conversations, destino de la FK de conversation_reads, Hito 12B), las dos
+ * uniques que son la autoridad de la idempotencia y de la conversación
+ * abierta, la única policy de
  * whatsapp_lines (la lectura de miembros del Hito 8, DEC-040 §4) y la
  * función de ingesta (SECURITY DEFINER de postgres, search_path vacío,
  * EXECUTE solo para authenticated y la regla que rechaza una llamada con
@@ -506,6 +524,7 @@ export const EXPECTED_WHATSAPP_INGESTION = {
     "conversations_last_message_check CHECK (((last_message_at IS NULL) = (last_message_preview IS NULL)))",
     "conversations_last_message_preview_check CHECK ((((char_length(last_message_preview) >= 1) AND (char_length(last_message_preview) <= 160)) AND (last_message_preview = btrim(last_message_preview)) AND (last_message_preview !~ '[[:cntrl:]]'::text)))",
     "conversations_organization_id_id_contact_id_key UNIQUE (organization_id, id, contact_id)",
+    "conversations_organization_id_id_key UNIQUE (organization_id, id)",
     "conversations_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
     "conversations_status_check CHECK ((status = ANY (ARRAY['open'::text, 'closed'::text])))",
     "whatsapp_lines_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
@@ -529,6 +548,27 @@ export const EXPECTED_WHATSAPP_INGESTION = {
 export const EXPECTED_WHATSAPP_OUTBOUND = {
   function:
     'private.record_outbound_whatsapp_message(uuid,uuid,text,text,text) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false guards=true',
+};
+
+/**
+ * Leído de la bandeja (Hito 12B, 0018, DEC-044 §2.9): la PK por miembro y
+ * conversación, la FK compuesta a la conversación (RESTRICT), al perfil
+ * (CASCADE) y a la organización; el índice parcial de los no leídos de
+ * messages; y la función de marcar visto (SECURITY DEFINER de postgres,
+ * search_path vacío, EXECUTE solo para authenticated, las reglas que exigen
+ * un miembro activo y el cursor que solo avanza).
+ */
+export const EXPECTED_CONVERSATION_READS = {
+  constraints: [
+    "conversation_reads_conversation_fk FOREIGN KEY (organization_id, conversation_id) REFERENCES conversations(organization_id, id) ON DELETE RESTRICT",
+    "conversation_reads_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "conversation_reads_pkey PRIMARY KEY (organization_id, conversation_id, user_id)",
+    "conversation_reads_user_id_profiles_id_fk FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE",
+  ],
+  unreadIndex:
+    "CREATE INDEX messages_organization_id_conversation_id_idx ON public.messages USING btree (organization_id, conversation_id, created_at) WHERE (conversation_id IS NOT NULL)",
+  function:
+    'private.mark_conversation_read(uuid,uuid,uuid) SECURITY DEFINER=true config=search_path="" owner=postgres EXECUTE PUBLIC=false authenticated=true anon=false app_runtime=false guards=true',
 };
 
 /**
@@ -1370,6 +1410,63 @@ export async function verifyCatalog(
     ),
   );
 
+  // Leído de la bandeja (Hito 12B): constraints de conversation_reads, el
+  // índice de los no leídos y la función de marcar visto. La policy y el
+  // SELECT de authenticated los verifican rls.policies y
+  // privileges.authenticated.
+  const [readCatalog] = await tx<
+    {
+      constraints: string[] | null;
+      unreadIndex: string | null;
+      function: string | null;
+    }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.conversation_reads')
+          AND contype IN ('c', 'f', 'p', 'u')
+      ) AS constraints,
+      (
+        SELECT indexdef FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname = 'messages_organization_id_conversation_id_idx'
+      ) AS "unreadIndex",
+      (
+        SELECT p.oid::regprocedure::text
+          || ' SECURITY DEFINER=' || p.prosecdef
+          || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+          || ' owner=' || p.proowner::regrole::text
+          || ' EXECUTE PUBLIC=' || EXISTS (
+            SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+            WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+          )
+          || ' authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+          || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+          || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+          || ' guards=' || (
+            position('read_requires_user' in p.prosrc) > 0
+            AND position('read_not_member' in p.prosrc) > 0
+            AND position('GREATEST(r.read_up_to, EXCLUDED.read_up_to)' in p.prosrc) > 0
+          )
+        FROM pg_proc p
+        WHERE p.oid = to_regprocedure('private.mark_conversation_read(uuid, uuid, uuid)')
+      ) AS function
+  `;
+  const readsFound = {
+    constraints: readCatalog?.constraints ?? [],
+    unreadIndex: readCatalog?.unreadIndex ?? null,
+    function: readCatalog?.function ?? null,
+  };
+  findings.push(
+    finding(
+      "schema.conversation-reads",
+      equal(readsFound, EXPECTED_CONVERSATION_READS),
+      `conversation_reads: ${readsFound.constraints.length} constraints (expected: ${EXPECTED_CONVERSATION_READS.constraints.length}, exact definitions); unread index: ${readsFound.unreadIndex ?? "missing"}; mark read function: ${readsFound.function ?? "missing"}`,
+    ),
+  );
+
   // Schema private y private.user_org_ids() (ADR-001 §4).
   const [privateSchema] = await tx<
     {
@@ -1733,6 +1830,7 @@ const DATA_API_TABLES = [
   "conversations",
   "whatsapp_lines",
   "test_drives",
+  "conversation_reads",
 ];
 /** Nombres que pg_graphql daría a los tipos de la app. */
 const GRAPHQL_APP_TYPES = [
@@ -1749,6 +1847,7 @@ const GRAPHQL_APP_TYPES = [
   "Conversations",
   "WhatsappLines",
   "TestDrives",
+  "ConversationReads",
 ];
 
 /** Campo de colección de pg_graphql con nombres inflectados. */

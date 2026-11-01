@@ -19,7 +19,7 @@ import {
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
  * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
- * 0015_test_drives y 0016_quotes,
+ * 0015_test_drives, 0016_quotes y 0018_conversation_reads,
  * leídos del catálogo de
  * PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2,
  * C3 y C9). El acceso a datos se prueba en tenant-isolation.test.ts,
@@ -29,10 +29,12 @@ import {
 
 /**
  * Tablas que leen los miembros: todas, también whatsapp_lines desde el Hito 8
- * (DEC-040 §4).
+ * (DEC-040 §4) y conversation_reads (solo las filas propias) desde el Hito
+ * 12B (DEC-044 §2.9).
  */
 const TABLES = [
   "contacts",
+  "conversation_reads",
   "conversations",
   "memberships",
   "messages",
@@ -203,6 +205,17 @@ describe("policies (ADR-001 §4)", () => {
         command: "SELECT",
         using:
           "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
+      },
+      {
+        // Hito 12B (DEC-044 §2.9): solo las filas propias.
+        table: "conversation_reads",
+        name: "conversation_reads_select_own",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (user_id = ( SELECT auth.uid() AS uid)))",
         withCheck: null,
       },
       {
@@ -951,6 +964,61 @@ describe("grants (ADR-001 §3.6)", () => {
       "conversations.conversations_select_member SELECT",
       "whatsapp_lines.whatsapp_lines_select_member SELECT",
     ]);
+  });
+
+  it("conversation_reads (Hito 12B, DEC-044 §2.9): cada miembro solo lee sus cursores; nadie de la app los escribe directo", async () => {
+    expect(
+      (
+        await tablePrivileges(db.admin, [
+          "anon",
+          "authenticated",
+          "app_runtime",
+        ])
+      ).filter((grant) => grant.endsWith(" conversation_reads")),
+    ).toEqual(["authenticated SELECT conversation_reads"]);
+    expect(
+      (await policies(db.admin))
+        .filter((policy) => policy.table === "conversation_reads")
+        .map((policy) => `${policy.table}.${policy.name} ${policy.command}`),
+    ).toEqual(["conversation_reads.conversation_reads_select_own SELECT"]);
+  });
+
+  it("marcar visto (Hito 12B, DEC-044 §2): private.mark_conversation_read() es SECURITY DEFINER de postgres, de search_path vacío, con EXECUTE solo para authenticated, las reglas que exigen un miembro activo y el cursor que solo avanza", async () => {
+    const signature = "private.mark_conversation_read(uuid,uuid,uuid)";
+    const [fn] = await db.admin<
+      {
+        securityDefiner: boolean;
+        volatility: string;
+        config: string[] | null;
+        owner: string;
+        acl: string[] | null;
+        guards: boolean;
+      }[]
+    >`
+      SELECT p.prosecdef AS "securityDefiner", p.provolatile::text AS volatility,
+        p.proconfig AS config, p.proowner::regrole::text AS owner,
+        p.proacl::text[] AS acl,
+        position('read_requires_user' in p.prosrc) > 0
+          AND position('read_not_member' in p.prosrc) > 0
+          AND position('GREATEST(r.read_up_to, EXCLUDED.read_up_to)' in p.prosrc) > 0 AS guards
+      FROM pg_proc p
+      WHERE p.oid = to_regprocedure(${signature})
+    `;
+    expect(fn).toEqual({
+      securityDefiner: true,
+      volatility: "v",
+      config: ['search_path=""'],
+      owner: "postgres",
+      acl: ["postgres=X/postgres", "authenticated=X/postgres"],
+      guards: true,
+    });
+    const executors = await db.admin<{ role: string }[]>`
+      SELECT rolname AS role FROM pg_roles
+      WHERE has_function_privilege(oid, to_regprocedure(${signature}), 'EXECUTE')
+        AND NOT rolsuper
+      ORDER BY 1
+    `;
+    expect(executors.map((r) => r.role)).toEqual(["authenticated", "postgres"]);
   });
 
   it("envío (Hito 8, DEC-040 §6): private.record_outbound_whatsapp_message() es SECURITY DEFINER de postgres, de search_path vacío, con EXECUTE solo para authenticated y las reglas que exigen un miembro activo", async () => {

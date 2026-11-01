@@ -81,7 +81,11 @@ export const messageExternalIdMaxLength = 256;
  *   la tercera, `private.record_outbound_whatsapp_message()`.
  * - Índices (organization_id, opportunity_id, created_at DESC) para el muro
  *   de una oportunidad y (organization_id, contact_id, created_at DESC) para
- *   la FK y la conversación de un contacto.
+ *   la FK y la conversación de un contacto. El parcial (organization_id,
+ *   conversation_id, created_at) WHERE conversation_id IS NOT NULL (Hito
+ *   12B, DEC-044 §2.9) cuenta los no leídos de cada conversación de la
+ *   bandeja (los registrados después del cursor) y encuentra la última
+ *   respuesta de un miembro.
  * - Todas las FKs son RESTRICT.
  *
  * Insertar un mensaje con oportunidad mueve su `last_activity_at`: lo hace
@@ -157,6 +161,11 @@ export const messages = pgTable(
       t.contactId,
       t.createdAt.desc().nullsFirst(),
     ),
+    // No leídos de la bandeja (DEC-044 §2.9): solo los mensajes de una
+    // conversación.
+    index("messages_organization_id_conversation_id_idx")
+      .on(t.organizationId, t.conversationId, t.createdAt)
+      .where(sql`${t.conversationId} IS NOT NULL`),
     check("messages_channel_check", oneOf(t.channel, messageChannels)),
     check("messages_direction_check", oneOf(t.direction, messageDirections)),
     // Como opportunity_notes.body: recortado (espacios y saltos de línea) y

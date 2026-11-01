@@ -53,6 +53,9 @@ export const conversationPreviewMaxLength = 160;
  * - unique (organization_id, id, contact_id): destino de la FK compuesta de
  *   `messages`, que impide asociar un mensaje a la conversación de otro
  *   contacto o de otra organización.
+ * - unique (organization_id, id) (Hito 12B, DEC-044 §2.9): destino de la FK
+ *   compuesta de `conversation_reads`, que impide guardar un cursor de
+ *   leído en la conversación de otra organización.
  * - Todas las FKs son RESTRICT.
  *
  * Lectura: las conversaciones de las organizaciones con membership activa.
@@ -81,6 +84,7 @@ export const conversations = pgTable(
       t.id,
       t.contactId,
     ),
+    unique("conversations_organization_id_id_key").on(t.organizationId, t.id),
     uniqueIndex("conversations_open_contact_channel_key")
       .on(t.organizationId, t.contactId, t.channel)
       .where(sql`${t.status} = 'open'`),
