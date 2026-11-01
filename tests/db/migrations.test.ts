@@ -514,7 +514,7 @@ describe("0002 sobre una base en Foundation", () => {
     expect(await foundationCount(foundation.admin)).toEqual({
       organizations: 3,
       memberships: MEMBERSHIPS.length,
-      history: 17,
+      history: 18,
     });
     expect(await catalogSnapshot(foundation.admin)).toEqual(afterMigration);
   });
