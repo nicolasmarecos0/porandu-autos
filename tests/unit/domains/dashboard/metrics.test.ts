@@ -220,9 +220,11 @@ describe("pureza del dominio dashboard (DEC-016, DEC-037)", () => {
 
   it("tiene los módulos del bloque", () => {
     expect(sources.sort()).toEqual([
+      "commercial.ts",
       "metrics.ts",
       "period.ts",
       "presentation.ts",
+      "range.ts",
     ]);
   });
 

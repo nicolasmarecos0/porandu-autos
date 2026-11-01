@@ -129,9 +129,7 @@ export async function selectWeekTestDriveCounts(
 ): Promise<TestDriveWeekCounts> {
   const [row] = await tx
     .select({
-      pending: count(
-        inArray(testDrives.status, [...OPEN_TEST_DRIVE_STATUSES]),
-      ),
+      pending: count(inArray(testDrives.status, [...OPEN_TEST_DRIVE_STATUSES])),
       completed: count(eq(testDrives.status, "completed")),
       noShow: count(eq(testDrives.status, "no_show")),
       cancelled: count(eq(testDrives.status, "cancelled")),
