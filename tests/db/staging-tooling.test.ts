@@ -136,6 +136,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0012_team_settings",
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
+      "0015_test_drives",
     ]);
   });
 
@@ -362,6 +363,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.activity-touch",
         "schema.team-settings",
         "schema.whatsapp-ingestion",
+        "schema.test-drives",
         "schema.whatsapp-outbound",
         "private.schema",
         "private.user_org_ids",
@@ -880,6 +882,47 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta el trigger de estados deshabilitado, sin sus reglas o una FK de la prueba que no es compuesta (Hito 9, DEC-041)", async () => {
+    const signature = "private.enforce_test_drive_status_transition()";
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef(${signature}::regprocedure) AS definition
+    `;
+    for (const [broken, restore] of [
+      [
+        "ALTER TABLE public.test_drives DISABLE TRIGGER test_drives_status_transition",
+        "ALTER TABLE public.test_drives ENABLE TRIGGER test_drives_status_transition",
+      ],
+      [
+        current!.definition.replace(/test_drives_not_started/g, "no guard"),
+        current!.definition,
+      ],
+      [
+        "ALTER TABLE public.test_drives DROP CONSTRAINT test_drives_vehicle_fk; ALTER TABLE public.test_drives ADD CONSTRAINT test_drives_vehicle_fk FOREIGN KEY (vehicle_id) REFERENCES public.vehicles (id) ON DELETE RESTRICT",
+        "ALTER TABLE public.test_drives DROP CONSTRAINT test_drives_vehicle_fk; ALTER TABLE public.test_drives ADD CONSTRAINT test_drives_vehicle_fk FOREIGN KEY (organization_id, vehicle_id) REFERENCES public.vehicles (organization_id, id) ON DELETE RESTRICT",
+      ],
+    ] as const) {
+      await migrated.admin.unsafe(broken);
+      try {
+        const sql = connect(migrated.migrationUrl);
+        const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+        await sql.end({ timeout: 5 });
+        expect(
+          findings.filter((f) => !f.ok).map((f) => f.check),
+          broken.slice(0, 60),
+        ).toEqual(["schema.test-drives"]);
+      } finally {
+        await migrated.admin.unsafe(restore);
+      }
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -890,9 +933,9 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-040): 0014 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 7 (0000 a 0013) si
- * 0013 ya se aplicó; si no, en el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * El próximo rollout real (DEC-041): 0015 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 8 (0000 a 0014) si
+ * 0014 ya se aplicó; si no, en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
@@ -913,6 +956,7 @@ describe.each([
       "0012_team_settings",
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
+      "0015_test_drives",
     ],
   },
   {
@@ -927,6 +971,7 @@ describe.each([
       "0012_team_settings",
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
+      "0015_test_drives",
     ],
   },
   {
@@ -940,6 +985,7 @@ describe.each([
       "0012_team_settings",
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
+      "0015_test_drives",
     ],
   },
   {
@@ -952,6 +998,7 @@ describe.each([
       "0012_team_settings",
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
+      "0015_test_drives",
     ],
   },
   {
@@ -963,6 +1010,7 @@ describe.each([
       "0012_team_settings",
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
+      "0015_test_drives",
     ],
   },
   {
@@ -973,22 +1021,33 @@ describe.each([
       "0012_team_settings",
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
+      "0015_test_drives",
     ],
   },
   {
     stagingAt: "0012_team_settings",
     label: "Hito 6",
     applied: 13,
-    expected: ["0013_whatsapp_ingestion", "0014_whatsapp_outbound"],
+    expected: [
+      "0013_whatsapp_ingestion",
+      "0014_whatsapp_outbound",
+      "0015_test_drives",
+    ],
   },
   {
     stagingAt: "0013_whatsapp_ingestion",
     label: "Hito 7",
     applied: 14,
-    expected: ["0014_whatsapp_outbound"],
+    expected: ["0014_whatsapp_outbound", "0015_test_drives"],
+  },
+  {
+    stagingAt: "0014_whatsapp_outbound",
+    label: "Hito 8",
+    applied: 15,
+    expected: ["0015_test_drives"],
   },
 ])(
-  "staging en $label: rollout hasta 0014",
+  "staging en $label: rollout hasta 0015",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

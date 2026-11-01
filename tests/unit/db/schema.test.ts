@@ -75,7 +75,7 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages) y las del Hito 7 (conversations, whatsapp_lines)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines) y la del Hito 9 (test_drives)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "conversations",
@@ -86,6 +86,7 @@ describe("db/schema", () => {
       "opportunity_notes",
       "organizations",
       "profiles",
+      "test_drives",
       "vehicles",
       "whatsapp_lines",
     ]);
@@ -168,7 +169,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages y memberships (admin) la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin) y test_drives (Hito 9) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -363,6 +364,37 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using: '"profiles"."id" = (select auth.uid())',
         withCheck: undefined,
+      },
+      {
+        table: "test_drives",
+        name: "test_drives_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck:
+          '"test_drives"."organization_id" IN (SELECT private.user_org_ids()) AND "test_drives"."created_by" = (select auth.uid()) AND "test_drives"."status" = \'scheduled\' AND "test_drives"."created_at" = now() AND "test_drives"."updated_at" = now() AND "test_drives"."scheduled_at" >= now() - interval \'5 minutes\'',
+      },
+      {
+        table: "test_drives",
+        name: "test_drives_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"test_drives"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "test_drives",
+        name: "test_drives_update_member",
+        as: "permissive",
+        for: "update",
+        to: ["authenticated"],
+        using:
+          '"test_drives"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck:
+          '"test_drives"."organization_id" IN (SELECT private.user_org_ids())',
       },
       {
         table: "vehicles",
@@ -1128,6 +1160,7 @@ describe("db/schema", () => {
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",
+      "test_drives",
       "vehicles",
       "whatsapp_lines",
     ]);

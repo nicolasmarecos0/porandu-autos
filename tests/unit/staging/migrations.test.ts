@@ -46,6 +46,7 @@ describe("readRepoMigrations", () => {
       [12, "0012_team_settings"],
       [13, "0013_whatsapp_ingestion"],
       [14, "0014_whatsapp_outbound"],
+      [15, "0015_test_drives"],
     ]);
   });
 
@@ -74,57 +75,64 @@ describe("compareHistory", () => {
       applied: [REPO[0]],
       pending: REPO.slice(1),
     });
-    // Staging con H1.4/H1.5: 0008 a 0014 pendientes.
+    // Staging con H1.4/H1.5: 0008 a 0015 pendientes.
     expect(compareHistory(REPO, applied(8))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 8),
+      pending: REPO.slice(8),
+    });
+    expect(REPO.slice(8)).toHaveLength(8);
+    // Staging con H1.6: 0009 a 0015 pendientes.
+    expect(compareHistory(REPO, applied(9))).toEqual({
+      kind: "consistent",
+      applied: REPO.slice(0, 9),
       pending: [
-        REPO[8],
         REPO[9],
         REPO[10],
         REPO[11],
         REPO[12],
         REPO[13],
         REPO[14],
+        REPO[15],
       ],
     });
-    // Staging con H1.6: 0009 a 0014 pendientes.
-    expect(compareHistory(REPO, applied(9))).toEqual({
-      kind: "consistent",
-      applied: REPO.slice(0, 9),
-      pending: [REPO[9], REPO[10], REPO[11], REPO[12], REPO[13], REPO[14]],
-    });
-    // Staging con el Hito 2: 0010 a 0014 pendientes.
+    // Staging con el Hito 2: 0010 a 0015 pendientes.
     expect(compareHistory(REPO, applied(10))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 10),
-      pending: [REPO[10], REPO[11], REPO[12], REPO[13], REPO[14]],
+      pending: [REPO[10], REPO[11], REPO[12], REPO[13], REPO[14], REPO[15]],
     });
-    // Staging con el Hito 2A: 0011 a 0014 pendientes.
+    // Staging con el Hito 2A: 0011 a 0015 pendientes.
     expect(compareHistory(REPO, applied(11))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 11),
-      pending: [REPO[11], REPO[12], REPO[13], REPO[14]],
+      pending: [REPO[11], REPO[12], REPO[13], REPO[14], REPO[15]],
     });
-    // Staging con el Hito 4/5: 0012 a 0014 pendientes.
+    // Staging con el Hito 4/5: 0012 a 0015 pendientes.
     expect(compareHistory(REPO, applied(12))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 12),
-      pending: [REPO[12], REPO[13], REPO[14]],
+      pending: [REPO[12], REPO[13], REPO[14], REPO[15]],
     });
-    // Staging con el Hito 6: 0013 y 0014 pendientes.
+    // Staging con el Hito 6: 0013 a 0015 pendientes.
     expect(compareHistory(REPO, applied(13))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 13),
-      pending: [REPO[13], REPO[14]],
+      pending: [REPO[13], REPO[14], REPO[15]],
     });
-    // Staging con el Hito 7: solo 0014 pendiente (DEC-040).
+    // Staging con el Hito 7: 0014 y 0015 pendientes.
     expect(compareHistory(REPO, applied(14))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 14),
-      pending: [REPO[14]],
+      pending: [REPO[14], REPO[15]],
     });
-    expect(compareHistory(REPO, [...applied(15)].reverse())).toMatchObject({
+    // Staging con el Hito 8: solo 0015 pendiente (DEC-041).
+    expect(compareHistory(REPO, applied(15))).toEqual({
+      kind: "consistent",
+      applied: REPO.slice(0, 15),
+      pending: [REPO[15]],
+    });
+    expect(compareHistory(REPO, [...applied(16)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -144,8 +152,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(15), { id: 16, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 15",
+      [...applied(16), { id: 17, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 16",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -184,7 +192,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0014: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0015: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -352,6 +360,20 @@ describe("expectedFootprint", () => {
         "whatsapp_lines.whatsapp_lines_select_member",
       ].sort(),
     };
-    expect(expectedFootprint(REPO)).toEqual(hito8);
+    expect(expectedFootprint(REPO.slice(0, 15))).toEqual(hito8);
+    // 0015 suma las pruebas de manejo (DEC-041), con sus policies de
+    // lectura, alta y edición. El trigger de estados es SQL custom: no
+    // figura.
+    const hito9 = {
+      ...hito8,
+      tables: [...hito8.tables, "test_drives"].sort(),
+      policies: [
+        ...hito8.policies,
+        "test_drives.test_drives_insert_member",
+        "test_drives.test_drives_select_member",
+        "test_drives.test_drives_update_member",
+      ].sort(),
+    };
+    expect(expectedFootprint(REPO)).toEqual(hito9);
   });
 });

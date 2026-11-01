@@ -179,7 +179,7 @@ Los datos sintéticos llevan dos marcas: email `synthetic-<clave>-<corrida>@pora
 **Runbook de una migración**
 
 1. `preflight`: revisar el estado y las migraciones pendientes.
-2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`; H1.3A: `0004_vehicles_stock_persistence`; H1.3B: `0005_vehicle_quick_create`; H1.3C: `0006_vehicle_availability`; H1.4: `0007_opportunity_demand_facts`; H1.6: `0008_opportunity_stages`, o `0007_opportunity_demand_facts,0008_opportunity_stages` si `0007` todavía no se aplicó; Hito 2: `0009_opportunity_notes_vehicle_link`; Hito 2A: `0010_opportunity_closure_metadata`; Hito 4: `0011_conversations_and_activity_trigger`; Hito 6: `0012_team_settings`; Hito 7: `0013_whatsapp_ingestion`, o con las anteriores que falten, en orden). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
+2. `migrate` con `expected_migrations` igual a los tags pendientes (primer rollout: `0000_saas_core_schema,0001_tenant_isolation`; H1.1: `0002_opportunities_persistence`; H1.2: `0003_contact_identity_opportunity_create`; H1.3A: `0004_vehicles_stock_persistence`; H1.3B: `0005_vehicle_quick_create`; H1.3C: `0006_vehicle_availability`; H1.4: `0007_opportunity_demand_facts`; H1.6: `0008_opportunity_stages`, o `0007_opportunity_demand_facts,0008_opportunity_stages` si `0007` todavía no se aplicó; Hito 2: `0009_opportunity_notes_vehicle_link`; Hito 2A: `0010_opportunity_closure_metadata`; Hito 4: `0011_conversations_and_activity_trigger`; Hito 6: `0012_team_settings`; Hito 7: `0013_whatsapp_ingestion`; Hito 8: `0014_whatsapp_outbound`; Hito 9: `0015_test_drives`, o con las anteriores que falten, en orden). Incluye la verificación de catálogo; `verify` la repite sola cuando haga falta.
 3. Primer rollout o rotación: `provision-runtime`.
 4. `auth-tenant-acceptance` cuando cambie Auth, Tenant Resolution, el aislamiento o la gestión del equipo.
 
@@ -791,6 +791,33 @@ v20.0 (502) → recordOutboundMessage(): private.record_outbound_whatsapp_messag
 - **Limitaciones conocidas:** la ventana de 24 horas de atención de Meta no se controla: un texto fuera de la ventana puede ser aceptado y fallar después en un estado de entrega, que todavía no se ingiere. Graph API `v20.0` es la versión del pedido; cambiarla es la constante `GRAPH_API_VERSION`. C-14 (sin redacción) también aplica a los mensajes enviados.
 - **Fuera de este bloque:** plantillas, estados de entrega o lectura, media y adjuntos, iniciar conversaciones, cerrarlas o reabrirlas, asignación, búsqueda, filtros, no leídos, tiempo real, reintentos automáticos, límites de tasa e IA.
 - `0014_whatsapp_outbound` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0014_whatsapp_outbound` (o con las anteriores que falten delante, en orden). Para enviar en staging, configurar `WHATSAPP_API_TOKEN` en Vercel y registrar la línea en `whatsapp_lines`.
+
+## Agenda de pruebas de manejo (Hito 9)
+
+`/calendar` deja de ser un placeholder: es la agenda semanal de pruebas de manejo de la organización (DEC-041). Una prueba es de una oportunidad abierta y de una unidad disponible o reservada, a una hora de Asunción.
+
+```text
+Lectura: getCalendarAgenda(?w=) → requireTenant() → withTenant() → las pruebas de la
+semana (lunes a domingo, hora de Asunción) y las opciones del alta, con filtro por
+organization_id → RLS → domains/calendar/ → CalendarView (Server Component)
+
+Alta: drawer → scheduleTestDrive() → requireTenant() → validar (oportunidad, unidad,
+hora: no pasada, ≤ 180 días) → insertTestDrive(): oportunidad abierta y unidad
+disponible o reservada de la organización activa → INSERT → RLS + FKs compuestas
+
+Estado: tarjeta → confirmación → changeTestDriveStatus() → requireTenant() →
+updateTestDriveStatus(): fila bloqueada, estado esperado (compare-and-set), matriz
+del dominio → UPDATE status → trigger test_drives_status_transition
+```
+
+- **Estados:** Agendada → Confirmada, Realizada, No asistió o Cancelada; Confirmada → Realizada, No asistió o Cancelada. Las terminales no se reabren: reprogramar es cancelar y agendar otra. Realizada y No asistió solo desde la hora agendada (el trigger lo vuelve a exigir con el reloj de la base).
+- **Autorización:** cualquier membership activa (`admin` o `seller`) agenda y mueve cualquier prueba de su organización. La organización, el autor, el estado inicial y el reloj nunca salen del pedido.
+- **Base (`0015_test_drives`):** tabla `test_drives` con RLS (lectura, alta y edición de miembros), FKs compuestas a la oportunidad y a la unidad, `SELECT` e `INSERT` para `authenticated` y `UPDATE` solo de `status` y `updated_at`. El trigger exige la matriz y la hora, deja inmutable el resto de la fila y fija `updated_at`. Sin DELETE. Repite las postcondiciones de 0014 con `test_drives` entre las altas y las ediciones aprobadas.
+- **Puerta única:** `db/queries/test-drives-write.ts` solo lo importan las Server Actions de `lib/calendar/actions.ts` (ESLint).
+- **UI** (`components/calendar/`, tokens de DEC-013 y primitivas de `components/ui/`): siete columnas en desktop, dos en tablet y una lista de días en teléfono (los días pasados y vacíos se ocultan). La semana viaja en la URL (`?w=YYYY-MM-DD`) con anterior, Hoy y siguiente. Cada tarjeta muestra hora, cliente (lleva a su oportunidad), unidad, estado y quién la agendó, y avisa "Unidad superpuesta" cuando la misma unidad tiene otra prueba abierta a menos de 60 minutos (solo un aviso).
+- **Sin envíos:** agendar o confirmar no le manda nada al cliente.
+- **Fuera de este bloque:** recordatorios, reprogramar, duración configurable, bloqueo de superposiciones, asignación, otros eventos, calendarios externos, vistas mensual o diaria, el feed del Cockpit y la recencia de la oportunidad.
+- `0015_test_drives` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0015_test_drives` (o con las anteriores que falten delante, en orden).
 
 ## Convenciones
 
