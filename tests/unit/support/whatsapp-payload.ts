@@ -81,6 +81,67 @@ export function rawText(message: TestTextMessage): Record<string, unknown> {
   };
 }
 
+export type TestStatus = {
+  /** El wamid del saliente. */
+  id: string;
+  status: string;
+  /** Segundos Unix. */
+  timestamp: number;
+};
+
+/**
+ * Un estado de entrega del payload de la Cloud API (`statuses[]`), con los
+ * campos que Meta agrega y la ingesta no lee (`recipient_id`,
+ * `conversation`, `pricing` y, en una falla, `errors`).
+ */
+export function rawStatus({
+  id,
+  status,
+  timestamp,
+}: TestStatus): Record<string, unknown> {
+  return {
+    id,
+    status,
+    timestamp: String(timestamp),
+    recipient_id: "595981555214",
+    conversation: {
+      id: "CONVERSATION_ID",
+      origin: { type: "service" },
+    },
+    pricing: { billable: true, pricing_model: "PMP", category: "service" },
+    ...(status === "failed"
+      ? {
+          errors: [
+            {
+              code: 131047,
+              title: "Re-engagement message",
+              message: "Re-engagement message",
+              error_data: { details: "Message failed to send." },
+            },
+          ],
+        }
+      : {}),
+  };
+}
+
+/**
+ * Webhook con estados de entrega de salientes de una línea: como los envía
+ * Meta, sin `contacts` ni `messages`.
+ */
+export function statusWebhook(
+  statuses: TestStatus[],
+  { lineId = TEST_LINE_ID }: { lineId?: string } = {},
+): Record<string, unknown> {
+  return webhook({
+    messaging_product: "whatsapp",
+    metadata: {
+      display_phone_number: "595210000000",
+      phone_number_id: lineId,
+    },
+    statuses: statuses.map(rawStatus),
+  });
+}
+
 /** Webhook con un cambio por cada `value`. */
 export function webhook(
   ...values: Record<string, unknown>[]

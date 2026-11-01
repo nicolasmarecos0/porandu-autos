@@ -2,8 +2,10 @@
  * Estado de entrega de un mensaje enviado (Hito 12, DEC-044 §3): lo que
  * WhatsApp informa de un saliente después de aceptarlo. Puro y apto para el
  * navegador. No conoce proveedores: traducir los `statuses[]` del webhook de
- * Meta a estos valores es de la capa de Ingestion (domains/webhooks), cuando
- * entre la ingesta de estados.
+ * Meta a estos valores es de la capa de Ingestion
+ * (domains/webhooks/whatsapp-status.ts, Hito 12C). La base guarda cada
+ * estado recibido (`message_statuses`, append-only) y este módulo decide el
+ * vigente.
  *
  *   sent ──► delivered ──► read
  *     └────► failed

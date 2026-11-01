@@ -74,10 +74,12 @@ const withUserImport = {
 };
 
 // Hito 7 (DEC-039 §4): withIngestion() es la puerta del sistema, sin
-// usuario: asume authenticated sin claims para ejecutar la función de
-// ingesta de WhatsApp. Solo la usa db/queries/ingest-whatsapp-message.ts.
+// usuario: asume authenticated sin claims para ejecutar las funciones de
+// ingesta de WhatsApp. Solo la usan db/queries/ingest-whatsapp-message.ts
+// (mensajes entrantes) y db/queries/ingest-whatsapp-status.ts (estados de
+// entrega, Hito 12C, DEC-044 §3.3).
 const WITH_INGESTION_MESSAGE =
-  "withIngestion() is the system door for the WhatsApp ingestion only (db/queries/ingest-whatsapp-message.ts). Tenant-scoped data goes through requireTenant() + withTenant().";
+  "withIngestion() is the system door for the WhatsApp ingestion only (db/queries/ingest-whatsapp-message.ts and db/queries/ingest-whatsapp-status.ts). Tenant-scoped data goes through requireTenant() + withTenant().";
 const withIngestionImport = {
   regex: "(^|/)db/tenant$|^\\.{1,2}/tenant$",
   importNames: ["withIngestion"],
@@ -252,13 +254,15 @@ const settingsWriteImport = {
 
 // Hito 7 (DEC-039): la ingesta de mensajes entrantes de WhatsApp tiene una
 // sola puerta, el webhook (lib/whatsapp/webhook.ts), que verifica la firma
-// y valida el payload antes de escribir.
+// y valida el payload antes de escribir. Hito 12C (DEC-044 §3.3): también
+// la de los estados de entrega de los salientes.
 const INGEST_WHATSAPP_MESSAGE =
-  "Inbound WhatsApp messages are ingested only through the webhook (lib/whatsapp/webhook.ts): signature, server-side validation, then withIngestion().";
+  "Inbound WhatsApp messages and delivery statuses are ingested only through the webhook (lib/whatsapp/webhook.ts): signature, server-side validation, then withIngestion().";
 const ingestWhatsAppImport = {
   regex:
-    "(^|/)db/queries/ingest-whatsapp-message$|^\\.{1,2}/ingest-whatsapp-message$",
-  // Los tipos del resultado (InboundMessageOutcome) no escriben nada.
+    "(^|/)db/queries/ingest-whatsapp-(message|status)$|^\\.{1,2}/ingest-whatsapp-(message|status)$",
+  // Los tipos de los resultados (InboundMessageOutcome,
+  // DeliveryStatusOutcome) no escriben nada.
   allowTypeImports: true,
   message: INGEST_WHATSAPP_MESSAGE,
 };
@@ -756,7 +760,7 @@ const eslintConfig = defineConfig([
     },
   },
   // Única puerta de la ingesta de mensajes entrantes de WhatsApp (Hito 7,
-  // DEC-039).
+  // DEC-039) y de sus estados de entrega (Hito 12C, DEC-044 §3.3).
   {
     files: ["lib/whatsapp/webhook.ts"],
     rules: {
@@ -770,9 +774,13 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // Único módulo que importa withIngestion() (Hito 7, DEC-039 §4).
+  // Únicos módulos que importan withIngestion() (Hito 7, DEC-039 §4; Hito
+  // 12C, DEC-044 §3.3).
   {
-    files: ["db/queries/ingest-whatsapp-message.ts"],
+    files: [
+      "db/queries/ingest-whatsapp-message.ts",
+      "db/queries/ingest-whatsapp-status.ts",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",

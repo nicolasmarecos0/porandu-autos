@@ -27,7 +27,8 @@ import { describe, expect, it } from "vitest";
  * - la configuración y el equipo (Hito 6) (db/queries/settings-write),
  *   también: las Server Actions de lib/settings/actions.ts;
  * - la ingesta de mensajes entrantes de WhatsApp (Hito 7)
- *   (db/queries/ingest-whatsapp-message), también: el webhook
+ *   (db/queries/ingest-whatsapp-message) y la de sus estados de entrega
+ *   (Hito 12C) (db/queries/ingest-whatsapp-status), también: el webhook
  *   (lib/whatsapp/webhook.ts);
  * - el envío de mensajes de WhatsApp (Hito 8) (db/queries/outbound-message
  *   y el cliente de Meta, lib/whatsapp/api), también: POST
@@ -486,6 +487,7 @@ describe(
 );
 
 const importIngestWrite = `import { ingestInboundMessage } from "@/db/queries/ingest-whatsapp-message";\nexport const use = ingestInboundMessage;\n`;
+const importIngestStatusWrite = `import { ingestDeliveryStatus } from "@/db/queries/ingest-whatsapp-status";\nexport const use = ingestDeliveryStatus;\n`;
 
 /*
  * Hito 7 (DEC-039): la ingesta de mensajes entrantes de WhatsApp tiene un
@@ -549,6 +551,75 @@ describe(
         await restrictedBy(
           "lib/whatsapp/summary.ts",
           `import type { InboundMessageOutcome } from "@/db/queries/ingest-whatsapp-message";\nexport type T = InboundMessageOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+/*
+ * Hito 12C (DEC-044 §3.3): la ingesta de los estados de entrega de los
+ * salientes tiene un único módulo de escritura, que solo importa el webhook
+ * (lib/whatsapp/webhook.ts), como la de los mensajes entrantes.
+ */
+describe(
+  "una sola puerta para los estados de entrega de WhatsApp (Hito 12C)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/api/webhooks/whatsapp/route.ts",
+      "app/(app)/conversations/page.tsx",
+      "components/inbox/message-bubble.tsx",
+      "lib/whatsapp/signature.ts",
+      "lib/conversations/send.ts",
+      "lib/conversations/read.ts",
+      "lib/conversations/actions.ts",
+      "lib/opportunities/actions.ts",
+      "lib/tenant/session.ts",
+      "lib/contacts/phone.ts",
+      "db/queries/conversations.ts",
+      "db/queries/outbound-message.ts",
+      "db/queries/ingest-whatsapp-message.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importIngestStatusWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/conversations.ts",
+          `import { ingestDeliveryStatus } from "./ingest-whatsapp-status";\nexport const use = ingestDeliveryStatus;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en el webhook", async () => {
+      expect(
+        await restrictedBy("lib/whatsapp/webhook.ts", importIngestStatusWrite),
+      ).toEqual([]);
+    });
+
+    it("el módulo de estados no importa otras escrituras ni el cliente de Meta", async () => {
+      for (const code of [
+        importIngestWrite,
+        importMessageWrite,
+        `import { sendWhatsAppText } from "@/lib/whatsapp/api";\nexport const use = sendWhatsAppText;\n`,
+      ]) {
+        expect(
+          await restrictedBy("db/queries/ingest-whatsapp-status.ts", code),
+        ).toContain("no-restricted-imports");
+      }
+    });
+
+    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/whatsapp/summary.ts",
+          `import type { DeliveryStatusOutcome } from "@/db/queries/ingest-whatsapp-status";\nexport type T = DeliveryStatusOutcome;\n`,
         ),
       ).toEqual([]);
     });

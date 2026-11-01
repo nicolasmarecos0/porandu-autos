@@ -39,9 +39,12 @@ import { getDb, type RuntimeDatabase } from "./client";
  * §4): la ingesta de los webhooks de WhatsApp. Asume `authenticated` sin
  * claims: sin usuario no hay membership, así que RLS no le deja ver ni
  * escribir ninguna fila y no satisface ninguna policy de miembro. Solo
- * escribe por `private.ingest_whatsapp_message()`, que rechaza cualquier
- * llamada con claims. Solo lo usa db/queries/ingest-whatsapp-message.ts;
- * ESLint lo impide en cualquier otro módulo.
+ * escribe por `private.ingest_whatsapp_message()` y, para los estados de
+ * entrega (Hito 12C, DEC-044 §3.3), `private.ingest_whatsapp_status()`, que
+ * rechazan cualquier llamada con claims. Solo lo usan
+ * db/queries/ingest-whatsapp-message.ts y
+ * db/queries/ingest-whatsapp-status.ts; ESLint lo impide en cualquier otro
+ * módulo.
  */
 
 /** Usuario autenticado, todavía sin organización elegida. */
@@ -148,12 +151,14 @@ export async function withTenant<T>(
 }
 
 /**
- * Puerta del sistema para la ingesta de mensajes entrantes (DEC-039 §4). Una
- * transacción cuyo primer statement vacía los claims y asume
- * `authenticated`, con alcance de transacción, como withTenant() (ADR-001
- * §3.2). Sin claims, RLS no deja ver ni escribir nada: la escritura pasa por
- * `private.ingest_whatsapp_message()`, y la organización la resuelve la base
- * a partir de la línea receptora, nunca el llamador.
+ * Puerta del sistema para la ingesta de mensajes entrantes (DEC-039 §4) y de
+ * los estados de entrega de los salientes (DEC-044 §3.3). Una transacción
+ * cuyo primer statement vacía los claims y asume `authenticated`, con
+ * alcance de transacción, como withTenant() (ADR-001 §3.2). Sin claims, RLS
+ * no deja ver ni escribir nada: la escritura pasa por
+ * `private.ingest_whatsapp_message()` o `private.ingest_whatsapp_status()`,
+ * y la organización la resuelve la base a partir de la línea receptora,
+ * nunca el llamador.
  */
 export async function withIngestion<T>(
   fn: (tx: ScopedTransaction) => Promise<T>,
