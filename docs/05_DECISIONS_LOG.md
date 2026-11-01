@@ -57,6 +57,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-041 | Agenda de pruebas de manejo (Calendar, Hito 9) | Aceptada | 2026-11-01 |
 | DEC-042 | Cotizaciones formales (Deal Management, Hito 10) | Aceptada | 2026-11-01 |
 | DEC-043 | Dashboard Directivo: KPIs comerciales, rangos de fechas y política de caché | Aceptada en principio | 2026-11-01 |
+| DEC-044 | Bandeja premium: orden del chat, leído por miembro, estados de entrega y oportunidad de la conversación (Hito 12) | Aceptada en principio | 2026-11-01 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1200,6 +1201,59 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Cada request de `/intelligence` hace seis lecturas agregadas en una transacción. El costo lo acotan el filtro por organización, los índices y el tope de 366 días.
   - Habilitar la edición de una oportunidad cerrada sigue exigiendo `closed_at` antes (DEC-037 §5).
   - `domains/dashboard/range.ts` reutiliza la hora de pared de `domains/calendar/zoned-time.ts`. Unificar `domains/dashboard/period.ts` con ese módulo sigue como backlog técnico (DEC-041).
+
+---
+
+## DEC-044 — Bandeja premium: orden del chat, leído por miembro, estados de entrega y oportunidad de la conversación (Hito 12)
+- **Estado:** Aceptada en principio · 2026-11-01. Formaliza el pedido del fundador del 1 nov 2026 (arquitectura, reglas de negocio y primeras capas de UI y dominio de la Bandeja de Entrada, con el Dashboard ya mergeado): una interfaz de chat premium, 100 % responsiva, y las reglas del orden de los mensajes, los estados de lectura y la asociación con oportunidades. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR. Los puntos §2.6 y §3.4 quedan **pendientes de confirmación** del fundador.
+- **Contexto:** DEC-040 (Hito 8) ya puso la bandeja de dos columnas y el envío de texto. Debajo de `lg` las columnas se apilan, el historial es una sola lista con la fecha completa en cada burbuja y nada dice a qué oportunidad se suman los mensajes. DEC-040 §11 dejó fuera los no leídos y los estados de entrega o lectura, y DEC-039 §9 fijó la asociación con la oportunidad abierta única. El pedido llama "Hito 11" al Dashboard (DEC-043): este bloque es el Hito 12. "Estados de lectura" nombra dos cosas que se separan: el leído interno del equipo (§2) y el "visto" del cliente en WhatsApp (§3).
+- **Decisión:**
+  1. **Orden del chat (aclara DEC-040 §1).**
+     - El historial sigue del más viejo al más nuevo por `sent_at`, con desempate por `created_at` e id. Un mensaje viejo que el proveedor entrega tarde se ubica en su lugar cronológico, no al pie; la lista no retrocede porque `last_message_at` solo avanza (DEC-039 §8).
+     - Separadores por día de calendario de Asunción: "Hoy", "Ayer", "Lunes 26 de octubre" en el año en curso y "26 de octubre de 2025" en otro. El separador queda fijo arriba mientras se recorre su día.
+     - *Propuesta de implementación:* dos mensajes seguidos de la misma dirección y el mismo autor ("Cliente", "Vos" u "Otro miembro"), del mismo día y a lo sumo a 5 minutos, forman un grupo: solo el primero muestra el autor y la cola de la burbuja. Cada burbuja muestra su hora ("14:32") y la fecha completa en el `title`.
+     - La lista no cambia de orden (`last_message_at` descendente, sin mensajes al final). Cada conversación muestra la hora de chat: "14:32" hoy, "Ayer", el día de la semana hasta seis días atrás, "26 oct" en el año en curso y "26 oct 2025" en otro. *Propuesta de implementación:* los no leídos (§2) no reordenan ni fijan conversaciones arriba.
+     - Puro en `domains/conversations/chat-time.ts` y `domains/conversations/thread-layout.ts`, con el instante de la request explícito.
+  2. **Leído interno del equipo (no leídos).**
+     1. Por miembro: cada membership activa tiene su propio cursor por conversación. No hay responsable asignado (DEC-023): que un vendedor lea no marca leído para otro.
+     2. Solo cuentan los entrantes. Lo que envía el equipo nunca está sin leer.
+     3. El cursor es el `created_at` (reloj de la base) del mensaje más nuevo que el miembro tenía en pantalla, resuelto por la base a partir de su id. No es `now()`, `sent_at` ni un reloj del cliente: un mensaje que llegó mientras tanto, o uno viejo entregado tarde, sigue sin leer.
+     4. Responder es leer: la última respuesta del propio miembro en la conversación también es cursor.
+     5. El cursor solo avanza (`GREATEST`): marcar un mensaje más viejo no vuelve a mostrar nada como no leído.
+     6. **Pendiente de confirmación:** sin cursor ni respuesta propia, todo entrante está sin leer. Al desplegar, cada miembro ve sin leer las conversaciones con entrantes hasta abrirlas. La alternativa, sembrar los cursores en la migración, contradice "no toca filas existentes" y queda descartada salvo indicación.
+     7. Marcar visto nunca es efecto de un GET: un prefetch de la lista, un enlace compartido o una pestaña en segundo plano no marcan. Lo marca la Server Action `markConversationRead({ conversationId, upToMessageId })`, que el historial dispara en el navegador cuando la conversación está a la vista. El pedido se valida con Zod (`parseMarkRead()`, DEC-009); uno inválido se ignora sin error.
+     8. *Propuesta de implementación:* la lista muestra el contador de entrantes sin leer ("99+" desde 100, con "N mensajes sin leer" en texto) y el nombre en negrita. El historial muestra el separador "Mensajes nuevos" antes del primero sin leer.
+     9. *Propuesta de implementación (12B, migración `0018_conversation_reads`):* tabla `conversation_reads` (`organization_id`, `conversation_id`, `user_id`, `read_up_to`, `updated_at`), PK `(organization_id, conversation_id, user_id)`, FK compuesta a `conversations` y FK a `profiles`, con RLS: SELECT solo de las filas propias (`user_id = auth.uid()` y membership activa) y sin INSERT, UPDATE ni DELETE para `authenticated`. Escribe solo `private.mark_conversation_read(organización, conversación, mensaje)`, `SECURITY DEFINER` de `postgres`, con `search_path` vacío y EXECUTE solo para `authenticated`: exige usuario en los claims, membership activa, la conversación abierta de la organización y un mensaje de esa conversación, y guarda su `created_at` con `GREATEST`. Idempotente. El contador se lee en el loader con `count(*) FILTER` por conversación y un índice `messages (organization_id, conversation_id, created_at) WHERE conversation_id IS NOT NULL`.
+  3. **Estado de entrega de los salientes (el "visto" del cliente).**
+     1. Estados `sent` (Enviado), `delivered` (Entregado), `read` (Leído) y `failed` (No entregado). Todo saliente registrado nace `sent`: la base lo registra después del `200` de Meta (DEC-040 §6). Desde este bloque se muestra así.
+     2. El vigente es el de mayor precedencia entre los recibidos (`sent` < `failed` < `delivered` < `read`), sin importar el orden de llegada ni las repeticiones. Un `failed` no pisa un `delivered` ni un `read`. Puro en `domains/conversations/delivery.ts`.
+     3. *Propuesta de implementación (12C, migración `0019_message_statuses`):* los `statuses[]` del webhook, que hoy se ignoran con `200` (DEC-039 §3), se ingieren por `withIngestion()` → `private.ingest_whatsapp_status()`, `SECURITY DEFINER` y con el rechazo de claims de DEC-039 §4. La organización sale de la línea receptora y el mensaje se busca por `(organization_id, external_id)` con `direction = 'outbound'`. Tabla append-only `message_statuses` con unique `(organization_id, message_id, status)` para la idempotencia. Los mensajes siguen inmutables (C-11): el estado no es una columna de `messages`. Un estado de un id desconocido se ignora con `200`.
+     4. **Pendiente de confirmación:** enviar a Meta las confirmaciones de lectura de los entrantes (las tildes azules que ve el cliente). Propuesta: no, porque le revela al cliente cuándo leyó el equipo y es una escritura hacia el proveedor que nadie disparó explícitamente (CLAUDE.md §2).
+     5. Cada saliente muestra el ícono y el estado en texto. Solo "No entregado" usa un tono de estado, junto a su texto (DEC-013).
+  4. **Oportunidad de la conversación (aclara DEC-039 §9 y DEC-040 §6, sin cambiar la regla).**
+     1. La asociación sigue en la base, al registrar cada mensaje: la oportunidad abierta (`new`, `qualifying` o `negotiating`) del contacto cuando hay exactamente una. Con ninguna o con varias no se asocia, no se adivina el negocio y no se crea una oportunidad.
+     2. Un mensaje registrado no cambia de oportunidad (append-only, C-11). Reasociar a mano requiere una decisión nueva.
+     3. El encabezado del historial dice a qué se suma lo que el vendedor responda ahora, con la misma regla: "Oportunidad abierta: En negociación · actividad …" con enlace a `/opportunities/[id]`; "N oportunidades abiertas · Los mensajes no se asocian a ninguna", en tono de advertencia junto al texto y con un menú de Radix que lista hasta cinco por actividad más reciente; o "Sin oportunidad abierta".
+     4. La lectura va en la transacción del loader de `/conversations`: las abiertas del contacto con filtro por `organization_id`, sobre el índice `(organization_id, contact_id)`. Puro en `domains/conversations/opportunity-link.ts`.
+  5. **UI premium y responsiva.**
+     - Desde `lg`, dos columnas con scroll propio. Debajo, maestro/detalle por URL: sin `?c=` se ve la lista a pantalla completa; con `?c=`, solo el chat, con "Volver" a `/conversations`. Lo decide el servidor, sin JavaScript, así que el botón atrás del teléfono vuelve a la lista.
+     - *Propuesta de implementación:* en una pantalla táctil (`pointer: coarse`), Enter escribe una línea nueva y se envía solo con el botón. El atajo de teclado se oculta debajo de `sm`.
+     - Radix (`DropdownMenu` de `components/ui/`) y Tailwind con los tokens de DEC-013. Sin dependencias nuevas.
+  6. **Capas.** Dominio puro en `domains/conversations/`: `chat-time.ts`, `thread-layout.ts`, `read-state.ts`, `delivery.ts`, `opportunity-link.ts` e `inbox.ts` ampliado. UI en `components/inbox/`. El loader `getInbox()` sigue siendo `requireTenant()` → `withTenant()` → RLS y no escribe nada. En 12B y 12C, cada escritura nueva tiene su puerta única con guard de ESLint, como DEC-040 §9.
+  7. **Autorización.** Sin cambios (DEC-040 §3): cualquier membership activa.
+  8. **Fuera de este bloque:** tiempo real o refresco automático, el contador en la navegación, asignación, búsqueda y filtros (también "solo no leídos"), cerrar o reabrir conversaciones, iniciar una conversación, crear una oportunidad desde la conversación, reasociar mensajes, plantillas y la ventana de 24 horas, media, las confirmaciones de lectura al cliente (§3.4), IA y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-040 §11: entran los no leídos (§2) y los estados de entrega (§3). Tiempo real, asignación, búsqueda y filtros siguen fuera.
+  - DEC-040 §1: el historial se agrupa por día y por autor, y la lista usa la hora de chat. El orden no cambia.
+  - DEC-039 §3 y §14: los `statuses[]` del webhook se ingieren cuando entre 12C; hasta entonces se siguen ignorando con `200`.
+  - DEC-039 §9 y DEC-040 §6: la regla de asociación no cambia; la bandeja la muestra.
+  - B1 §4 ("optimización móvil más allá de razonablemente usable"): la bandeja es responsiva por pedido del fundador.
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: las funciones nuevas viven en `private` (ADR-001 §3.6), el leído pasa por `requireTenant()` → `withTenant()` y los estados por `withIngestion()` (DEC-039 §4).
+- **Consecuencias:**
+  - 12A (este bloque) no tiene migración: la UI y el dominio usan datos que ya existen, y "Enviado" es el estado real de todo saliente registrado.
+  - `0018_conversation_reads` (12B) y `0019_message_statuses` (12C) se aplican a staging después de su merge con `preflight → migrate → verify`.
+  - El shell sigue siendo desktop-first (rail de navegación de 4rem): en teléfono la bandeja usa el ancho que queda. Un shell móvil requiere una decisión nueva.
 
 ---
 
