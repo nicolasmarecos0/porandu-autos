@@ -630,7 +630,7 @@ describe("messages (Hito 4)", () => {
     });
   });
 
-  it("índices: el muro por organización, oportunidad y fecha, y la conversación del contacto", async () => {
+  it("índices: el muro por organización, oportunidad y fecha, la conversación del contacto y los no leídos de la bandeja", async () => {
     expect(await indexes(db.admin, "messages")).toEqual({
       messages_pkey:
         "CREATE UNIQUE INDEX messages_pkey ON public.messages USING btree (id)",
@@ -641,6 +641,9 @@ describe("messages (Hito 4)", () => {
       // Idempotencia de la ingesta (DEC-039 §8).
       messages_organization_id_external_id_key:
         "CREATE UNIQUE INDEX messages_organization_id_external_id_key ON public.messages USING btree (organization_id, external_id) WHERE (external_id IS NOT NULL)",
+      // Los no leídos de cada conversación de la bandeja (DEC-044 §2.9).
+      messages_organization_id_conversation_id_idx:
+        "CREATE INDEX messages_organization_id_conversation_id_idx ON public.messages USING btree (organization_id, conversation_id, created_at) WHERE (conversation_id IS NOT NULL)",
     });
   });
 });
@@ -691,6 +694,8 @@ describe("conversations y whatsapp_lines (Hito 7)", () => {
         "FOREIGN KEY (organization_id, contact_id) REFERENCES contacts(organization_id, id) ON DELETE RESTRICT",
       conversations_organization_id_id_contact_id_key:
         "UNIQUE (organization_id, id, contact_id)",
+      // Destino de la FK compuesta de conversation_reads (DEC-044 §2.9).
+      conversations_organization_id_id_key: "UNIQUE (organization_id, id)",
       conversations_channel_check: "CHECK ((channel = 'whatsapp'::text))",
       conversations_status_check:
         "CHECK ((status = ANY (ARRAY['open'::text, 'closed'::text])))",
@@ -704,6 +709,8 @@ describe("conversations y whatsapp_lines (Hito 7)", () => {
         "CREATE UNIQUE INDEX conversations_pkey ON public.conversations USING btree (id)",
       conversations_organization_id_id_contact_id_key:
         "CREATE UNIQUE INDEX conversations_organization_id_id_contact_id_key ON public.conversations USING btree (organization_id, id, contact_id)",
+      conversations_organization_id_id_key:
+        "CREATE UNIQUE INDEX conversations_organization_id_id_key ON public.conversations USING btree (organization_id, id)",
       conversations_open_contact_channel_key:
         "CREATE UNIQUE INDEX conversations_open_contact_channel_key ON public.conversations USING btree (organization_id, contact_id, channel) WHERE (status = 'open'::text)",
     });
@@ -748,6 +755,132 @@ describe("conversations y whatsapp_lines (Hito 7)", () => {
         "CREATE UNIQUE INDEX whatsapp_lines_phone_number_id_key ON public.whatsapp_lines USING btree (phone_number_id)",
       whatsapp_lines_organization_id_idx:
         "CREATE INDEX whatsapp_lines_organization_id_idx ON public.whatsapp_lines USING btree (organization_id)",
+    });
+  });
+});
+
+describe("conversation_reads (Hito 12B)", () => {
+  const CONVERSATION_1 = "c0000000-0000-4000-8000-000000000001";
+  const CONVERSATION_2 = "c0000000-0000-4000-8000-000000000002";
+  const READ_UP_TO = "2026-11-01T12:00:00.123456Z";
+
+  it("columnas: el cursor por organización, conversación y miembro, y cuándo avanzó", async () => {
+    expect(await columns(db.admin, "conversation_reads")).toEqual([
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "conversation_id", type: "uuid", notNull: true, default: null },
+      { name: "user_id", type: "uuid", notNull: true, default: null },
+      {
+        name: "read_up_to",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: null,
+      },
+      {
+        name: "updated_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: "now()",
+      },
+    ]);
+  });
+
+  it("PK (organization_id, conversation_id, user_id), FK compuesta a la conversación (RESTRICT) y al perfil (CASCADE)", async () => {
+    expect(await constraints(db.admin, "conversation_reads")).toEqual({
+      conversation_reads_pkey:
+        "PRIMARY KEY (organization_id, conversation_id, user_id)",
+      conversation_reads_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      conversation_reads_conversation_fk:
+        "FOREIGN KEY (organization_id, conversation_id) REFERENCES conversations(organization_id, id) ON DELETE RESTRICT",
+      conversation_reads_user_id_profiles_id_fk:
+        "FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE",
+    });
+    // La PK es el índice que empieza por organization_id (ADR-001 §3.6).
+    expect(await indexes(db.admin, "conversation_reads")).toEqual({
+      conversation_reads_pkey:
+        "CREATE UNIQUE INDEX conversation_reads_pkey ON public.conversation_reads USING btree (organization_id, conversation_id, user_id)",
+    });
+  });
+
+  async function seedConversations(tx: TransactionSql): Promise<void> {
+    await seed(tx);
+    await tx`
+      INSERT INTO public.conversations (id, organization_id, contact_id, channel)
+      VALUES (${CONVERSATION_1}, ${ORG_1}, ${CONTACT_1}, 'whatsapp'),
+        (${CONVERSATION_2}, ${ORG_2}, ${CONTACT_2}, 'whatsapp')
+    `;
+  }
+
+  it("un cursor por miembro y conversación, de una conversación de la misma organización", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedConversations(tx);
+      // Como texto: el serializador de fechas de postgres-js pasa por Date
+      // y perdería los microsegundos.
+      await tx`
+        INSERT INTO public.conversation_reads (organization_id, conversation_id, user_id, read_up_to)
+        VALUES (${ORG_1}, ${CONVERSATION_1}, ${USER_A}, ${READ_UP_TO}::text::timestamptz)
+      `;
+      // Otro miembro, su propio cursor.
+      await tx`
+        INSERT INTO public.conversation_reads (organization_id, conversation_id, user_id, read_up_to)
+        VALUES (${ORG_1}, ${CONVERSATION_1}, ${USER_B}, ${READ_UP_TO})
+      `;
+      // El mismo miembro, la misma conversación: 23505.
+      await expectSqlError(
+        tx,
+        "23505",
+        (sp) => sp`
+        INSERT INTO public.conversation_reads (organization_id, conversation_id, user_id, read_up_to)
+        VALUES (${ORG_1}, ${CONVERSATION_1}, ${USER_A}, ${READ_UP_TO})
+      `,
+      );
+      // La conversación de otra organización: 23503.
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) => sp`
+        INSERT INTO public.conversation_reads (organization_id, conversation_id, user_id, read_up_to)
+        VALUES (${ORG_1}, ${CONVERSATION_2}, ${USER_A}, ${READ_UP_TO})
+      `,
+      );
+      // Sin cursor: 23502.
+      await expectSqlError(
+        tx,
+        "23502",
+        (sp) => sp`
+        INSERT INTO public.conversation_reads (organization_id, conversation_id, user_id)
+        VALUES (${ORG_2}, ${CONVERSATION_2}, ${USER_B})
+      `,
+      );
+      // El cursor guarda el instante completo (microsegundos).
+      const [row] = await tx<{ readUpTo: string }[]>`
+        SELECT to_char(read_up_to AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS "readUpTo"
+        FROM public.conversation_reads
+        WHERE conversation_id = ${CONVERSATION_1} AND user_id = ${USER_A}
+      `;
+      expect(row?.readUpTo).toBe("2026-11-01T12:00:00.123456");
+    });
+  });
+
+  it("no se borra una conversación con cursores; borrar un usuario borra sus cursores", async () => {
+    await inRolledBackTransaction(db.admin, async (tx) => {
+      await seedConversations(tx);
+      await tx`
+        INSERT INTO public.conversation_reads (organization_id, conversation_id, user_id, read_up_to)
+        VALUES (${ORG_1}, ${CONVERSATION_1}, ${USER_B}, ${READ_UP_TO})
+      `;
+      await expectSqlError(
+        tx,
+        "23503",
+        (sp) => sp`
+        DELETE FROM public.conversations WHERE id = ${CONVERSATION_1}
+      `,
+      );
+      await tx`DELETE FROM auth.users WHERE id = ${USER_B}`;
+      const [reads] = await tx<{ count: number }[]>`
+        SELECT count(*)::int AS count FROM public.conversation_reads
+      `;
+      expect(reads?.count).toBe(0);
     });
   });
 });
@@ -1127,6 +1260,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
     );
     expect(tenantScoped.map((t) => t.table)).toEqual([
       "contacts",
+      "conversation_reads",
       "conversations",
       "memberships",
       "messages",

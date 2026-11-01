@@ -139,6 +139,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ]);
   });
 
@@ -368,6 +369,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.test-drives",
         "schema.quotes",
         "schema.whatsapp-outbound",
+        "schema.conversation-reads",
         "private.schema",
         "private.user_org_ids",
         "app_runtime.attributes",
@@ -933,6 +935,69 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta cursores legibles por otros miembros, marcar visto ejecutable por anon o sin sus reglas, sin el índice de los no leídos o con el perfil en RESTRICT (Hito 12B, DEC-044)", async () => {
+    await migrated.admin.unsafe(`
+      ALTER POLICY conversation_reads_select_own ON public.conversation_reads
+        USING (organization_id IN (SELECT private.user_org_ids()));
+    `);
+    try {
+      const sql = connect(migrated.migrationUrl);
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      await sql.end({ timeout: 5 });
+      expect(findings.filter((f) => !f.ok).map((f) => f.check)).toEqual([
+        "rls.policies",
+      ]);
+    } finally {
+      await migrated.admin.unsafe(`
+        ALTER POLICY conversation_reads_select_own ON public.conversation_reads
+          USING (organization_id IN (SELECT private.user_org_ids()) AND user_id = (SELECT auth.uid()));
+      `);
+    }
+
+    const signature = "private.mark_conversation_read(uuid, uuid, uuid)";
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef(${signature}::regprocedure) AS definition
+    `;
+    for (const [broken, restore] of [
+      [
+        `GRANT EXECUTE ON FUNCTION ${signature} TO anon`,
+        `REVOKE EXECUTE ON FUNCTION ${signature} FROM anon`,
+      ],
+      [
+        current!.definition.replace(/read_not_member/g, "no guard"),
+        current!.definition,
+      ],
+      [
+        "DROP INDEX public.messages_organization_id_conversation_id_idx",
+        "CREATE INDEX messages_organization_id_conversation_id_idx ON public.messages USING btree (organization_id, conversation_id, created_at) WHERE (conversation_id IS NOT NULL)",
+      ],
+      [
+        "ALTER TABLE public.conversation_reads DROP CONSTRAINT conversation_reads_user_id_profiles_id_fk; ALTER TABLE public.conversation_reads ADD CONSTRAINT conversation_reads_user_id_profiles_id_fk FOREIGN KEY (user_id) REFERENCES public.profiles (id) ON DELETE RESTRICT",
+        "ALTER TABLE public.conversation_reads DROP CONSTRAINT conversation_reads_user_id_profiles_id_fk; ALTER TABLE public.conversation_reads ADD CONSTRAINT conversation_reads_user_id_profiles_id_fk FOREIGN KEY (user_id) REFERENCES public.profiles (id) ON DELETE CASCADE",
+      ],
+    ] as const) {
+      await migrated.admin.unsafe(broken);
+      try {
+        const sql = connect(migrated.migrationUrl);
+        const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+        await sql.end({ timeout: 5 });
+        expect(
+          findings.filter((f) => !f.ok).map((f) => f.check),
+          broken.slice(0, 60),
+        ).toEqual(["schema.conversation-reads"]);
+      } finally {
+        await migrated.admin.unsafe(restore);
+      }
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("la verificación detecta el trigger de estados deshabilitado, sin sus reglas o una FK de la prueba que no es compuesta (Hito 9, DEC-041)", async () => {
     const signature = "private.enforce_test_drive_status_transition()";
     const [current] = await migrated.admin<{ definition: string }[]>`
@@ -984,9 +1049,9 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-043): 0017 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 10 (0000 a 0016) si
- * 0016 ya se aplicó; si no, en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * El próximo rollout real (DEC-044): 0018 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 11 (0000 a 0017) si
+ * 0017 ya se aplicó; si no, en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
@@ -1010,6 +1075,7 @@ describe.each([
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ],
   },
   {
@@ -1027,6 +1093,7 @@ describe.each([
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ],
   },
   {
@@ -1043,6 +1110,7 @@ describe.each([
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ],
   },
   {
@@ -1058,6 +1126,7 @@ describe.each([
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ],
   },
   {
@@ -1072,6 +1141,7 @@ describe.each([
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ],
   },
   {
@@ -1085,6 +1155,7 @@ describe.each([
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ],
   },
   {
@@ -1097,6 +1168,7 @@ describe.each([
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ],
   },
   {
@@ -1108,28 +1180,44 @@ describe.each([
       "0015_test_drives",
       "0016_quotes",
       "0017_dashboard_indexes",
+      "0018_conversation_reads",
     ],
   },
   {
     stagingAt: "0014_whatsapp_outbound",
     label: "Hito 8",
     applied: 15,
-    expected: ["0015_test_drives", "0016_quotes", "0017_dashboard_indexes"],
+    expected: [
+      "0015_test_drives",
+      "0016_quotes",
+      "0017_dashboard_indexes",
+      "0018_conversation_reads",
+    ],
   },
   {
     stagingAt: "0015_test_drives",
     label: "Hito 9",
     applied: 16,
-    expected: ["0016_quotes", "0017_dashboard_indexes"],
+    expected: [
+      "0016_quotes",
+      "0017_dashboard_indexes",
+      "0018_conversation_reads",
+    ],
   },
   {
     stagingAt: "0016_quotes",
     label: "Hito 10",
     applied: 17,
-    expected: ["0017_dashboard_indexes"],
+    expected: ["0017_dashboard_indexes", "0018_conversation_reads"],
+  },
+  {
+    stagingAt: "0017_dashboard_indexes",
+    label: "Hito 11",
+    applied: 18,
+    expected: ["0018_conversation_reads"],
   },
 ])(
-  "staging en $label: rollout hasta 0017",
+  "staging en $label: rollout hasta 0018",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

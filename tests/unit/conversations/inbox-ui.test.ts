@@ -13,24 +13,36 @@ import {
 import {
   inboxItems,
   threadContact,
+  threadRead,
   type Inbox,
   type InboxThread,
+  type ThreadMessageRow,
 } from "@/domains/conversations/inbox";
 import { conversationOpportunity } from "@/domains/conversations/opportunity-link";
 import { SEND_MESSAGE_ERRORS } from "@/domains/conversations/outbound";
+import { NO_READ_CURSOR } from "@/domains/conversations/read-state";
 import { threadSections } from "@/domains/conversations/thread-layout";
 
 /*
  * UI de la bandeja (Hito 8, DEC-040 §1; Hito 12, DEC-044), renderizada en el
  * servidor sin DOM: las dos columnas y el maestro/detalle de teléfono, la
  * elegida, las burbujas entrantes y salientes por día y en grupos, el estado
- * de entrega, la oportunidad del contacto, los estados vacíos y el aviso de
+ * de entrega, la oportunidad del contacto, los no leídos (contador de la
+ * lista y separador "Mensajes nuevos"), los estados vacíos y el aviso de
  * cada respuesta del endpoint. El envío real se prueba en
- * tests/unit/conversations/send.test.ts y tests/db/whatsapp-outbound.test.ts.
+ * tests/unit/conversations/send.test.ts y tests/db/whatsapp-outbound.test.ts;
+ * marcar visto, en tests/unit/conversations/read-action.test.ts y
+ * tests/db/conversation-reads.test.ts.
  */
+
+const mocks = vi.hoisted(() => ({ markConversationRead: vi.fn() }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+}));
+// Marcar visto es una Server Action: renderizar nunca la llama.
+vi.mock("@/lib/conversations/read", () => ({
+  markConversationRead: mocks.markConversationRead,
 }));
 
 const VIEWER = "00000000-0000-4000-8000-00000000000c";
@@ -49,12 +61,14 @@ const conversations = inboxItems(
       contactName: "Ramón Benítez",
       lastMessageAt: new Date("2026-10-29T15:32:00Z"),
       lastMessagePreview: "Sí, sigue disponible",
+      unread: 3,
     },
     {
       id: SECOND,
       contactName: "Ana Ríos",
       lastMessageAt: null,
       lastMessagePreview: null,
+      unread: 0,
     },
   ],
   NOW,
@@ -74,6 +88,49 @@ function render(inbox: Inbox): string {
   );
 }
 
+const THREAD_ROWS: readonly ThreadMessageRow[] = [
+  {
+    id: "m0",
+    direction: "inbound",
+    content: "Hola, vi la Hilux en Marketplace",
+    recordedBy: null,
+    sentAt: new Date("2026-10-28T13:00:00Z"),
+    createdAt: new Date("2026-10-28T13:00:01Z"),
+  },
+  {
+    id: "m1",
+    direction: "inbound",
+    content: "¿Sigue disponible la Hilux?",
+    recordedBy: null,
+    sentAt: new Date("2026-10-29T15:30:00Z"),
+    createdAt: new Date("2026-10-29T15:30:01Z"),
+  },
+  {
+    id: "m2",
+    direction: "outbound",
+    content: "Sí, sigue disponible",
+    recordedBy: VIEWER,
+    sentAt: new Date("2026-10-29T15:31:00Z"),
+    createdAt: new Date("2026-10-29T15:31:00Z"),
+  },
+  {
+    id: "m3",
+    direction: "outbound",
+    content: "Te paso la ficha",
+    recordedBy: OTHER,
+    sentAt: new Date("2026-10-29T15:32:00Z"),
+    createdAt: new Date("2026-10-29T15:32:00Z"),
+  },
+  {
+    id: "m4",
+    direction: "outbound",
+    content: "Y las fotos",
+    recordedBy: OTHER,
+    sentAt: new Date("2026-10-29T15:33:00Z"),
+    createdAt: new Date("2026-10-29T15:33:00Z"),
+  },
+];
+
 const foundThread: Extract<InboxThread, { kind: "found" }> = {
   kind: "found",
   conversationId: SELECTED,
@@ -88,52 +145,12 @@ const foundThread: Extract<InboxThread, { kind: "found" }> = {
     ],
     1,
   ),
-  sections: threadSections(
-    [
-      {
-        id: "m0",
-        direction: "inbound",
-        content: "Hola, vi la Hilux en Marketplace",
-        recordedBy: null,
-        sentAt: new Date("2026-10-28T13:00:00Z"),
-        createdAt: new Date("2026-10-28T13:00:01Z"),
-      },
-      {
-        id: "m1",
-        direction: "inbound",
-        content: "¿Sigue disponible la Hilux?",
-        recordedBy: null,
-        sentAt: new Date("2026-10-29T15:30:00Z"),
-        createdAt: new Date("2026-10-29T15:30:01Z"),
-      },
-      {
-        id: "m2",
-        direction: "outbound",
-        content: "Sí, sigue disponible",
-        recordedBy: VIEWER,
-        sentAt: new Date("2026-10-29T15:31:00Z"),
-        createdAt: new Date("2026-10-29T15:31:00Z"),
-      },
-      {
-        id: "m3",
-        direction: "outbound",
-        content: "Te paso la ficha",
-        recordedBy: OTHER,
-        sentAt: new Date("2026-10-29T15:32:00Z"),
-        createdAt: new Date("2026-10-29T15:32:00Z"),
-      },
-      {
-        id: "m4",
-        direction: "outbound",
-        content: "Y las fotos",
-        recordedBy: OTHER,
-        sentAt: new Date("2026-10-29T15:33:00Z"),
-        createdAt: new Date("2026-10-29T15:33:00Z"),
-      },
-    ],
-    VIEWER,
-    NOW,
-  ),
+  sections: threadSections(THREAD_ROWS, VIEWER, NOW),
+  // Vos respondiste después de los entrantes: responder es leer.
+  read: threadRead(THREAD_ROWS, {
+    readUpTo: null,
+    lastOwnReplyAt: new Date("2026-10-29T15:31:00Z"),
+  }),
   shown: 5,
   total: 5,
 };
@@ -176,17 +193,17 @@ describe("bandeja", () => {
     const html = render(found);
     const bubbles = [
       ...html.matchAll(
-        /<li data-direction="(\w+)" data-position="(\w+)" class="flex ([\w-]+)/g,
+        /<li data-direction="(\w+)" data-position="(\w+)"[^>]*>.*?(self-start|self-end)/g,
       ),
     ].map((match) => [match[1], match[2], match[3]]);
 
     expect(bubbles).toEqual([
-      ["inbound", "single", "justify-start"],
-      ["inbound", "single", "justify-start"],
-      ["outbound", "single", "justify-end"],
+      ["inbound", "single", "self-start"],
+      ["inbound", "single", "self-start"],
+      ["outbound", "single", "self-end"],
       // Dos seguidos de "Otro miembro": un grupo.
-      ["outbound", "first", "justify-end"],
-      ["outbound", "last", "justify-end"],
+      ["outbound", "first", "self-end"],
+      ["outbound", "last", "self-end"],
     ]);
     expect(html).toContain("Mensaje recibido");
     expect(html).toContain("Mensaje enviado");
@@ -271,6 +288,82 @@ describe("bandeja", () => {
     expect(html).toContain('data-opportunity="none"');
     expect(html).toContain("Sin oportunidad abierta.");
     expect(html).not.toContain("/opportunities/");
+  });
+
+  it("no leídos: el contador de quien mira, con el texto para lectores de pantalla, y el nombre en negrita", () => {
+    const html = render({
+      conversations,
+      total: 2,
+      selectedId: null,
+      thread: { kind: "none" },
+    });
+    expect(html.match(/<li data-unread="3"/g)).toHaveLength(1);
+    expect(html).toMatch(
+      /<span data-unread="3"[^>]*class="[^"]*bg-brand[^"]*"[^>]*><span aria-hidden="true">3<\/span><span class="sr-only">3 mensajes sin leer<\/span><\/span>/,
+    );
+    // Radix Tooltip: el disparador es el contador, cerrado al renderizar.
+    expect(html).toMatch(/<span data-unread="3"[^>]*data-state="closed"/);
+    expect(html).toMatch(/font-bold text-text-primary">Ramón Benítez</);
+    // Leída: sin contador y sin negrita.
+    expect(html).toMatch(/font-medium text-text-primary">Ana Ríos</);
+    expect(html.match(/mensajes? sin leer/g)).toHaveLength(1);
+  });
+
+  it("no leídos: 99+ desde 100, con la cantidad completa en texto", () => {
+    const html = render({
+      conversations: inboxItems(
+        [
+          {
+            id: SECOND,
+            contactName: "Ana Ríos",
+            lastMessageAt: new Date("2026-10-29T15:32:00Z"),
+            lastMessagePreview: "¿Y el precio?",
+            unread: 142,
+          },
+        ],
+        NOW,
+      ),
+      total: 1,
+      selectedId: null,
+      thread: { kind: "none" },
+    });
+    expect(html).toContain('<span aria-hidden="true">99+</span>');
+    expect(html).toContain(
+      '<span class="sr-only">142 mensajes sin leer</span>',
+    );
+  });
+
+  it("no leídos: la elegida no muestra el contador, porque está a la vista", () => {
+    const html = render(found);
+    expect(html).not.toContain('data-unread="3"');
+    expect(html).not.toContain("mensajes sin leer");
+    expect(html).toMatch(/font-semibold text-brand-strong">Ramón Benítez</);
+  });
+
+  it("el separador Mensajes nuevos va antes del primer entrante sin leer, una sola vez", () => {
+    const html = render({
+      ...found,
+      thread: {
+        ...foundThread,
+        read: threadRead(THREAD_ROWS, NO_READ_CURSOR),
+      },
+    });
+    expect(
+      html.match(/role="separator" aria-label="Mensajes nuevos"/g),
+    ).toHaveLength(1);
+    const divider = html.indexOf('aria-label="Mensajes nuevos"');
+    expect(divider).toBeLessThan(
+      html.indexOf("Hola, vi la Hilux en Marketplace"),
+    );
+    expect(divider).toBeGreaterThan(html.indexOf('id="inbox-day-2026-10-28"'));
+    // Renderizar no marca nada: lo hace el historial en el navegador.
+    expect(mocks.markConversationRead).not.toHaveBeenCalled();
+  });
+
+  it("sin no leídos en la conversación no hay separador", () => {
+    const html = render(found);
+    expect(html).not.toContain("Mensajes nuevos");
+    expect(mocks.markConversationRead).not.toHaveBeenCalled();
   });
 
   it("teléfono: sin elección se ve solo la lista; con una elegida, solo el chat con Volver", () => {

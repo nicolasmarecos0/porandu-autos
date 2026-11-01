@@ -25,7 +25,8 @@ import { seedVehicles, VEHICLES } from "./support/vehicles";
 const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
 
 /*
- * Reversión de 0017_dashboard_indexes, 0016_quotes, 0015_test_drives,
+ * Reversión de 0018_conversation_reads, 0017_dashboard_indexes, 0016_quotes,
+ * 0015_test_drives,
  * 0014_whatsapp_outbound,
  * 0013_whatsapp_ingestion,
  * 0012_team_settings,
@@ -60,6 +61,13 @@ function function0009(): Promise<string> {
 function function0010(): Promise<string> {
   return stageFunctionOf("0010_opportunity_closure_metadata.sql");
 }
+
+const REVERT_0018 = `
+  DROP FUNCTION private.mark_conversation_read(uuid, uuid, uuid);
+  DROP TABLE public.conversation_reads;
+  DROP INDEX public.messages_organization_id_conversation_id_idx;
+  ALTER TABLE public.conversations DROP CONSTRAINT conversations_organization_id_id_key;
+`;
 
 const REVERT_0017 = `
   DROP INDEX public.opportunities_organization_id_closed_at_idx;
@@ -303,9 +311,10 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     expect(owners?.owners).toEqual(["postgres"]);
   });
 
-  it("crea solo las tablas de H0, H1.1, H1.3A, H1.4, Hito 2, Hito 4, Hito 7, Hito 9 e Hito 10 en public (H1.2 no agrega tablas)", async () => {
+  it("crea solo las tablas de H0, H1.1, H1.3A, H1.4, Hito 2, Hito 4, Hito 7, Hito 9, Hito 10 e Hito 12B en public (H1.2 no agrega tablas)", async () => {
     expect(await tableNames(db.admin, "public")).toEqual([
       "contacts",
+      "conversation_reads",
       "conversations",
       "memberships",
       "messages",
@@ -321,14 +330,14 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     ]);
   });
 
-  it("registra 0000 a 0017 en el historial de drizzle", async () => {
-    expect(await appliedMigrations()).toBe(18);
+  it("registra 0000 a 0018 en el historial de drizzle", async () => {
+    expect(await appliedMigrations()).toBe(19);
   });
 
   it("volver a migrar no cambia nada", async () => {
     await runMigrations(db.migrationUrl);
 
-    expect(await appliedMigrations()).toBe(18);
+    expect(await appliedMigrations()).toBe(19);
     expect(await catalogSnapshot(db.admin)).toEqual(afterMigration);
   });
 
@@ -355,6 +364,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
       "0015_test_drives.sql",
       "0016_quotes.sql",
       "0017_dashboard_indexes.sql",
+      "0018_conversation_reads.sql",
     ]);
     for (const file of files) {
       const content = await readFile(new URL(file, MIGRATIONS_DIR), "utf8");
@@ -368,6 +378,7 @@ describe("migraciones desde cero (PostgreSQL 17)", () => {
     try {
       // La reversión corre con la credencial de migración, dueña de todo.
       await revert.begin(async (tx) => {
+        await tx.unsafe(REVERT_0018);
         await tx.unsafe(REVERT_0017);
         await tx.unsafe(REVERT_0016);
         await tx.unsafe(REVERT_0015);
@@ -514,7 +525,7 @@ describe("0002 sobre una base en Foundation", () => {
     expect(await foundationCount(foundation.admin)).toEqual({
       organizations: 3,
       memberships: MEMBERSHIPS.length,
-      history: 18,
+      history: 19,
     });
     expect(await catalogSnapshot(foundation.admin)).toEqual(afterMigration);
   });
@@ -623,7 +634,7 @@ describe("0003 sobre una base en H1.1", () => {
     const [history] = await h11.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
     `;
-    expect(history?.count).toBe(18);
+    expect(history?.count).toBe(19);
     expect(await h11Snapshot(h11.admin)).toEqual(before);
     // Sin backfill: los contactos existentes quedan sin teléfono normalizado.
     const [normalized] = await h11.admin<{ count: number }[]>`
@@ -758,7 +769,7 @@ describe("0004 sobre una base en H1.2", () => {
 
     await runMigrations(h12.migrationUrl);
 
-    expect(await history(h12.admin)).toBe(18);
+    expect(await history(h12.admin)).toBe(19);
     expect(await h12Snapshot(h12.admin)).toEqual(before);
     // Sin seeds: vehicles nace vacía.
     const [vehicles] = await h12.admin<{ count: number }[]>`
@@ -902,7 +913,7 @@ describe("0005 sobre una base en H1.3A", () => {
 
     await runMigrations(h13a.migrationUrl);
 
-    expect(await history(h13a.admin)).toBe(18);
+    expect(await history(h13a.admin)).toBe(19);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13aSnapshot(h13a.admin)).toEqual(before);
     expect(await vehiclePolicies(h13a.admin)).toEqual([
@@ -1068,7 +1079,7 @@ describe("0006 sobre una base en H1.3B", () => {
 
     await runMigrations(h13b.migrationUrl);
 
-    expect(await history(h13b.admin)).toBe(18);
+    expect(await history(h13b.admin)).toBe(19);
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13bSnapshot(h13b.admin)).toEqual(before);
     expect(await vehiclePolicies(h13b.admin)).toEqual([
@@ -1242,7 +1253,7 @@ describe("0007 sobre una base en H1.3C (staging hoy)", () => {
 
     await runMigrations(h13c.migrationUrl);
 
-    expect(await history(h13c.admin)).toBe(18);
+    expect(await history(h13c.admin)).toBe(19);
     // Ninguna fila cambia: interest_model e interest_version quedan como
     // legado de solo lectura.
     expect(await h13cSnapshot(h13c.admin)).toEqual(before);
@@ -1398,7 +1409,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
 
     await runMigrations(h14.migrationUrl);
 
-    expect(await history(h14.admin)).toBe(18);
+    expect(await history(h14.admin)).toBe(19);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia.
     expect(await h14Snapshot(h14.admin)).toEqual(before);
     const [reasons] = await h14.admin<{ count: number }[]>`
@@ -1455,7 +1466,7 @@ describe("0008 sobre una base en H1.4/H1.5", () => {
       UPDATE public.opportunities SET stage = 'new' WHERE id = ${OPPORTUNITIES[0]!.id}
     `;
     await runMigrations(h14.migrationUrl);
-    expect(await history(h14.admin)).toBe(18);
+    expect(await history(h14.admin)).toBe(19);
     expect(await catalogSnapshot(h14.admin)).toEqual(afterMigration);
   });
 
@@ -1690,7 +1701,7 @@ describe("0009 sobre una base en H1.6", () => {
 
     await runMigrations(h16.migrationUrl);
 
-    expect(await history(h16.admin)).toBe(18);
+    expect(await history(h16.admin)).toBe(19);
     // Ninguna fila cambia: ni etapas, ni timestamps, ni recencia, ni stock.
     expect(await h16Snapshot(h16.admin)).toEqual(before);
     const [linked] = await h16.admin<{ count: number }[]>`
@@ -1944,7 +1955,7 @@ describe("0010 sobre una base en el Hito 2", () => {
 
     await runMigrations(hito2.migrationUrl);
 
-    expect(await history(hito2.admin)).toBe(18);
+    expect(await history(hito2.admin)).toBe(19);
     // Ninguna fila cambia: ni etapas, ni motivos, ni timestamps, ni stock.
     expect(await hito2Snapshot(hito2.admin)).toEqual(before);
     const [metadata] = await hito2.admin<{ count: number }[]>`
@@ -1987,7 +1998,7 @@ describe("0010 sobre una base en el Hito 2", () => {
     // Quien lo decide la corrige a mano (acá, la descarta) y 0010 se aplica.
     await hito2.admin`DELETE FROM public.opportunities WHERE id = ${won}`;
     await runMigrations(hito2.migrationUrl);
-    expect(await history(hito2.admin)).toBe(18);
+    expect(await history(hito2.admin)).toBe(19);
     expect(await catalogSnapshot(hito2.admin)).toEqual(afterMigration);
   });
 
@@ -2023,7 +2034,7 @@ describe("0010 sobre una base en el Hito 2", () => {
         await tx`ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_stage_transition`;
       });
       await runMigrations(hito2.migrationUrl);
-      expect(await history(hito2.admin)).toBe(18);
+      expect(await history(hito2.admin)).toBe(19);
       expect(await catalogSnapshot(hito2.admin)).toEqual(afterMigration);
     },
   );
@@ -2173,7 +2184,7 @@ describe("0010 sobre una base en el Hito 2", () => {
 
       await runMigrations(hito2.migrationUrl);
 
-      expect(await history(hito2.admin)).toBe(18);
+      expect(await history(hito2.admin)).toBe(19);
       expect(
         await hito2.admin`
           SELECT to_jsonb(op) AS row FROM public.opportunities op ORDER BY op.id
@@ -2206,7 +2217,7 @@ describe("0010 sobre una base en el Hito 2", () => {
       // La transacción se revirtió: el CHECK de motivos que la segunda
       // pasada borró antes de fallar sigue ahí, igual que todo lo demás.
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
     });
 
     it("se revierte sola al catálogo del Hito 2 y se vuelve a aplicar idéntica", async () => {
@@ -2241,7 +2252,7 @@ describe("0010 sobre una base en el Hito 2", () => {
       expect(await history(fresh.admin)).toBe(10);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -2319,7 +2330,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
 
     await runMigrations(hito2a.migrationUrl);
 
-    expect(await history(hito2a.admin)).toBe(18);
+    expect(await history(hito2a.admin)).toBe(19);
     // Ninguna fila cambia: ni la recencia, ni updated_at, ni las notas.
     expect(await hito2aSnapshot(hito2a.admin)).toEqual(before);
     const [messages] = await hito2a.admin<{ count: number }[]>`
@@ -2517,7 +2528,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
 
       await runMigrations(hito2a.migrationUrl);
 
-      expect(await history(hito2a.admin)).toBe(18);
+      expect(await history(hito2a.admin)).toBe(19);
       expect(await hito2aSnapshot(hito2a.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito2a.admin)).toEqual(catalog);
     });
@@ -2545,7 +2556,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
     });
 
     it("se revierte sola al catálogo del Hito 2A y se vuelve a aplicar idéntica", async () => {
@@ -2564,6 +2575,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
         await owner.begin(async (tx) => {
           // 0015, 0014, 0013 y 0012 se revierten antes: dependen de lo que
           // deja 0011 o son posteriores.
+          await tx.unsafe(REVERT_0018);
           await tx.unsafe(REVERT_0017);
           await tx.unsafe(REVERT_0016);
           await tx.unsafe(REVERT_0015);
@@ -2576,7 +2588,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
             DELETE FROM drizzle.__drizzle_migrations
             WHERE created_at >= (
               SELECT created_at FROM drizzle.__drizzle_migrations
-              ORDER BY created_at DESC OFFSET 6 LIMIT 1
+              ORDER BY created_at DESC OFFSET 7 LIMIT 1
             )
           `);
         });
@@ -2587,7 +2599,7 @@ describe("0011 sobre una base en el Hito 2A", () => {
       expect(await history(fresh.admin)).toBe(11);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -2672,7 +2684,7 @@ describe("0012 sobre una base en el Hito 5", () => {
 
     await runMigrations(hito5.migrationUrl);
 
-    expect(await history(hito5.admin)).toBe(18);
+    expect(await history(hito5.admin)).toBe(19);
     // Ninguna fila cambia: ni nombres, ni roles, ni timestamps.
     expect(await teamSnapshot(hito5.admin)).toEqual(before);
     const currencies = await hito5.admin<{ currency: string }[]>`
@@ -2703,7 +2715,7 @@ describe("0012 sobre una base en el Hito 5", () => {
     // Corregido a mano (decisión humana, no de la migración), se aplica.
     await hito5.admin`UPDATE public.organizations SET name = 'Con espacios' WHERE id = ${ORG_1}`;
     await runMigrations(hito5.migrationUrl);
-    expect(await history(hito5.admin)).toBe(18);
+    expect(await history(hito5.admin)).toBe(19);
   });
 
   /*
@@ -2879,7 +2891,7 @@ describe("0012 sobre una base en el Hito 5", () => {
 
       await runMigrations(hito5.migrationUrl);
 
-      expect(await history(hito5.admin)).toBe(18);
+      expect(await history(hito5.admin)).toBe(19);
       expect(await teamSnapshot(hito5.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito5.admin)).toEqual(catalog);
     });
@@ -2907,7 +2919,7 @@ describe("0012 sobre una base en el Hito 5", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
     });
 
     it("se revierte sola al catálogo del Hito 5 y se vuelve a aplicar idéntica", async () => {
@@ -2926,6 +2938,7 @@ describe("0012 sobre una base en el Hito 5", () => {
         await owner.begin(async (tx) => {
           // 0015, 0014 y 0013 se revierten antes: son posteriores a 0012
           // (DEC-039, DEC-040, DEC-041).
+          await tx.unsafe(REVERT_0018);
           await tx.unsafe(REVERT_0017);
           await tx.unsafe(REVERT_0016);
           await tx.unsafe(REVERT_0015);
@@ -2936,7 +2949,7 @@ describe("0012 sobre una base en el Hito 5", () => {
             DELETE FROM drizzle.__drizzle_migrations
             WHERE created_at >= (
               SELECT created_at FROM drizzle.__drizzle_migrations
-              ORDER BY created_at DESC OFFSET 5 LIMIT 1
+              ORDER BY created_at DESC OFFSET 6 LIMIT 1
             )
           `);
         });
@@ -2947,7 +2960,7 @@ describe("0012 sobre una base en el Hito 5", () => {
       expect(await history(fresh.admin)).toBe(12);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -3047,7 +3060,7 @@ describe("0013 sobre una base en el Hito 6", () => {
 
     await runMigrations(hito6.migrationUrl);
 
-    expect(await history(hito6.admin)).toBe(18);
+    expect(await history(hito6.admin)).toBe(19);
     expect(await hito6Snapshot(hito6.admin)).toEqual(before);
     // Las columnas nuevas nacen NULL: el mensaje sigue siendo de su autor.
     const messages = await hito6.admin`
@@ -3245,7 +3258,7 @@ describe("0013 sobre una base en el Hito 6", () => {
 
       await runMigrations(hito6.migrationUrl);
 
-      expect(await history(hito6.admin)).toBe(18);
+      expect(await history(hito6.admin)).toBe(19);
       expect(await hito6Snapshot(hito6.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito6.admin)).toEqual(catalog);
     });
@@ -3273,7 +3286,7 @@ describe("0013 sobre una base en el Hito 6", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
     });
 
     it("se revierte sola al catálogo del Hito 6 y se vuelve a aplicar idéntica", async () => {
@@ -3292,6 +3305,7 @@ describe("0013 sobre una base en el Hito 6", () => {
         await owner.begin(async (tx) => {
           // 0015 y 0014 se revierten antes: son posteriores a 0013
           // (DEC-040, DEC-041).
+          await tx.unsafe(REVERT_0018);
           await tx.unsafe(REVERT_0017);
           await tx.unsafe(REVERT_0016);
           await tx.unsafe(REVERT_0015);
@@ -3301,7 +3315,7 @@ describe("0013 sobre una base en el Hito 6", () => {
             DELETE FROM drizzle.__drizzle_migrations
             WHERE created_at >= (
               SELECT created_at FROM drizzle.__drizzle_migrations
-              ORDER BY created_at DESC OFFSET 4 LIMIT 1
+              ORDER BY created_at DESC OFFSET 5 LIMIT 1
             )
           `);
         });
@@ -3312,7 +3326,7 @@ describe("0013 sobre una base en el Hito 6", () => {
       expect(await history(fresh.admin)).toBe(13);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -3423,7 +3437,7 @@ describe("0014 sobre una base en el Hito 7", () => {
 
     await runMigrations(hito7.migrationUrl);
 
-    expect(await history(hito7.admin)).toBe(18);
+    expect(await history(hito7.admin)).toBe(19);
     expect(await hito7Snapshot(hito7.admin)).toEqual(before);
     expect(await hito8Objects(hito7.admin)).toEqual({
       send: true,
@@ -3594,7 +3608,7 @@ describe("0014 sobre una base en el Hito 7", () => {
 
       await runMigrations(hito7.migrationUrl);
 
-      expect(await history(hito7.admin)).toBe(18);
+      expect(await history(hito7.admin)).toBe(19);
       expect(await hito7Snapshot(hito7.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito7.admin)).toEqual(catalog);
     });
@@ -3623,7 +3637,7 @@ describe("0014 sobre una base en el Hito 7", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
     });
 
     it("se revierte sola al catálogo del Hito 7 y se vuelve a aplicar idéntica", async () => {
@@ -3641,6 +3655,7 @@ describe("0014 sobre una base en el Hito 7", () => {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
           // 0015 se revierte antes: es posterior a 0014 (DEC-041).
+          await tx.unsafe(REVERT_0018);
           await tx.unsafe(REVERT_0017);
           await tx.unsafe(REVERT_0016);
           await tx.unsafe(REVERT_0015);
@@ -3649,7 +3664,7 @@ describe("0014 sobre una base en el Hito 7", () => {
             DELETE FROM drizzle.__drizzle_migrations
             WHERE created_at >= (
               SELECT created_at FROM drizzle.__drizzle_migrations
-              ORDER BY created_at DESC OFFSET 3 LIMIT 1
+              ORDER BY created_at DESC OFFSET 4 LIMIT 1
             )
           `);
         });
@@ -3660,7 +3675,7 @@ describe("0014 sobre una base en el Hito 7", () => {
       expect(await history(fresh.admin)).toBe(14);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -3721,7 +3736,7 @@ describe("0015 sobre una base en el Hito 8", () => {
     return base;
   }
 
-  it("pnpm db:migrate aplica 0015 (y 0016 y 0017), conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0015 (y 0016 a 0018), conserva los datos y deja el mismo catálogo", async () => {
     const hito8 = await hito8Base();
     const before = await hito8Snapshot(hito8.admin);
     expect(await history(hito8.admin)).toBe(15);
@@ -3729,7 +3744,7 @@ describe("0015 sobre una base en el Hito 8", () => {
 
     await runMigrations(hito8.migrationUrl);
 
-    expect(await history(hito8.admin)).toBe(18);
+    expect(await history(hito8.admin)).toBe(19);
     expect(await hito8Snapshot(hito8.admin)).toEqual(before);
     expect(await hito9Exists(hito8.admin)).toBe(true);
     expect(await catalogSnapshot(hito8.admin)).toEqual(afterMigration);
@@ -3856,7 +3871,7 @@ describe("0015 sobre una base en el Hito 8", () => {
 
       await runMigrations(hito8.migrationUrl);
 
-      expect(await history(hito8.admin)).toBe(18);
+      expect(await history(hito8.admin)).toBe(19);
       expect(await hito8Snapshot(hito8.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito8.admin)).toEqual(catalog);
     });
@@ -3884,7 +3899,7 @@ describe("0015 sobre una base en el Hito 8", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
     });
 
     it("se revierte sola al catálogo del Hito 8 y se vuelve a aplicar idéntica", async () => {
@@ -3901,6 +3916,7 @@ describe("0015 sobre una base en el Hito 8", () => {
       try {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
+          await tx.unsafe(REVERT_0018);
           await tx.unsafe(REVERT_0017);
           await tx.unsafe(REVERT_0016);
           await tx.unsafe(REVERT_0015);
@@ -3908,7 +3924,7 @@ describe("0015 sobre una base en el Hito 8", () => {
             DELETE FROM drizzle.__drizzle_migrations
             WHERE created_at >= (
               SELECT created_at FROM drizzle.__drizzle_migrations
-              ORDER BY created_at DESC OFFSET 2 LIMIT 1
+              ORDER BY created_at DESC OFFSET 3 LIMIT 1
             )
           `);
         });
@@ -3919,7 +3935,7 @@ describe("0015 sobre una base en el Hito 8", () => {
       expect(await history(fresh.admin)).toBe(15);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -3982,7 +3998,7 @@ describe("0016 sobre una base en el Hito 9", () => {
     return base;
   }
 
-  it("pnpm db:migrate aplica 0016 (y 0017), conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0016 (y 0017 y 0018), conserva los datos y deja el mismo catálogo", async () => {
     const hito9 = await hito9Base();
     const before = await hito9Snapshot(hito9.admin);
     expect(await history(hito9.admin)).toBe(16);
@@ -3990,7 +4006,7 @@ describe("0016 sobre una base en el Hito 9", () => {
 
     await runMigrations(hito9.migrationUrl);
 
-    expect(await history(hito9.admin)).toBe(18);
+    expect(await history(hito9.admin)).toBe(19);
     expect(await hito9Snapshot(hito9.admin)).toEqual(before);
     expect(await hito10Exists(hito9.admin)).toBe(true);
     expect(await catalogSnapshot(hito9.admin)).toEqual(afterMigration);
@@ -4136,7 +4152,7 @@ describe("0016 sobre una base en el Hito 9", () => {
 
       await runMigrations(hito9.migrationUrl);
 
-      expect(await history(hito9.admin)).toBe(18);
+      expect(await history(hito9.admin)).toBe(19);
       expect(await hito9Snapshot(hito9.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito9.admin)).toEqual(catalog);
     });
@@ -4164,10 +4180,10 @@ describe("0016 sobre una base en el Hito 9", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
     });
 
-    it("se revierte (con 0017) al catálogo del Hito 9 y se vuelve a aplicar idéntica", async () => {
+    it("se revierte (con 0017 y 0018) al catálogo del Hito 9 y se vuelve a aplicar idéntica", async () => {
       const reference = await createDatabase();
       await migrateUpTo(reference.migrationUrl, HITO_9);
       const hito9Catalog = await catalogSnapshot(reference.admin);
@@ -4181,13 +4197,14 @@ describe("0016 sobre una base en el Hito 9", () => {
       try {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
+          await tx.unsafe(REVERT_0018);
           await tx.unsafe(REVERT_0017);
           await tx.unsafe(REVERT_0016);
           await tx.unsafe(`
             DELETE FROM drizzle.__drizzle_migrations
             WHERE created_at >= (
               SELECT created_at FROM drizzle.__drizzle_migrations
-              ORDER BY created_at DESC OFFSET 1 LIMIT 1
+              ORDER BY created_at DESC OFFSET 2 LIMIT 1
             )
           `);
         });
@@ -4198,7 +4215,7 @@ describe("0016 sobre una base en el Hito 9", () => {
       expect(await history(fresh.admin)).toBe(16);
 
       await runMigrations(fresh.migrationUrl);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });
@@ -4271,7 +4288,7 @@ describe("0017 sobre una base en el Hito 10", () => {
     return base;
   }
 
-  it("pnpm db:migrate aplica solo 0017, conserva los datos y deja el mismo catálogo", async () => {
+  it("pnpm db:migrate aplica 0017 (y 0018), conserva los datos y deja el mismo catálogo", async () => {
     const hito10 = await hito10Base();
     const before = await rowsSnapshot(hito10.admin);
     expect(await history(hito10.admin)).toBe(17);
@@ -4279,7 +4296,7 @@ describe("0017 sobre una base en el Hito 10", () => {
 
     await runMigrations(hito10.migrationUrl);
 
-    expect(await history(hito10.admin)).toBe(18);
+    expect(await history(hito10.admin)).toBe(19);
     expect(await rowsSnapshot(hito10.admin)).toEqual(before);
     expect(await indexDefinition(hito10.admin)).toBe(DEFINITION);
     expect(await catalogSnapshot(hito10.admin)).toEqual(afterMigration);
@@ -4292,6 +4309,7 @@ describe("0017 sobre una base en el Hito 10", () => {
 
     const fresh = await createDatabase();
     await runMigrations(fresh.migrationUrl);
+    await fresh.admin.unsafe(REVERT_0018);
     await fresh.admin.unsafe(REVERT_0017);
 
     expect(await catalogSnapshot(fresh.admin)).toEqual(hito10Catalog);
@@ -4348,7 +4366,7 @@ describe("0017 sobre una base en el Hito 10", () => {
 
       await runMigrations(hito10.migrationUrl);
 
-      expect(await history(hito10.admin)).toBe(18);
+      expect(await history(hito10.admin)).toBe(19);
       expect(await rowsSnapshot(hito10.admin)).toEqual(rows);
       expect(await catalogSnapshot(hito10.admin)).toEqual(catalog);
     });
@@ -4376,10 +4394,10 @@ describe("0017 sobre una base en el Hito 10", () => {
         await owner.end();
       }
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
-      expect(await history(fresh.admin)).toBe(18);
+      expect(await history(fresh.admin)).toBe(19);
     });
 
-    it("se revierte sola al catálogo del Hito 10 y se vuelve a aplicar idéntica", async () => {
+    it("se revierte (con 0018) al catálogo del Hito 10 y se vuelve a aplicar idéntica", async () => {
       const reference = await createDatabase();
       await migrateUpTo(reference.migrationUrl, HITO_10);
       const hito10Catalog = await catalogSnapshot(reference.admin);
@@ -4393,10 +4411,14 @@ describe("0017 sobre una base en el Hito 10", () => {
       try {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
+          await tx.unsafe(REVERT_0018);
           await tx.unsafe(REVERT_0017);
           await tx.unsafe(`
             DELETE FROM drizzle.__drizzle_migrations
-            WHERE created_at = (SELECT max(created_at) FROM drizzle.__drizzle_migrations)
+            WHERE created_at >= (
+              SELECT created_at FROM drizzle.__drizzle_migrations
+              ORDER BY created_at DESC OFFSET 1 LIMIT 1
+            )
           `);
         });
       } finally {
@@ -4406,7 +4428,325 @@ describe("0017 sobre una base en el Hito 10", () => {
       expect(await history(fresh.admin)).toBe(17);
 
       await runMigrations(fresh.migrationUrl);
+      expect(await history(fresh.admin)).toBe(19);
+      expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+    });
+  });
+});
+
+/*
+ * Una base en el Hito 11 (0000 a 0017, DEC-043) recibe 0018 (DEC-044 §2.9):
+ * conversation_reads (PK por miembro y conversación, FK compuesta a la
+ * conversación, lectura solo de las filas propias y SELECT de
+ * authenticated), la función de marcar visto, la unique (organization_id,
+ * id) de conversations y el índice parcial de los no leídos. No toca filas
+ * existentes y no siembra cursores (DEC-044 §2.6).
+ */
+describe("0018 sobre una base en el Hito 11", () => {
+  const HITO_11 = "0017_dashboard_indexes";
+  const LINE = "100000000000018";
+  const POSTCONDITION = /^DEC-044: /;
+
+  const created: TestDatabase[] = [];
+  async function createDatabase(): Promise<TestDatabase> {
+    const database = await server.createDatabase();
+    created.push(database);
+    return database;
+  }
+  afterEach(async () => {
+    for (const database of created.splice(0)) {
+      await server.dropDatabase(database);
+    }
+  });
+
+  async function history(sql: TestDatabase["admin"]): Promise<number> {
+    const [row] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations
+    `;
+    return row?.count ?? 0;
+  }
+
+  /** Lo que deja 0018, o null antes de aplicarla. */
+  async function hito12bObjects(sql: TestDatabase["admin"]) {
+    const [row] = await sql<
+      {
+        table: string | null;
+        markRead: string | null;
+        unreadIndex: string | null;
+        conversationKey: string | null;
+      }[]
+    >`
+      SELECT
+        to_regclass('public.conversation_reads')::text AS table,
+        to_regprocedure('private.mark_conversation_read(uuid, uuid, uuid)')::text AS "markRead",
+        (SELECT indexdef FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname = 'messages_organization_id_conversation_id_idx') AS "unreadIndex",
+        (SELECT conname::text FROM pg_constraint
+          WHERE conrelid = 'public.conversations'::regclass
+            AND conname = 'conversations_organization_id_id_key') AS "conversationKey"
+    `;
+    return row;
+  }
+
+  /** Las filas que 0018 no puede cambiar. */
+  async function rowsSnapshot(sql: TestDatabase["admin"]) {
+    const [snapshot] = await sql<{ data: unknown }[]>`
+      SELECT jsonb_build_object(
+        'organizations', (SELECT jsonb_agg(o ORDER BY o.id) FROM public.organizations o),
+        'memberships', (SELECT jsonb_agg(m ORDER BY m.id) FROM public.memberships m),
+        'contacts', (SELECT jsonb_agg(c ORDER BY c.id) FROM public.contacts c),
+        'opportunities', (SELECT jsonb_agg(op ORDER BY op.id) FROM public.opportunities op),
+        'conversations', (SELECT jsonb_agg(cv ORDER BY cv.id) FROM public.conversations cv),
+        'messages', (SELECT jsonb_agg(ms ORDER BY ms.id) FROM public.messages ms)
+      ) AS data
+    `;
+    return snapshot?.data;
+  }
+
+  async function hito11Base(): Promise<TestDatabase> {
+    const base = await createDatabase();
+    await migrateUpTo(base.migrationUrl, HITO_11);
+    await seedTenants(base.admin);
+    await seedOpportunities(base.admin);
+    await seedVehicles(base.admin);
+    await base.admin`
+      INSERT INTO public.whatsapp_lines (organization_id, phone_number_id)
+      VALUES (${ORG_1}, ${LINE})
+    `;
+    // Dos entrantes ingeridos: quedan sin leer para todos (sin cursores).
+    for (const [id, text] of [
+      ["wamid.HITO11.1", "Hola"],
+      ["wamid.HITO11.2", "¿Sigue disponible?"],
+    ] as const) {
+      await base.admin`
+        SELECT * FROM private.ingest_whatsapp_message(${LINE}, ${id},
+          '+595981777018', '+595981777018', 'Cliente del Hito 11', ${text},
+          ${text}, '2026-11-01T12:00:00Z')
+      `;
+    }
+    return base;
+  }
+
+  /** El bloque de postcondiciones de 0018: el último statement. */
+  async function postconditionBlock(): Promise<string> {
+    const sql = await readFile(
+      new URL("0018_conversation_reads.sql", MIGRATIONS_DIR),
+      "utf8",
+    );
+    const block = sql.split("--> statement-breakpoint").at(-1)!.trim();
+    expect(block).toMatch(/^-- Custom SQL[\s\S]*DO \$\$/);
+    return block;
+  }
+
+  it("pnpm db:migrate aplica solo 0018, conserva los datos, no siembra cursores y deja el mismo catálogo", async () => {
+    const hito11 = await hito11Base();
+    const before = await rowsSnapshot(hito11.admin);
+    expect(await history(hito11.admin)).toBe(18);
+    expect(await hito12bObjects(hito11.admin)).toEqual({
+      table: null,
+      markRead: null,
+      unreadIndex: null,
+      conversationKey: null,
+    });
+
+    await runMigrations(hito11.migrationUrl);
+
+    expect(await history(hito11.admin)).toBe(19);
+    expect(await rowsSnapshot(hito11.admin)).toEqual(before);
+    expect(await hito12bObjects(hito11.admin)).toEqual({
+      table: "conversation_reads",
+      markRead: "private.mark_conversation_read(uuid,uuid,uuid)",
+      unreadIndex:
+        "CREATE INDEX messages_organization_id_conversation_id_idx ON public.messages USING btree (organization_id, conversation_id, created_at) WHERE (conversation_id IS NOT NULL)",
+      conversationKey: "conversations_organization_id_id_key",
+    });
+    // DEC-044 §2.6: sin cursor ni respuesta propia, todo entrante está sin
+    // leer. La migración no siembra cursores.
+    const [reads] = await hito11.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.conversation_reads
+    `;
+    expect(reads?.count).toBe(0);
+    expect(await catalogSnapshot(hito11.admin)).toEqual(afterMigration);
+  });
+
+  it("solo agrega la tabla de cursores, su función, la unique de conversations y el índice de los no leídos", async () => {
+    const reference = await createDatabase();
+    await migrateUpTo(reference.migrationUrl, HITO_11);
+    const hito11Catalog = await catalogSnapshot(reference.admin);
+
+    const fresh = await createDatabase();
+    await runMigrations(fresh.migrationUrl);
+    await fresh.admin.unsafe(REVERT_0018);
+
+    expect(await catalogSnapshot(fresh.admin)).toEqual(hito11Catalog);
+  });
+
+  it("la postcondición de 0018 falla cerrada ante una lectura ajena, una escritura de miembros, FKs, índice o función inseguros", async () => {
+    const block = await postconditionBlock();
+    const fresh = await createDatabase();
+    await runMigrations(fresh.migrationUrl);
+    // Control: sobre el catálogo real, la postcondición pasa.
+    await fresh.admin.begin(async (tx) => {
+      await tx.unsafe(block);
+    });
+
+    const markRead = "private.mark_conversation_read(uuid, uuid, uuid)";
+    const ADR_001 = /^ADR-001: /;
+    // Una escritura de miembros, aun cubierta por una policy, la rechazan
+    // primero las invariantes de ADR-001 (que 0018 repite); el resto, las
+    // de DEC-044.
+    const writePolicy =
+      "CREATE POLICY conversation_reads_insert_own ON public.conversation_reads FOR INSERT TO authenticated WITH CHECK (user_id = (SELECT auth.uid()))";
+    const broken: [string, RegExp][] = [
+      // Lectura: sin el filtro del usuario, o una policy más.
+      [
+        "ALTER POLICY conversation_reads_select_own ON public.conversation_reads USING (organization_id IN (SELECT private.user_org_ids()))",
+        POSTCONDITION,
+      ],
+      [
+        "CREATE POLICY conversation_reads_select_all ON public.conversation_reads FOR SELECT TO authenticated USING (true)",
+        POSTCONDITION,
+      ],
+      [
+        "REVOKE SELECT ON public.conversation_reads FROM authenticated",
+        POSTCONDITION,
+      ],
+      // Escrituras de miembros.
+      [
+        `${writePolicy}; GRANT INSERT ON public.conversation_reads TO authenticated`,
+        ADR_001,
+      ],
+      [
+        `${writePolicy}; GRANT UPDATE (read_up_to) ON public.conversation_reads TO authenticated`,
+        ADR_001,
+      ],
+      ["GRANT DELETE ON public.conversation_reads TO authenticated", ADR_001],
+      // PK, FKs.
+      [
+        "ALTER TABLE public.conversation_reads DROP CONSTRAINT conversation_reads_pkey; ALTER TABLE public.conversation_reads ADD CONSTRAINT conversation_reads_pkey PRIMARY KEY (organization_id, user_id, conversation_id)",
+        POSTCONDITION,
+      ],
+      [
+        "ALTER TABLE public.conversation_reads DROP CONSTRAINT conversation_reads_conversation_fk",
+        POSTCONDITION,
+      ],
+      [
+        "ALTER TABLE public.conversation_reads DROP CONSTRAINT conversation_reads_conversation_fk; ALTER TABLE public.conversation_reads ADD CONSTRAINT conversation_reads_conversation_fk FOREIGN KEY (organization_id, conversation_id) REFERENCES public.conversations (organization_id, id) ON DELETE CASCADE",
+        POSTCONDITION,
+      ],
+      [
+        "ALTER TABLE public.conversation_reads DROP CONSTRAINT conversation_reads_user_id_profiles_id_fk; ALTER TABLE public.conversation_reads ADD CONSTRAINT conversation_reads_user_id_profiles_id_fk FOREIGN KEY (user_id) REFERENCES public.profiles (id) ON DELETE RESTRICT",
+        POSTCONDITION,
+      ],
+      // Índice de los no leídos: ausente, sin predicado, otras columnas.
+      [
+        "DROP INDEX public.messages_organization_id_conversation_id_idx",
+        POSTCONDITION,
+      ],
+      [
+        "DROP INDEX public.messages_organization_id_conversation_id_idx; CREATE INDEX messages_organization_id_conversation_id_idx ON public.messages (organization_id, conversation_id, created_at)",
+        POSTCONDITION,
+      ],
+      [
+        "DROP INDEX public.messages_organization_id_conversation_id_idx; CREATE INDEX messages_organization_id_conversation_id_idx ON public.messages (organization_id, created_at, conversation_id) WHERE conversation_id IS NOT NULL",
+        POSTCONDITION,
+      ],
+      // La función: invoker, ejecutable por otros, sin search_path vacío o
+      // sin las reglas.
+      [`ALTER FUNCTION ${markRead} SECURITY INVOKER`, POSTCONDITION],
+      [`GRANT EXECUTE ON FUNCTION ${markRead} TO anon`, POSTCONDITION],
+      [`GRANT EXECUTE ON FUNCTION ${markRead} TO PUBLIC`, POSTCONDITION],
+      [`ALTER FUNCTION ${markRead} RESET search_path`, POSTCONDITION],
+      [
+        `CREATE OR REPLACE FUNCTION private.mark_conversation_read(p_organization_id uuid, p_conversation_id uuid, p_message_id uuid) RETURNS TABLE (outcome text, read_up_to timestamp with time zone) LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$ SELECT 'marked'::text, now() $$`,
+        POSTCONDITION,
+      ],
+    ];
+    for (const [statement, reason] of broken) {
+      await expect(
+        fresh.admin.begin(async (tx) => {
+          await tx.unsafe(statement);
+          await tx.unsafe(block);
+        }),
+        statement.slice(0, 120),
+      ).rejects.toMatchObject({
+        message: expect.stringMatching(reason),
+      });
+    }
+    // Cada caso se revirtió: el catálogo sigue como lo dejó la migración.
+    expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+  });
+
+  describe("idempotencia", () => {
+    it("pnpm db:migrate dos veces: la segunda no aplica nada, ni toca los datos", async () => {
+      const hito11 = await hito11Base();
+      await runMigrations(hito11.migrationUrl);
+      const rows = await rowsSnapshot(hito11.admin);
+      const catalog = await catalogSnapshot(hito11.admin);
+
+      await runMigrations(hito11.migrationUrl);
+
+      expect(await history(hito11.admin)).toBe(19);
+      expect(await rowsSnapshot(hito11.admin)).toEqual(rows);
+      expect(await catalogSnapshot(hito11.admin)).toEqual(catalog);
+    });
+
+    it("volver a ejecutar su SQL fuera del historial falla entero y no deja nada a medias", async () => {
+      const sql = await readFile(
+        new URL("0018_conversation_reads.sql", MIGRATIONS_DIR),
+        "utf8",
+      );
+      const statements = sql.split("--> statement-breakpoint");
+      const fresh = await createDatabase();
+      await runMigrations(fresh.migrationUrl);
+      const owner = postgres(fresh.migrationUrl, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        // La unique de conversations ya existe: 42P07 y la transacción
+        // entera se revierte.
+        await expect(
+          owner.begin(async (tx) => {
+            for (const statement of statements) await tx.unsafe(statement);
+          }),
+        ).rejects.toMatchObject({ code: "42P07" });
+      } finally {
+        await owner.end();
+      }
+      expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
+      expect(await history(fresh.admin)).toBe(19);
+    });
+
+    it("se revierte sola al catálogo del Hito 11 y se vuelve a aplicar idéntica", async () => {
+      const reference = await createDatabase();
+      await migrateUpTo(reference.migrationUrl, HITO_11);
+      const hito11Catalog = await catalogSnapshot(reference.admin);
+
+      const fresh = await createDatabase();
+      await runMigrations(fresh.migrationUrl);
+      const owner = postgres(fresh.migrationUrl, {
+        max: 1,
+        onnotice: () => {},
+      });
+      try {
+        // La reversión corre con la credencial de migración, dueña de todo.
+        await owner.begin(async (tx) => {
+          await tx.unsafe(REVERT_0018);
+          await tx.unsafe(`
+            DELETE FROM drizzle.__drizzle_migrations
+            WHERE created_at = (SELECT max(created_at) FROM drizzle.__drizzle_migrations)
+          `);
+        });
+      } finally {
+        await owner.end();
+      }
+      expect(await catalogSnapshot(fresh.admin)).toEqual(hito11Catalog);
       expect(await history(fresh.admin)).toBe(18);
+
+      await runMigrations(fresh.migrationUrl);
+      expect(await history(fresh.admin)).toBe(19);
       expect(await catalogSnapshot(fresh.admin)).toEqual(afterMigration);
     });
   });

@@ -2,8 +2,12 @@ import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/components/ui/cn";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { InboxItem } from "@/domains/conversations/inbox";
+import type { UnreadState } from "@/domains/conversations/read-state";
 import { formatCount } from "@/domains/dashboard/presentation";
+
+import { UnreadBadge } from "./unread-badge";
 
 /*
  * Columna izquierda de la bandeja (Hito 8, DEC-040 §1; Hito 12, DEC-044):
@@ -13,11 +17,20 @@ import { formatCount } from "@/domains/dashboard/presentation";
  * hora es la de chat ("14:32", "Ayer", "Lunes"), con la fecha completa en el
  * `title`. Debajo de `lg` es la pantalla inicial (maestro/detalle,
  * InboxView). Server Component.
+ *
+ * No leídos (Hito 12B, DEC-044 §2.8): una conversación con entrantes que
+ * quien mira todavía no vio lleva el contador (UnreadBadge), el nombre en
+ * negrita y el preview y la hora resaltados. Los no leídos no reordenan ni
+ * fijan conversaciones arriba (DEC-044 §1). La elegida no muestra el
+ * contador: está a la vista, y el historial marca dónde empiezan los
+ * mensajes nuevos.
  */
 
 export function conversationHref(id: string): string {
   return `/conversations?c=${encodeURIComponent(id)}`;
 }
+
+const READ: UnreadState = { kind: "read" };
 
 export function ConversationList({
   conversations,
@@ -54,60 +67,82 @@ export function ConversationList({
             a la línea del concesionario aparecen acá.
           </p>
         ) : (
-          <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            {conversations.map((item) => {
-              const selected = item.id === selectedId;
-              return (
-                <li
-                  key={item.id}
-                  className="border-b border-border-subtle last:border-b-0"
-                >
-                  <Link
-                    href={conversationHref(item.id)}
-                    aria-current={selected ? "page" : undefined}
-                    className={cn(
-                      "flex min-h-16 items-start gap-3 px-4 py-3 transition-colors duration-150 ease-out-strong focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus-ring",
-                      selected
-                        ? "bg-brand-soft shadow-[inset_3px_0_0_var(--color-brand)]"
-                        : "hover:bg-surface-2 active:bg-surface-3",
-                    )}
+          <TooltipProvider delayDuration={300}>
+            <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              {conversations.map((item) => {
+                const selected = item.id === selectedId;
+                const unread = selected ? READ : item.unread;
+                const hasUnread = unread.kind === "unread";
+                return (
+                  <li
+                    key={item.id}
+                    data-unread={hasUnread ? unread.count : undefined}
+                    className="border-b border-border-subtle last:border-b-0"
                   >
-                    <Avatar
-                      initials={item.initials}
-                      size="md"
-                      tone={selected ? "brand" : "neutral"}
-                    />
-                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span className="flex items-baseline gap-2">
-                        <span
-                          className={cn(
-                            "min-w-0 flex-1 truncate text-label font-semibold",
-                            selected
-                              ? "text-brand-strong"
-                              : "text-text-primary",
-                          )}
-                        >
-                          {item.contactName}
-                        </span>
-                        {item.time !== null && item.dateTime !== null ? (
-                          <time
-                            dateTime={item.dateTime}
-                            title={item.at ?? undefined}
-                            className="shrink-0 text-caption text-text-muted tabular-nums"
+                    <Link
+                      href={conversationHref(item.id)}
+                      aria-current={selected ? "page" : undefined}
+                      className={cn(
+                        "flex min-h-16 items-start gap-3 px-4 py-3 transition-colors duration-150 ease-out-strong focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus-ring",
+                        selected
+                          ? "bg-brand-soft shadow-[inset_3px_0_0_var(--color-brand)]"
+                          : "hover:bg-surface-2 active:bg-surface-3",
+                      )}
+                    >
+                      <Avatar
+                        initials={item.initials}
+                        size="md"
+                        tone={selected ? "brand" : "neutral"}
+                      />
+                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <span className="flex items-baseline gap-2">
+                          <span
+                            className={cn(
+                              "min-w-0 flex-1 truncate text-label",
+                              selected
+                                ? "font-semibold text-brand-strong"
+                                : hasUnread
+                                  ? "font-bold text-text-primary"
+                                  : "font-medium text-text-primary",
+                            )}
                           >
-                            {item.time}
-                          </time>
-                        ) : null}
+                            {item.contactName}
+                          </span>
+                          {item.time !== null && item.dateTime !== null ? (
+                            <time
+                              dateTime={item.dateTime}
+                              title={item.at ?? undefined}
+                              className={cn(
+                                "shrink-0 text-caption tabular-nums",
+                                hasUnread
+                                  ? "font-semibold text-brand-strong"
+                                  : "text-text-muted",
+                              )}
+                            >
+                              {item.time}
+                            </time>
+                          ) : null}
+                        </span>
+                        <span className="flex items-start gap-2">
+                          <span
+                            className={cn(
+                              "line-clamp-2 min-w-0 flex-1 text-caption break-words",
+                              hasUnread
+                                ? "text-text-primary"
+                                : "text-text-secondary",
+                            )}
+                          >
+                            {item.preview}
+                          </span>
+                          <UnreadBadge unread={unread} />
+                        </span>
                       </span>
-                      <span className="line-clamp-2 text-caption break-words text-text-secondary">
-                        {item.preview}
-                      </span>
-                    </span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </TooltipProvider>
         )}
         {total > conversations.length ? (
           <p className="border-t border-border-subtle px-4 py-2.5 text-caption text-text-muted">

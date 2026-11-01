@@ -21,7 +21,8 @@ import type { MessageDirection } from "./messages";
  * - Sin cursor ni respuesta propia, todo entrante está sin leer.
  *
  * Puro y apto para el navegador. La base cuenta los no leídos de la lista
- * con esta misma regla; estas funciones la fijan y las usa el historial.
+ * con esta misma regla (Hito 12B: db/queries/conversation-reads.ts); estas
+ * funciones la fijan y las usa el historial.
  */
 
 /** Hasta dónde vio un miembro una conversación. */
@@ -93,6 +94,60 @@ export function firstUnreadId(
   cursor: ReadCursor,
 ): string | null {
   return messages.find((message) => isUnread(message, cursor))?.id ?? null;
+}
+
+/**
+ * El mensaje registrado más tarde (`created_at`; a igual instante, el id
+ * mayor, para que sea determinista). Es hasta dónde marca visto el
+ * historial: el cursor se mide con el reloj de la base, así que un mensaje
+ * viejo que el proveedor entregó tarde (al medio del chat por `sent_at`)
+ * puede ser el más nuevo. Null sin mensajes.
+ */
+export function newestRegisteredId(
+  messages: readonly ReadableMessage[],
+): string | null {
+  let newest: ReadableMessage | null = null;
+  for (const message of messages) {
+    const time = message.createdAt.getTime();
+    if (
+      newest === null ||
+      time > newest.createdAt.getTime() ||
+      (time === newest.createdAt.getTime() && message.id > newest.id)
+    ) {
+      newest = message;
+    }
+  }
+  return newest?.id ?? null;
+}
+
+/* ── El historial de quien mira ─────────────────────────────────────────── */
+
+/** El leído del historial que se muestra, contra el cursor de quien mira. */
+export type ThreadReadState = Readonly<{
+  /** Entrantes sin leer al cargar el historial. */
+  unread: number;
+  /** Antes de cuál va el separador "Mensajes nuevos", o null. */
+  firstUnreadId: string | null;
+  /**
+   * El mensaje en pantalla registrado más tarde: el que se envía al marcar
+   * visto (la base fija el cursor con su `created_at`). Null sin mensajes.
+   */
+  upToMessageId: string | null;
+}>;
+
+/**
+ * El leído del historial, con los mensajes en el orden del chat (el del
+ * separador). Marcar visto solo hace falta si hay entrantes sin leer.
+ */
+export function threadReadState(
+  messages: readonly ReadableMessage[],
+  cursor: ReadCursor,
+): ThreadReadState {
+  return {
+    unread: countUnread(messages, cursor),
+    firstUnreadId: firstUnreadId(messages, cursor),
+    upToMessageId: newestRegisteredId(messages),
+  };
 }
 
 /* ── Contador de la lista ───────────────────────────────────────────────── */

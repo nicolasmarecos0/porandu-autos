@@ -313,6 +313,19 @@ const quotesWriteImport = {
   message: QUOTES_WRITE_MESSAGE,
 };
 
+// Hito 12B (DEC-044 §2.7): el cursor de leído de la bandeja tiene una sola
+// puerta, la Server Action markConversationRead() (lib/conversations/read.ts),
+// que obtiene el contexto con requireTenant() y valida el pedido antes de
+// escribir. Las lecturas del mismo módulo (los contadores y el cursor, que
+// usa el loader de /conversations) no escriben y se pueden importar.
+const CONVERSATION_READ_MESSAGE =
+  "Conversations are marked as read only through the markConversationRead() Server Action (lib/conversations/read.ts): requireTenant(), server-side validation, then withTenant().";
+const conversationReadImport = {
+  regex: "(^|/)db/queries/conversation-reads$|^\\.{1,2}/conversation-reads$",
+  importNames: ["recordConversationRead"],
+  message: CONVERSATION_READ_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -368,6 +381,7 @@ const basePatterns = [
   phoneLibraryImport,
   testDrivesWriteImport,
   quotesWriteImport,
+  conversationReadImport,
 ];
 
 const eslintConfig = defineConfig([
@@ -415,6 +429,25 @@ const eslintConfig = defineConfig([
         "error",
         {
           patterns: [...basePatterns, dbClientRelativeImport],
+        },
+      ],
+    },
+  },
+  // Hito 12B: el índice del schema reexporta la tabla conversation_reads
+  // (db/schema/conversation-reads.ts). El guard del cursor de leído es del
+  // módulo de escritura de db/queries, que tiene el mismo nombre de archivo.
+  {
+    files: ["db/schema/index.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ...basePatterns.filter(
+              (pattern) => pattern !== conversationReadImport,
+            ),
+            dbClientRelativeImport,
+          ],
         },
       ],
     },
@@ -531,6 +564,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            conversationReadImport,
           ],
         },
       ],
@@ -564,6 +598,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            conversationReadImport,
           ],
         },
       ],
@@ -593,6 +628,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            conversationReadImport,
           ],
         },
       ],
@@ -640,6 +676,20 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // Única puerta del cursor de leído de la bandeja (Hito 12B, DEC-044 §2.7).
+  {
+    files: ["lib/conversations/read.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== conversationReadImport,
+          ),
+        },
+      ],
+    },
+  },
   // Única puerta del registro de mensajes (Hito 4, DEC-036 §6).
   {
     files: ["lib/conversations/actions.ts"],
@@ -682,6 +732,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            conversationReadImport,
             stockMockImport,
           ],
         },
@@ -795,6 +846,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            conversationReadImport,
           ],
         },
       ],

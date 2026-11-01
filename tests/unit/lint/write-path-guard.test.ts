@@ -36,6 +36,10 @@ import { describe, expect, it } from "vitest";
  *   también: las Server Actions de lib/calendar/actions.ts;
  * - las cotizaciones (Hito 10) (db/queries/quotes-write), también: las
  *   Server Actions de lib/quotes/actions.ts;
+ * - el cursor de leído de la bandeja (Hito 12B) (recordConversationRead()
+ *   de db/queries/conversation-reads), también: la Server Action
+ *   markConversationRead() (lib/conversations/read.ts). Las lecturas del
+ *   mismo módulo (los contadores y el cursor) las usa el loader;
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -951,6 +955,88 @@ describe(
         await restrictedBy(
           "lib/quotes/requests.ts",
           `import type { CreateQuoteOutcome } from "@/db/queries/quotes-write";\nexport type S = CreateQuoteOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importConversationRead = `import { recordConversationRead } from "@/db/queries/conversation-reads";\nexport const use = recordConversationRead;\n`;
+
+describe(
+  "una sola puerta para el cursor de leído de la bandeja (Hito 12B)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/conversations/page.tsx",
+      "components/inbox/thread-log.tsx",
+      "components/inbox/conversation-list.tsx",
+      "lib/conversations/actions.ts",
+      "lib/conversations/send.ts",
+      "lib/quotes/actions.ts",
+      "lib/opportunities/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/settings/actions.ts",
+      "lib/tenant/session.ts",
+      "db/queries/conversations.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importConversationRead)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries, y con un import de todo el módulo", async () => {
+      for (const code of [
+        `import { recordConversationRead } from "./conversation-reads";\nexport const use = recordConversationRead;\n`,
+        `import * as reads from "./conversation-reads";\nexport const use = reads;\n`,
+      ]) {
+        expect(
+          await restrictedBy("db/queries/conversations.ts", code),
+        ).toContain("no-restricted-imports");
+      }
+    });
+
+    it("se permite en la Server Action lib/conversations/read.ts", async () => {
+      expect(
+        await restrictedBy("lib/conversations/read.ts", importConversationRead),
+      ).toEqual([]);
+    });
+
+    it("la Server Action de leído no importa otras escrituras ni el cliente", async () => {
+      for (const code of [
+        importMessageWrite,
+        importSendWrite,
+        importMetaClient,
+        `import { db } from "@/db/client";\nexport const use = db;\n`,
+      ]) {
+        expect(await restrictedBy("lib/conversations/read.ts", code)).toContain(
+          "no-restricted-imports",
+        );
+      }
+    });
+
+    it("las lecturas del módulo (contadores y cursor) y sus tipos sí se pueden importar: no escriben", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/conversations.ts",
+          `import { selectReadCursor, selectUnreadCounts } from "./conversation-reads";\nexport const use = [selectReadCursor, selectUnreadCounts];\n`,
+        ),
+      ).toEqual([]);
+      expect(
+        await restrictedBy(
+          "lib/conversations/mark-read.ts",
+          `import type { ConversationReadOutcome } from "@/db/queries/conversation-reads";\nexport type S = ConversationReadOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+
+    it("el schema puede reexportar su tabla: el guard es del módulo de escritura", async () => {
+      expect(
+        await restrictedBy(
+          "db/schema/index.ts",
+          `export * from "./conversation-reads";\n`,
         ),
       ).toEqual([]);
     });

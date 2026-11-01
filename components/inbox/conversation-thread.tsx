@@ -10,6 +10,7 @@ import { formatCount } from "@/domains/dashboard/presentation";
 import { MessageBubble } from "./message-bubble";
 import { MessageComposer } from "./message-composer";
 import { OpportunityStrip } from "./opportunity-strip";
+import { ThreadLog } from "./thread-log";
 
 /*
  * Columna derecha de la bandeja (Hito 8, DEC-040 §1; Hito 12, DEC-044): el
@@ -20,11 +21,14 @@ import { OpportunityStrip } from "./opportunity-strip";
  * - El historial usa `flex-col-reverse`: abre mostrando los mensajes más
  *   recientes sin JavaScript. El separador de cada día queda fijo arriba
  *   mientras se recorre ese día.
+ * - No leídos (Hito 12B, DEC-044 §2): el separador "Mensajes nuevos" va
+ *   antes del primer entrante sin leer, y el historial marca visto cuando
+ *   está a la vista (ThreadLog).
  * - Debajo de `lg` es una pantalla propia (maestro/detalle, InboxView): el
  *   encabezado lleva "Volver" a la lista.
- * - Server Component; solo el composer (con `key` por conversación, para
- *   que no arrastre lo escrito de otra) y el menú de oportunidades son de
- *   cliente.
+ * - Server Component; solo el log (que marca visto), el composer (los dos
+ *   con `key` por conversación, para que no arrastren el estado de otra) y
+ *   el menú de oportunidades son de cliente.
  */
 
 export const INBOX_HREF = "/conversations";
@@ -93,9 +97,11 @@ export function ConversationThread({
               <OpportunityStrip opportunity={thread.opportunity} />
             </header>
             <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto overscroll-contain bg-surface-2 px-3 py-4 sm:px-4">
-              <div
-                role="log"
-                aria-label={`Historial con ${thread.contact.name}`}
+              <ThreadLog
+                key={thread.conversationId}
+                conversationId={thread.conversationId}
+                read={thread.read}
+                label={`Historial con ${thread.contact.name}`}
                 className="flex flex-col gap-4"
               >
                 {thread.total > thread.shown ? (
@@ -130,7 +136,7 @@ export function ConversationThread({
                     </div>
                   ))
                 )}
-              </div>
+              </ThreadLog>
             </div>
             <MessageComposer
               key={thread.conversationId}

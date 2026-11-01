@@ -6,8 +6,10 @@ import {
   effectiveReadUpTo,
   firstUnreadId,
   isUnread,
+  newestRegisteredId,
   NO_READ_CURSOR,
   parseMarkRead,
+  threadReadState,
   unreadState,
   type ReadableMessage,
 } from "@/domains/conversations/read-state";
@@ -143,5 +145,39 @@ describe("parseMarkRead", () => {
     expect(
       parseMarkRead({ conversationId: "c1", upToMessageId: MESSAGE }),
     ).toBeNull();
+  });
+});
+
+describe("newestRegisteredId y threadReadState (Hito 12B)", () => {
+  it("el más nuevo es el registrado más tarde; a igual instante, el id mayor", () => {
+    expect(
+      newestRegisteredId([
+        inbound("b", "2026-10-29T15:00:00Z"),
+        outbound("c", "2026-10-29T15:00:00Z"),
+        inbound("a", "2026-10-29T14:00:00Z"),
+      ]),
+    ).toBe("c");
+    expect(newestRegisteredId([])).toBeNull();
+  });
+
+  it("cuenta, ubica el separador y elige hasta dónde marcar contra el cursor", () => {
+    const messages = [
+      inbound("m1", "2026-10-29T15:00:00Z"),
+      outbound("m2", "2026-10-29T15:01:00Z"),
+      inbound("m3", "2026-10-29T15:02:00Z"),
+      inbound("m4", "2026-10-29T15:03:00Z"),
+    ];
+    expect(
+      threadReadState(messages, {
+        readUpTo: at("2026-10-29T15:00:00Z"),
+        lastOwnReplyAt: null,
+      }),
+    ).toEqual({ unread: 2, firstUnreadId: "m3", upToMessageId: "m4" });
+    expect(
+      threadReadState(messages, {
+        readUpTo: at("2026-10-29T15:03:00Z"),
+        lastOwnReplyAt: null,
+      }),
+    ).toEqual({ unread: 0, firstUnreadId: null, upToMessageId: "m4" });
   });
 });

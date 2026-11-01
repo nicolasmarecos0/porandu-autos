@@ -6,12 +6,15 @@ import {
   EMPTY_PREVIEW,
   inboxItems,
   threadContact,
+  threadRead,
   type ThreadMessageRow,
 } from "@/domains/conversations/inbox";
+import { NO_READ_CURSOR } from "@/domains/conversations/read-state";
 
 /*
- * Bandeja (Hito 8, DEC-040 §1): lista de conversaciones e historial listos
- * para mostrar, puros y deterministas, contra el usuario que mira.
+ * Bandeja (Hito 8, DEC-040 §1; Hito 12B, DEC-044 §2): lista de
+ * conversaciones e historial listos para mostrar, puros y deterministas,
+ * contra el usuario que mira (también sus no leídos).
  */
 
 const VIEWER = "00000000-0000-4000-8000-00000000000c";
@@ -41,12 +44,14 @@ describe("inboxItems", () => {
             contactName: "Ramón Benítez",
             lastMessageAt: new Date("2026-10-29T15:32:00Z"),
             lastMessagePreview: "¿Sigue disponible?",
+            unread: 2,
           },
           {
             id: "c2",
             contactName: "Contacto de WhatsApp",
             lastMessageAt: null,
             lastMessagePreview: null,
+            unread: 0,
           },
         ],
         NOW,
@@ -60,6 +65,12 @@ describe("inboxItems", () => {
         at: "29 oct 2026 12:32",
         time: "12:32",
         dateTime: "2026-10-29T15:32:00.000Z",
+        unread: {
+          kind: "unread",
+          count: 2,
+          label: "2",
+          description: "2 mensajes sin leer",
+        },
       },
       {
         id: "c2",
@@ -69,8 +80,30 @@ describe("inboxItems", () => {
         at: null,
         time: null,
         dateTime: null,
+        unread: { kind: "read" },
       },
     ]);
+  });
+
+  it("el contador de no leídos de quien mira: 99+ desde 100, con el texto completo", () => {
+    const [many] = inboxItems(
+      [
+        {
+          id: "c1",
+          contactName: "Ana Ríos",
+          lastMessageAt: new Date("2026-10-29T15:32:00Z"),
+          lastMessagePreview: "Hola",
+          unread: 142,
+        },
+      ],
+      NOW,
+    );
+    expect(many?.unread).toEqual({
+      kind: "unread",
+      count: 142,
+      label: "99+",
+      description: "142 mensajes sin leer",
+    });
   });
 
   it("la hora de chat depende del día de Asunción, no del de UTC", () => {
@@ -82,12 +115,14 @@ describe("inboxItems", () => {
           // 28 oct, 22:30 de Asunción: ya es 29 en UTC.
           lastMessageAt: new Date("2026-10-29T01:30:00Z"),
           lastMessagePreview: "Gracias",
+          unread: 0,
         },
         {
           id: "c2",
           contactName: "Juan Pérez",
           lastMessageAt: new Date("2026-10-10T15:00:00Z"),
           lastMessagePreview: "Hola",
+          unread: 0,
         },
       ],
       NOW,
@@ -200,5 +235,71 @@ describe("conversationThread", () => {
       VIEWER,
     );
     expect(message?.at).toBe("29 oct 2026 12:00");
+  });
+});
+
+describe("threadRead (Hito 12B, DEC-044 §2)", () => {
+  const read = (
+    id: string,
+    at: string,
+    overrides: Partial<ThreadMessageRow> = {},
+  ) =>
+    row({
+      id,
+      sentAt: new Date(at),
+      createdAt: new Date(at),
+      ...overrides,
+    });
+
+  it("sin cursor ni respuesta propia, todo entrante está sin leer y el separador va antes del primero, en el orden del chat", () => {
+    expect(
+      threadRead(
+        [
+          read("in-2", "2026-10-29T15:02:00Z"),
+          read("in-1", "2026-10-29T15:01:00Z"),
+          read("out", "2026-10-29T15:03:00Z", {
+            direction: "outbound",
+            recordedBy: OTHER,
+          }),
+        ],
+        NO_READ_CURSOR,
+      ),
+    ).toEqual({ unread: 2, firstUnreadId: "in-1", upToMessageId: "out" });
+  });
+
+  it("marca hasta el registrado más tarde, aunque el proveedor lo haya entregado tarde y se muestre al medio", () => {
+    const late = read("late", "2026-10-29T14:00:00Z", {
+      // Enviado a las 11:00 de Asunción, registrado a las 12:10.
+      createdAt: new Date("2026-10-29T15:10:00Z"),
+    });
+    expect(
+      threadRead([read("in-1", "2026-10-29T15:01:00Z"), late], {
+        readUpTo: new Date("2026-10-29T15:05:00Z"),
+        lastOwnReplyAt: null,
+      }),
+    ).toEqual({ unread: 1, firstUnreadId: "late", upToMessageId: "late" });
+  });
+
+  it("responder es leer: lo anterior a la última respuesta propia ya no cuenta", () => {
+    expect(
+      threadRead(
+        [
+          read("in-1", "2026-10-29T15:01:00Z"),
+          read("in-2", "2026-10-29T15:04:00Z"),
+        ],
+        {
+          readUpTo: null,
+          lastOwnReplyAt: new Date("2026-10-29T15:02:00Z"),
+        },
+      ),
+    ).toEqual({ unread: 1, firstUnreadId: "in-2", upToMessageId: "in-2" });
+  });
+
+  it("sin mensajes no hay nada que marcar", () => {
+    expect(threadRead([], NO_READ_CURSOR)).toEqual({
+      unread: 0,
+      firstUnreadId: null,
+      upToMessageId: null,
+    });
   });
 });
