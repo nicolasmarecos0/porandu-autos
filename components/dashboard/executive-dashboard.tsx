@@ -1,24 +1,29 @@
 import type { ReactNode } from "react";
-import { PageHeader } from "@/components/shell/page-header";
 import { WorkspaceLayout } from "@/components/shell/workspace-layout";
 import { Badge } from "@/components/ui/badge";
+import { CalendarIcon } from "@/components/ui/icons";
 import type { ExecutiveDashboard } from "@/domains/dashboard/metrics";
-import {
-  countLabel,
-  formatCount,
-  formatPercent,
-  NO_DATA,
-} from "@/domains/dashboard/presentation";
+import { countLabel, formatCount } from "@/domains/dashboard/presentation";
 
 import { AtRiskList } from "./at-risk-list";
-import { KpiCard, RatioMeter } from "./kpi-card";
+import { KpiCard } from "./kpi-card";
+import { KpiRow } from "./kpi-row";
+import { RangePicker } from "./range-picker";
 
 /**
- * Dashboard Directivo de /intelligence (Hito 5, DEC-037): lo que la
- * gerencia necesita ver del mes en curso sin recorrer la cola ni el stock.
- * Tres bloques de indicadores en una grilla (pipeline, inventario y
- * atención) y, en el rail, las oportunidades en riesgo. Solo lectura y sin
- * JavaScript de cliente: los números llegan formateados del servidor.
+ * Dashboard Directivo de /intelligence (Hito 5, DEC-037; DEC-043 §9): lo que
+ * la gerencia necesita ver sin recorrer la cola, el stock, las cotizaciones
+ * ni la agenda.
+ *
+ *   encabezado: título, rango elegido y selector de rango
+ *   ─────────────────────────────────────────────┬──────────────────────
+ *   fila de KPIs (ventas, conversión,             │ Oportunidades
+ *   cotizaciones, test drives)                    │ en riesgo
+ *   Pipeline comercial · Salud del inventario     │
+ *   · Atención                                    │
+ *
+ * Solo lectura. Server Components: los números llegan formateados del
+ * servidor y lo único de cliente es el drawer del rango personalizado.
  */
 export function ExecutiveDashboardView({
   title,
@@ -27,68 +32,80 @@ export function ExecutiveDashboardView({
   title: string;
   dashboard: ExecutiveDashboard;
 }) {
-  const { pipeline, inventory, attention } = dashboard;
+  const { range, conversion, pipeline, inventory, attention } = dashboard;
   const needsAttention = attention.warning + attention.stale;
   return (
     <WorkspaceLayout
       header={
-        <PageHeader
-          title={title}
-          status={<Badge tone="brand">Dashboard directivo</Badge>}
-          actions={
-            <p className="text-label font-normal text-text-muted">
-              Mes en curso:{" "}
-              <span className="font-semibold text-text-primary">
-                {dashboard.periodLabel}
-              </span>
-            </p>
-          }
-        />
+        <header className="shrink-0 border-b border-border-subtle bg-surface-1 px-gutter py-3">
+          <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+            <div className="flex min-w-0 flex-col gap-1">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <h1 className="text-title text-text-primary">{title}</h1>
+                <Badge tone="brand">Dashboard directivo</Badge>
+              </div>
+              <p
+                aria-live="polite"
+                className="flex items-center gap-1.5 text-label text-text-secondary"
+              >
+                <CalendarIcon
+                  aria-hidden="true"
+                  className="size-4 shrink-0 text-text-muted"
+                />
+                <span className="font-semibold text-text-primary">
+                  {range.label}
+                </span>
+              </p>
+            </div>
+            <RangePicker range={range} today={dashboard.today} />
+          </div>
+        </header>
       }
       aside={<AtRiskList atRisk={dashboard.atRisk} />}
     >
-      <MetricSection id="pipeline" title="Pipeline comercial">
+      {dashboard.notice ? (
+        <p
+          role="status"
+          className="rounded-lg border border-warning-border bg-warning-soft px-4 py-2.5 text-label text-warning"
+        >
+          {dashboard.notice}
+        </p>
+      ) : null}
+
+      <KpiRow
+        conversion={conversion}
+        pendingQuotes={dashboard.pendingQuotes}
+        weekTestDrives={dashboard.weekTestDrives}
+      />
+
+      <MetricSection id="pipeline" title="Pipeline comercial" columns={2}>
         <KpiCard
           label="Oportunidades activas"
           value={formatCount(pipeline.open)}
-          hint="Nuevas, en calificación y en negociación"
+          hint="Nuevas, en calificación y en negociación, hoy"
         />
         <KpiCard
-          label="Ganadas en el mes"
-          value={formatCount(pipeline.won)}
-          hint={`${countLabel(pipeline.lost, "perdida", "perdidas")} en el mes`}
+          label="Perdidas"
+          value={formatCount(conversion.lost)}
+          hint="Cerradas sin venta en el rango"
         />
-        <KpiCard
-          label="Win rate"
-          value={formatPercent(pipeline.winRate)}
-          muted={pipeline.winRate === null}
-          hint={
-            pipeline.winRate === null
-              ? `${NO_DATA}: no hubo cierres en el mes`
-              : "Ganadas sobre cerradas en el mes"
-          }
-        >
-          {pipeline.winRate === null ? null : (
-            <RatioMeter percent={pipeline.winRate} />
-          )}
-        </KpiCard>
       </MetricSection>
 
       <MetricSection id="inventory" title="Salud del inventario">
         <KpiCard
           label="En stock"
           value={formatCount(inventory.inStock)}
-          hint="Unidades sin reserva ni venta"
+          hint="Unidades sin reserva ni venta, hoy"
         />
         <KpiCard
           label="Reservadas"
           value={formatCount(inventory.reserved)}
-          hint="Vinculadas a una oportunidad en negociación"
+          hint="Vinculadas a una oportunidad en negociación, hoy"
         />
         <KpiCard
-          label="Vendidas en el mes"
+          label="Vendidas en el rango"
           value={formatCount(inventory.sold)}
-          hint="Unidades de oportunidades ganadas en el mes"
+          hint="Unidades de las ventas cerradas en el rango"
         />
       </MetricSection>
 

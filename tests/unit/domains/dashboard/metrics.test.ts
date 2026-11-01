@@ -4,42 +4,68 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildConversion,
+  buildPendingQuotes,
+  buildWeekTestDrives,
+} from "@/domains/dashboard/commercial";
+import {
   AT_RISK_LIST_LIMIT,
   buildExecutiveDashboard,
   OPEN_STAGES,
   toAtRiskOpportunity,
+  toRangeView,
   winRate,
   type AtRiskRow,
   type InventoryCounts,
   type OpportunityCounts,
 } from "@/domains/dashboard/metrics";
+import { DASHBOARD_TIME_ZONE } from "@/domains/dashboard/period";
 import {
+  conversionBasis,
   countLabel,
   formatCount,
   formatPercent,
   inactivityLabel,
   NO_DATA,
+  pendingQuotesBreakdown,
+  weekTestDrivesBreakdown,
 } from "@/domains/dashboard/presentation";
+import {
+  presetRange,
+  RANGE_NOTICE_LABELS,
+  resolveDashboardRange,
+} from "@/domains/dashboard/range";
 
 /*
- * Métricas del Dashboard Directivo (Hito 5, DEC-037), lógica pura: win rate
- * exacto, "sin dato" sin cierres (DEC-005), la lista de oportunidades en
- * riesgo y el formato es-PY.
+ * Métricas del Dashboard Directivo (Hito 5, DEC-037; DEC-043), lógica pura:
+ * win rate exacto, "sin dato" sin cierres (DEC-005), la lista de
+ * oportunidades en riesgo, el ViewModel con el rango y los KPIs comerciales
+ * y el formato es-PY.
  */
 
 const NOW = new Date("2026-10-14T13:30:00Z");
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
-const COUNTS: OpportunityCounts = {
-  open: 6,
-  wonInMonth: 2,
-  lostInMonth: 1,
-  warning: 2,
-  stale: 2,
-};
+const COUNTS: OpportunityCounts = { open: 6, warning: 2, stale: 2 };
 
-const INVENTORY: InventoryCounts = { inStock: 3, reserved: 1, soldInMonth: 2 };
+const INVENTORY: InventoryCounts = { inStock: 3, reserved: 1, soldInRange: 2 };
+
+const RANGE = presetRange("month", NOW, DASHBOARD_TIME_ZONE);
+
+const COMMERCIAL = {
+  conversion: buildConversion(2, 1),
+  pendingQuotes: buildPendingQuotes({
+    awaitingApproval: 2,
+    readyToSend: 1,
+    awaitingResponse: 3,
+    expired: 1,
+  }),
+  weekTestDrives: buildWeekTestDrives(
+    { pending: 2, completed: 1, noShow: 1, cancelled: 1 },
+    { key: "2026-10-12", label: "12 – 18 oct 2026" },
+  ),
+};
 
 function row(n: number, daysAgo: number): AtRiskRow {
   return {
@@ -50,13 +76,29 @@ function row(n: number, daysAgo: number): AtRiskRow {
   };
 }
 
+function build(
+  overrides: Partial<Parameters<typeof buildExecutiveDashboard>[0]> = {},
+) {
+  return buildExecutiveDashboard({
+    range: RANGE,
+    notice: null,
+    today: "2026-10-14",
+    ...COMMERCIAL,
+    opportunities: COUNTS,
+    inventory: INVENTORY,
+    atRisk: { rows: [row(1, 30), row(2, 6)], total: 2 },
+    now: NOW,
+    ...overrides,
+  });
+}
+
 describe("OPEN_STAGES", () => {
   it("son las etapas que no cierran la oportunidad (DEC-032 §1)", () => {
     expect(OPEN_STAGES).toEqual(["new", "qualifying", "negotiating"]);
   });
 });
 
-describe("winRate: ganadas sobre cerradas en el mes", () => {
+describe("winRate: ganadas sobre cerradas en el rango", () => {
   it.each([
     [2, 1, 66.7],
     [1, 2, 33.3],
@@ -104,19 +146,45 @@ describe("toAtRiskOpportunity", () => {
   });
 });
 
+describe("toRangeView", () => {
+  it("deja lo que muestra la vista, sin los instantes de la base", () => {
+    expect(toRangeView(RANGE)).toEqual({
+      kind: "month",
+      from: "2026-10-01",
+      to: "2026-10-31",
+      days: 31,
+      label: "Mes en curso: octubre de 2026",
+      isDefault: true,
+    });
+    expect(toRangeView(RANGE)).not.toHaveProperty("start");
+    expect(toRangeView(RANGE)).not.toHaveProperty("end");
+  });
+});
+
 describe("buildExecutiveDashboard", () => {
-  it("arma el pipeline con su win rate, el inventario, la atención y la lista", () => {
-    expect(
-      buildExecutiveDashboard({
-        periodLabel: "octubre de 2026",
-        opportunities: COUNTS,
-        inventory: INVENTORY,
-        atRisk: { rows: [row(1, 30), row(2, 6)], total: 2 },
-        now: NOW,
-      }),
-    ).toEqual({
-      periodLabel: "octubre de 2026",
-      pipeline: { open: 6, won: 2, lost: 1, winRate: 66.7 },
+  it("arma el rango, los KPIs comerciales, el pipeline, el inventario, la atención y la lista", () => {
+    expect(build()).toEqual({
+      range: toRangeView(RANGE),
+      notice: null,
+      today: "2026-10-14",
+      conversion: { won: 2, lost: 1, closed: 3, rate: 66.7 },
+      pendingQuotes: {
+        total: 6,
+        awaitingApproval: 2,
+        readyToSend: 1,
+        awaitingResponse: 3,
+        expired: 1,
+      },
+      weekTestDrives: {
+        weekKey: "2026-10-12",
+        weekLabel: "12 – 18 oct 2026",
+        scheduled: 4,
+        pending: 2,
+        completed: 1,
+        noShow: 1,
+        cancelled: 1,
+      },
+      pipeline: { open: 6 },
       inventory: { inStock: 3, reserved: 1, sold: 2 },
       attention: { warning: 2, stale: 2 },
       atRisk: {
@@ -135,49 +203,75 @@ describe("buildExecutiveDashboard", () => {
     });
   });
 
+  it("un rango ignorado llega como el aviso visible, en es-PY", () => {
+    const { range, notice } = resolveDashboardRange(
+      { range: "custom", from: "2026-10-20", to: "2026-10-01" },
+      NOW,
+      DASHBOARD_TIME_ZONE,
+    );
+    const dashboard = build({ range, notice });
+    expect(dashboard.notice).toBe(RANGE_NOTICE_LABELS.invalid_range);
+    expect(dashboard.range.kind).toBe("month");
+  });
+
   it(`lista a lo sumo ${AT_RISK_LIST_LIMIT} y conserva el total`, () => {
     const rows = Array.from({ length: 12 }, (_, i) => row(i + 1, 20 - i));
-    const { atRisk } = buildExecutiveDashboard({
-      periodLabel: "octubre de 2026",
+    const { atRisk } = build({
       opportunities: { ...COUNTS, stale: 12 },
-      inventory: INVENTORY,
       atRisk: { rows, total: 12 },
-      now: NOW,
     });
     expect(atRisk.items).toHaveLength(AT_RISK_LIST_LIMIT);
     expect(atRisk.total).toBe(12);
   });
 
   it("el total nunca es menor que lo listado", () => {
-    const { atRisk } = buildExecutiveDashboard({
-      periodLabel: "octubre de 2026",
-      opportunities: COUNTS,
-      inventory: INVENTORY,
+    const { atRisk } = build({
       atRisk: { rows: [row(1, 9), row(2, 8)], total: 0 },
-      now: NOW,
     });
     expect(atRisk.total).toBe(2);
   });
 
   it("un conteo inválido de la base falla en vez de mostrarse", () => {
+    expect(() => build({ opportunities: { ...COUNTS, open: -1 } })).toThrow(
+      RangeError,
+    );
     expect(() =>
-      buildExecutiveDashboard({
-        periodLabel: "octubre de 2026",
-        opportunities: { ...COUNTS, open: -1 },
-        inventory: INVENTORY,
-        atRisk: { rows: [], total: 0 },
-        now: NOW,
-      }),
+      build({ inventory: { ...INVENTORY, reserved: Number.NaN } }),
     ).toThrow(RangeError);
     expect(() =>
-      buildExecutiveDashboard({
-        periodLabel: "octubre de 2026",
-        opportunities: COUNTS,
-        inventory: { ...INVENTORY, reserved: Number.NaN },
-        atRisk: { rows: [], total: 0 },
-        now: NOW,
-      }),
+      build({ inventory: { ...INVENTORY, soldInRange: 1.5 } }),
     ).toThrow(RangeError);
+  });
+
+  it("un día de hoy mal formado falla", () => {
+    expect(() => build({ today: "14/10/2026" })).toThrow(RangeError);
+  });
+});
+
+describe("copy de los KPIs comerciales (DEC-043 §4 y §5)", () => {
+  it("desglose de las cotizaciones pendientes", () => {
+    expect(
+      pendingQuotesBreakdown({
+        awaitingApproval: 3,
+        readyToSend: 1,
+        awaitingResponse: 1200,
+      }),
+    ).toBe("3 por aprobar · 1 por enviar · 1.200 esperando respuesta");
+  });
+
+  it("desglose de las pruebas de la semana, con el plural de las realizadas", () => {
+    expect(
+      weekTestDrivesBreakdown({ pending: 2, completed: 1, noShow: 0 }),
+    ).toBe("2 por realizar · 1 realizada · 0 no asistió");
+    expect(
+      weekTestDrivesBreakdown({ pending: 0, completed: 3, noShow: 2 }),
+    ).toBe("0 por realizar · 3 realizadas · 2 no asistió");
+  });
+
+  it("base de la tasa de conversión", () => {
+    expect(conversionBasis(2, 3)).toBe("2 ventas de 3 cierres");
+    expect(conversionBasis(1, 1)).toBe("1 venta de 1 cierre");
+    expect(conversionBasis(0, 2)).toBe("0 ventas de 2 cierres");
   });
 });
 
