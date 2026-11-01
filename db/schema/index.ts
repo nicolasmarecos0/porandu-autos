@@ -21,9 +21,10 @@
  * de conversations, y whatsapp_lines sin grants; 0014: lectura de
  * whatsapp_lines). Los triggers y sus funciones (0008 a 0012), las
  * funciones de equipo de 0012, la función de ingesta de 0013, la de envío
- * de 0014 y el trigger de estados de test_drives de 0015 son SQL custom:
- * drizzle-kit no los modela. 0015 da además SELECT e INSERT de test_drives
- * y su UPDATE de `status` y `updated_at`, por columna.
+ * de 0014, el trigger de estados de test_drives de 0015 y los triggers de
+ * numeración y de estados de quotes de 0016 son SQL custom: drizzle-kit no
+ * los modela. 0015 da además SELECT e INSERT de test_drives y su UPDATE de
+ * `status` y `updated_at`, por columna; 0016, lo mismo para quotes.
  */
 export * from "./organizations";
 export * from "./profiles";
@@ -37,3 +38,4 @@ export * from "./messages";
 export * from "./whatsapp-lines";
 export * from "./conversations";
 export * from "./test-drives";
+export * from "./quotes";
