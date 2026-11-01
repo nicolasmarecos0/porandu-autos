@@ -540,6 +540,8 @@ describe("grants (ADR-001 §3.6)", () => {
       "opportunity_demand_facts_insert_member",
       "opportunity_notes_insert_member",
       "organizations_update_admin",
+      "test_drives_insert_member",
+      "test_drives_update_member",
       "vehicles_insert_member",
       "vehicles_update_mark_available",
     ]);
