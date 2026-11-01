@@ -1130,6 +1130,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",
+      "test_drives",
       "vehicles",
       "whatsapp_lines",
     ]);

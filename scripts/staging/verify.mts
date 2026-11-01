@@ -11,9 +11,10 @@ import { finding, type Finding } from "./report.mts";
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
- * 0012_team_settings, 0013_whatsapp_ingestion y 0014_whatsapp_outbound,
- * leído del catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4,
- * DEC-030, DEC-032, DEC-033, DEC-034, DEC-036, DEC-038, DEC-039, DEC-040).
+ * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound y
+ * 0015_test_drives, leído del catálogo real (DEC-018, DEC-019, ADR-001 §2,
+ * §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034, DEC-036, DEC-038, DEC-039,
+ * DEC-040, DEC-041).
  * Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
@@ -29,6 +30,7 @@ const APP_TABLES = [
   "opportunity_notes",
   "organizations",
   "profiles",
+  "test_drives",
   "vehicles",
   "whatsapp_lines",
 ];
@@ -77,8 +79,10 @@ type Policy = {
  * (private.user_admin_org_ids()); qué cambio de membership vale lo decide su
  * trigger (EXPECTED_TEAM_SETTINGS). El Hito 7 (DEC-039) suma la lectura de
  * conversations, y el Hito 8 (DEC-040), la de whatsapp_lines y
- * `conversation_id IS NULL` en el alta de mensajes de los miembros. Tal como
- * las deparsea PostgreSQL 17.
+ * `conversation_id IS NULL` en el alta de mensajes de los miembros. El Hito
+ * 9 (DEC-041) suma la lectura, el alta y la edición de test_drives: qué
+ * cambio de estado vale lo decide su trigger (EXPECTED_TEST_DRIVES). Tal
+ * como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -261,6 +265,37 @@ export const EXPECTED_POLICIES: Policy[] = [
     command: "SELECT",
     using: "(id = ( SELECT auth.uid() AS uid))",
     withCheck: null,
+  },
+  {
+    table: "test_drives",
+    name: "test_drives_insert_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "INSERT",
+    using: null,
+    withCheck:
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (created_by = ( SELECT auth.uid() AS uid)) AND (status = 'scheduled'::text) AND (created_at = now()) AND (updated_at = now()) AND (scheduled_at >= (now() - '00:05:00'::interval)))",
+  },
+  {
+    table: "test_drives",
+    name: "test_drives_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "test_drives",
+    name: "test_drives_update_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "UPDATE",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
   },
   {
     table: "vehicles",
@@ -462,6 +497,29 @@ export const EXPECTED_WHATSAPP_OUTBOUND = {
 };
 
 /**
+ * Agenda de pruebas de manejo (Hito 9, 0015, DEC-041 §2 y §3): los CHECKs y
+ * las FKs de test_drives (compuestas a la oportunidad y a la unidad) y el
+ * trigger de estados BEFORE UPDATE de fila, habilitado, cuya función es
+ * SECURITY INVOKER, con search_path vacío, sin EXECUTE para nadie de la app y
+ * con las tres reglas (matriz, hora agendada e inmutabilidad).
+ */
+export const EXPECTED_TEST_DRIVES = {
+  constraints: [
+    "test_drives_created_by_profiles_id_fk FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    "test_drives_opportunity_fk FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+    "test_drives_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "test_drives_scheduled_at_check CHECK (((scheduled_at >= '2000-01-01 00:00:00+00'::timestamp with time zone) AND (scheduled_at < '2100-01-01 00:00:00+00'::timestamp with time zone)))",
+    "test_drives_status_check CHECK ((status = ANY (ARRAY['scheduled'::text, 'confirmed'::text, 'completed'::text, 'no_show'::text, 'cancelled'::text])))",
+    "test_drives_vehicle_fk FOREIGN KEY (organization_id, vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
+  ],
+  triggers: [
+    "O CREATE TRIGGER test_drives_status_transition BEFORE UPDATE ON public.test_drives FOR EACH ROW EXECUTE FUNCTION private.enforce_test_drive_status_transition()",
+  ],
+  function:
+    'private.enforce_test_drive_status_transition() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+};
+
+/**
  * Toque de actividad (Hito 4, 0011, DEC-036 §1 y §2): una nota o un mensaje
  * nuevos mueven `last_activity_at` con un trigger AFTER INSERT de fila,
  * habilitado, cuya función es SECURITY DEFINER de postgres, con search_path
@@ -510,10 +568,11 @@ export const EXPECTED_TEAM_SETTINGS = {
  * Hito 8, DEC-040 §4), las altas de H1.2
  * (contacts, opportunities), H1.3B (vehicles), H1.4
  * (opportunity_demand_facts), el Hito 2 (opportunity_notes), el Hito 4
- * (messages) y el Hito 6 (memberships), estas cuatro de tabla (diseño A), y
- * los UPDATE de H1.3C (vehicles), H1.6 y el Hito 2 (opportunities) y el
- * Hito 6 (organizations, memberships), que son por columna
- * (AUTHENTICATED_UPDATE_COLUMNS). Ningún DELETE.
+ * (messages), el Hito 6 (memberships) y el Hito 9 (test_drives), estas de
+ * tabla (diseño A), y los UPDATE de H1.3C (vehicles), H1.6 y el Hito 2
+ * (opportunities), el Hito 6 (organizations, memberships) y el Hito 9
+ * (test_drives), que son por columna (AUTHENTICATED_UPDATE_COLUMNS).
+ * Ningún DELETE.
  */
 const AUTHENTICATED_PRIVILEGES = [
   "INSERT contacts",
@@ -522,17 +581,19 @@ const AUTHENTICATED_PRIVILEGES = [
   "INSERT opportunities",
   "INSERT opportunity_demand_facts",
   "INSERT opportunity_notes",
+  "INSERT test_drives",
   "INSERT vehicles",
   ...MEMBER_READABLE_TABLES.map((table) => `SELECT ${table}`),
   "UPDATE memberships",
   "UPDATE opportunities",
   "UPDATE organizations",
+  "UPDATE test_drives",
   "UPDATE vehicles",
 ];
 
 /**
  * Lo único que authenticated puede actualizar (H1.3C, H1.6, el Hito 2, el
- * cierre de DEC-034 y el Hito 6): nunca la tabla.
+ * cierre de DEC-034, el Hito 6 y el Hito 9): nunca la tabla.
  */
 const AUTHENTICATED_UPDATE_COLUMNS = [
   "memberships.active",
@@ -551,6 +612,8 @@ const AUTHENTICATED_UPDATE_COLUMNS = [
   "organizations.default_currency",
   "organizations.name",
   "organizations.updated_at",
+  "test_drives.status",
+  "test_drives.updated_at",
   "vehicles.status",
   "vehicles.updated_at",
 ];
@@ -1071,6 +1134,55 @@ export async function verifyCatalog(
     ),
   );
 
+  // Agenda (Hito 9): constraints, trigger de estados y su función.
+  const [testDrives] = await tx<
+    {
+      constraints: string[] | null;
+      triggers: string[] | null;
+      function: string | null;
+    }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.test_drives')
+          AND contype IN ('c', 'f', 'u')
+      ) AS constraints,
+      (
+        SELECT array_agg(t.tgenabled::text || ' ' || pg_get_triggerdef(t.oid) ORDER BY t.tgname)
+        FROM pg_trigger t
+        WHERE t.tgrelid = to_regclass('public.test_drives') AND NOT t.tgisinternal
+      ) AS triggers,
+      (
+        SELECT p.oid::regprocedure::text
+          || ' SECURITY DEFINER=' || p.prosecdef
+          || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+          || ' EXECUTE authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+          || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+          || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+          || ' guards=' || (
+            position('test_drives_status_transition' in p.prosrc) > 0
+            AND position('test_drives_not_started' in p.prosrc) > 0
+            AND position('test_drives_immutable' in p.prosrc) > 0
+          )
+        FROM pg_proc p
+        WHERE p.oid = to_regprocedure('private.enforce_test_drive_status_transition()')
+      ) AS function
+  `;
+  const testDrivesFound = {
+    constraints: testDrives?.constraints ?? [],
+    triggers: testDrives?.triggers ?? [],
+    function: testDrives?.function ?? null,
+  };
+  findings.push(
+    finding(
+      "schema.test-drives",
+      equal(testDrivesFound, EXPECTED_TEST_DRIVES),
+      `test_drives: ${testDrivesFound.constraints.length} constraints (expected: ${EXPECTED_TEST_DRIVES.constraints.length}, exact definitions); triggers: ${list(testDrivesFound.triggers)}; status function: ${testDrivesFound.function ?? "missing"}`,
+    ),
+  );
+
   // Envío de WhatsApp (Hito 8): la función de registro.
   const [outboundFn] = await tx<{ function: string | null }[]>`
     SELECT (
@@ -1274,7 +1386,7 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages and memberships, UPDATE on opportunities, vehicles, organizations and memberships only; no DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships and test_drives, UPDATE on opportunities, vehicles, organizations, memberships and test_drives only; no DELETE)`,
     ),
   );
 
@@ -1464,6 +1576,7 @@ const DATA_API_TABLES = [
   "messages",
   "conversations",
   "whatsapp_lines",
+  "test_drives",
 ];
 /** Nombres que pg_graphql daría a los tipos de la app. */
 const GRAPHQL_APP_TYPES = [
@@ -1479,6 +1592,7 @@ const GRAPHQL_APP_TYPES = [
   "Messages",
   "Conversations",
   "WhatsappLines",
+  "TestDrives",
 ];
 
 /** Campo de colección de pg_graphql con nombres inflectados. */

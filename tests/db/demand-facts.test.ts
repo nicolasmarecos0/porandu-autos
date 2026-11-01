@@ -47,11 +47,11 @@ vi.mock("server-only", () => ({}));
 /*
  * Las postcondiciones del ledger append-only (0007) viajan en cada migración
  * posterior junto con las de toda la base: se corren las de la última
- * (0012_team_settings, DEC-038), que son las que
+ * (0015_test_drives, DEC-041), que son las que
  * describen el catálogo real de hoy.
  */
 const MIGRATION = new URL(
-  "../../db/migrations/0012_team_settings.sql",
+  "../../db/migrations/0015_test_drives.sql",
   import.meta.url,
 );
 
@@ -762,7 +762,7 @@ describe("postcondiciones del ledger (0007, vigentes en 0012) sobre catálogos m
        CREATE POLICY probe ON public.opportunity_demand_facts FOR UPDATE TO authenticated
          USING (organization_id IN (SELECT private.user_org_ids()))
          WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
-      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\), opportunities\.stage, loss_reason, vehicle_id, updated_at and the closure metadata \(H1\.6, Hito 2, DEC-034\), organizations\.name, default_currency, updated_at and memberships\.role, active, updated_at \(Hito 6, DEC-038\)/,
+      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\), opportunities\.stage, loss_reason, vehicle_id, updated_at and the closure metadata \(H1\.6, Hito 2, DEC-034\), organizations\.name, default_currency, updated_at and memberships\.role, active, updated_at \(Hito 6, DEC-038\) and test_drives\.status, updated_at \(Hito 9, DEC-041\)/,
     ],
     [
       "UPDATE de service_role",
@@ -794,7 +794,7 @@ describe("postcondiciones del ledger (0007, vigentes en 0012) sobre catálogos m
       `GRANT INSERT ON public.profiles TO authenticated;
        CREATE POLICY probe ON public.profiles FOR INSERT TO authenticated
          WITH CHECK (id = (SELECT auth.uid()))`,
-      /may only insert into contacts, opportunities, vehicles, opportunity_demand_facts \(H1\.4\), opportunity_notes \(Hito 2\), messages \(Hito 4\) and memberships \(Hito 6\)/,
+      /may only insert into contacts, opportunities, vehicles, opportunity_demand_facts \(H1\.4\), opportunity_notes \(Hito 2\), messages \(Hito 4\), memberships \(Hito 6\) and test_drives \(Hito 9\)/,
     ],
     [
       "privilegios de app_runtime sobre la tabla",
