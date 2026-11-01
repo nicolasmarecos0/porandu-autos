@@ -55,6 +55,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-039 | Procesamiento de Webhooks de WhatsApp e Ingesta de Mensajes | Aceptada en principio | 2026-10-21 |
 | DEC-040 | Interfaz de Bandeja de Entrada y Motor de Envío de WhatsApp | Aceptada en principio | 2026-10-29 |
 | DEC-041 | Agenda de pruebas de manejo (Calendar, Hito 9) | Aceptada | 2026-11-01 |
+| DEC-042 | Cotizaciones formales (Deal Management, Hito 10) | Aceptada | 2026-11-01 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1098,6 +1099,43 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 - **Consecuencias:**
   - `0015_test_drives` se aplica a staging después del merge con `preflight → migrate → verify`, con `expected_migrations = 0015_test_drives` si staging ya tiene `0014` (o con las anteriores que falten delante, en orden).
   - `domains/calendar/zoned-time.ts` repite la conversión de hora de pared de `domains/dashboard/period.ts`. Unificarlas queda como backlog técnico.
+
+---
+
+## DEC-042 — Cotizaciones formales (Deal Management, Hito 10)
+- **Estado:** Aceptada · 2026-11-01. Formaliza el pedido del fundador del 1 nov 2026 ("Módulo de Cotizaciones y Ofertas" como Hito 10: presupuesto formal tras un test drive, asociado a un cliente y una unidad, con descuentos, y la oportunidad ganada o perdida). El fundador aprobó la decisión completa el mismo día, incluidas las *propuestas de implementación* (aprobación de admin por encima del 10 %, tope del 30 %, validez de 7 días propuesta y hasta 30, y cotizaciones inmutables que se anulan y se vuelven a crear).
+- **Contexto:** DEC-003 ubica el Offer Builder en P1, con persistencia "más adelante, dentro de P1", aprobación humana obligatoria y la consecuencia de que el schema incorporará una entidad de ofertas con estados. Hasta acá solo existía el mock del slice. DEC-034 ya cierra la oportunidad (`won`/`lost`) con sus metadatos por una puerta única, `closeOpportunity()`.
+- **Decisión:**
+  1. **Alcance.** Una cotización es el presupuesto formal de **una unidad** del stock para **una oportunidad** (el cliente es el de la oportunidad: no se duplica el contacto). Una oportunidad puede tener varias; a lo sumo una aceptada. Se crea en `qualifying` o `negotiating` y para una unidad `available` o `reserved` de la organización activa.
+  2. **Estados (`quotes.status`).**
+     - `draft` (Borrador) → `approved` (Aprobada) | `withdrawn` (Anulada); `approved` → `sent` (Enviada) | `withdrawn`; `sent` → `accepted` (Aceptada) | `rejected` (Rechazada) | `withdrawn`. Las tres últimas son terminales.
+     - `approved` es el **paso de aprobación humana obligatorio** (DEC-003, CLAUDE.md §2): nada pasa a `sent` sin pasar por él. *Propuesta de implementación:* cualquier miembro activo aprueba un descuento efectivo de hasta el 10 %; por encima, solo `admin`.
+     - Aprobar, enviar o aceptar exigen la validez vigente y la oportunidad en `qualifying` o `negotiating`; aceptar exige además la unidad `available` o `reserved`. Rechazar o anular siempre se puede (limpian, no comprometen).
+     - "Vencida" no es un estado guardado: una cotización abierta cuyo `valid_until` es anterior al día de Asunción se muestra "Vencida" (sin jobs, B1 §4).
+     - *Propuesta de implementación:* las condiciones económicas son inmutables desde el alta. Corregir una cotización es anularla y crear otra (como reprogramar en DEC-041).
+  3. **Precio y descuento.**
+     - `list_price` + `currency`: el precio publicado de la unidad al crear la cotización, copiado por el servidor (no sale del pedido). Una unidad sin precio publicado no se cotiza. Precio publicado ≠ precio ofertado (DEC-003).
+     - Un solo descuento: ninguno, un monto fijo (en la moneda de la lista; PYG sin decimales) o un porcentaje (hasta dos decimales). *Propuesta de implementación:* tope del 30 % efectivo.
+     - `total_price` = lista − descuento. El porcentaje se redondea al guaraní (PYG) o al centavo (USD), la mitad hacia arriba. Mismo contrato de dinero que DEC-025 §5 y §6: `numeric(14,2)`, sin float ni FX. La base rehace la cuenta en un CHECK.
+  4. **Validez y condiciones.** `valid_until` es el último día de validez, inclusive, en días de Asunción. *Propuesta de implementación:* el formulario propone 7 días y admite de hoy a 30 días. `notes` (condiciones) opcionales, de 1 a 500 caracteres, normalizadas como la bitácora (DEC-033 §1). El pedido se valida con Zod (DEC-009, como DEC-034 §7).
+  5. **Modelo y base (`0016_quotes`).** Tabla `quotes` tenant-scoped (ADR-001 §3.6) con FKs compuestas `(organization_id, opportunity_id)` y `(organization_id, vehicle_id)` RESTRICT, número correlativo por organización (`UNIQUE (organization_id, number)`, asignado por el trigger `quotes_assign_number` con un advisory lock por organización), CHECKs de precio, descuento, total, validez, notas y sellos, y el índice único parcial `quotes_accepted_opportunity_key`.
+     - RLS: lectura por membership activa; alta con `created_by = auth.uid()`, `status = 'draft'`, sin sellos, el reloj de la base, la oportunidad cotizable y la unidad en stock con el precio publicado igual a la lista; edición tenant-scoped.
+     - Grants: `SELECT`, `INSERT` y `UPDATE (status, updated_at)` para `authenticated`. Sin DELETE.
+     - El trigger `quotes_status_transition` exige la matriz, la validez, la oportunidad abierta, la unidad en stock, el rol `admin` sobre el 10 % y un usuario para aprobar; deja inmutable el resto de la fila (también para el rol dueño) y fija `approved_by`/`approved_at`, `sent_at`, `decided_at` y `updated_at`.
+     - Postcondiciones: las de 0015 con `quotes` entre las altas y `quotes.status`/`updated_at` entre las ediciones aprobadas, más los triggers, sus funciones, las FKs compuestas, los CHECKs y los índices únicos.
+  6. **Sin envíos.** "Enviada" lo marca el vendedor cuando entregó el presupuesto por su cuenta. Porandú no manda nada al cliente (B1 §4: envío real de ofertas fuera de alcance). Un PDF o un mensaje de WhatsApp con la cotización requieren una decisión nueva.
+  7. **Ganada y perdida.** Aceptar o rechazar una cotización **no cierra** la oportunidad: el cierre sigue siendo un solo acto por `closeOpportunity()` (DEC-034 §1). *Propuesta de implementación:* con una cotización aceptada, el diálogo "Marcar como ganada" precarga el precio final y la moneda con su total (editables), y la unidad vinculada se compara con la cotizada solo como aviso.
+  8. **Puertas únicas.** Server Actions `createQuote()` y `changeQuoteStatus()` en `lib/quotes/actions.ts` → `db/queries/quotes-write.ts` (`requireTenant()` → validar → `withTenant()` → filas bloqueadas → `planQuoteTransition()` → UPDATE compare-and-set → trigger). ESLint impide importar el módulo de escritura desde otro lado. Lectura en `db/queries/quotes.ts`, dentro de la transacción del loader de `/opportunities/[id]`. Resultados de `createQuote()`: `created`, `invalid` (errores por campo, incluida la unidad fuera de stock o sin precio publicado), `opportunity_unavailable` y `failed`. De `changeQuoteStatus()`: `changed`, `unchanged` (compare-and-set, con el estado real), `not_found`, `invalid_transition`, `expired`, `opportunity_closed`, `vehicle_unavailable`, `requires_admin`, `already_accepted` y `failed`.
+  9. **UI.** En `/opportunities/[id]`, un panel "Cotizaciones" con la lista (número, unidad, total, validez, estado) y un drawer "Nueva cotización" (Radix Dialog) con la unidad, el precio de lista de solo lectura, el descuento con el total en vivo, la validez y las condiciones. Cada cambio de estado pasa por una confirmación (alertdialog de Radix).
+  10. **Fuera de este bloque:** editar una cotización, PDF o envío al cliente, varias unidades o accesorios por cotización, trade-in y financiación (motor financiero, TB §4), Goal Seek, comisiones, reservar o vender la unidad al aceptar, límites de descuento configurables por organización, el Deal Health real y mostrar cotizaciones en la cola, Stock o el Cockpit.
+- **Aclara / supersede:**
+  - DEC-003: la entidad de ofertas con estados se persiste como `quotes`. El Offer Builder completo de 8 secciones sigue como referencia visual; este bloque persiste su núcleo (precio, descuento, validez y aprobación).
+  - B1 §4: la persistencia de `offers` deja de estar diferida para este núcleo. El envío real sigue fuera.
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: el acceso sigue `requireTenant()` → `withTenant()` → RLS (ADR-001).
+- **Consecuencias:**
+  - `0016_quotes` se aplica a staging después del merge con `preflight → migrate → verify`, con `expected_migrations = 0016_quotes` si staging ya tiene `0015`.
+  - Cuando se habilite reservar o vender una unidad, ese flujo tiene que considerar las cotizaciones abiertas que la tienen: hoy aceptar no saca la unidad de `available`.
 
 ---
 

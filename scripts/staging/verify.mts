@@ -11,10 +11,10 @@ import { finding, type Finding } from "./report.mts";
  * 0006_vehicle_availability, 0007_opportunity_demand_facts,
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
- * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound y
- * 0015_test_drives, leído del catálogo real (DEC-018, DEC-019, ADR-001 §2,
- * §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034, DEC-036, DEC-038, DEC-039,
- * DEC-040, DEC-041).
+ * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
+ * 0015_test_drives y 0016_quotes, leído del catálogo real (DEC-018, DEC-019,
+ * ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034, DEC-036,
+ * DEC-038, DEC-039, DEC-040, DEC-041, DEC-042).
  * Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
@@ -30,6 +30,7 @@ const APP_TABLES = [
   "opportunity_notes",
   "organizations",
   "profiles",
+  "quotes",
   "test_drives",
   "vehicles",
   "whatsapp_lines",
@@ -81,8 +82,11 @@ type Policy = {
  * conversations, y el Hito 8 (DEC-040), la de whatsapp_lines y
  * `conversation_id IS NULL` en el alta de mensajes de los miembros. El Hito
  * 9 (DEC-041) suma la lectura, el alta y la edición de test_drives: qué
- * cambio de estado vale lo decide su trigger (EXPECTED_TEST_DRIVES). Tal
- * como las deparsea PostgreSQL 17.
+ * cambio de estado vale lo decide su trigger (EXPECTED_TEST_DRIVES). El
+ * Hito 10 (DEC-042) suma la lectura, el alta (oportunidad cotizable y
+ * unidad en stock con el precio publicado como lista) y la edición de
+ * quotes: qué cambio de estado vale lo decide su trigger (EXPECTED_QUOTES).
+ * Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
   {
@@ -265,6 +269,37 @@ export const EXPECTED_POLICIES: Policy[] = [
     command: "SELECT",
     using: "(id = ( SELECT auth.uid() AS uid))",
     withCheck: null,
+  },
+  {
+    table: "quotes",
+    name: "quotes_insert_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "INSERT",
+    using: null,
+    withCheck:
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (created_by = ( SELECT auth.uid() AS uid)) AND (status = 'draft'::text) AND (approved_by IS NULL) AND (approved_at IS NULL) AND (sent_at IS NULL) AND (decided_at IS NULL) AND (created_at = now()) AND (updated_at = now()) AND (EXISTS ( SELECT\n   FROM opportunities\n  WHERE ((opportunities.organization_id = quotes.organization_id) AND (opportunities.id = quotes.opportunity_id) AND (opportunities.stage = ANY (ARRAY['qualifying'::text, 'negotiating'::text]))))) AND (EXISTS ( SELECT\n   FROM vehicles\n  WHERE ((vehicles.organization_id = quotes.organization_id) AND (vehicles.id = quotes.vehicle_id) AND (vehicles.status = ANY (ARRAY['available'::text, 'reserved'::text])) AND (vehicles.price = quotes.list_price) AND (vehicles.currency = quotes.currency)))))",
+  },
+  {
+    table: "quotes",
+    name: "quotes_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "quotes",
+    name: "quotes_update_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "UPDATE",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
   },
   {
     table: "test_drives",
@@ -520,6 +555,49 @@ export const EXPECTED_TEST_DRIVES = {
 };
 
 /**
+ * Cotizaciones (Hito 10, 0016, DEC-042 §5): los CHECKs, las FKs (compuestas
+ * a la oportunidad y a la unidad) y la unique del número de quotes, el
+ * índice único parcial de la cotización aceptada, los triggers de número
+ * (BEFORE INSERT) y de estados (BEFORE UPDATE), habilitados, y sus
+ * funciones, SECURITY INVOKER, con search_path vacío, sin EXECUTE para nadie
+ * de la app y, la de estados, con todas sus reglas.
+ */
+export const EXPECTED_QUOTES = {
+  constraints: [
+    "quotes_approved_by_profiles_id_fk FOREIGN KEY (approved_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    "quotes_approved_stamp_check CHECK ((((approved_by IS NULL) = (approved_at IS NULL)) AND\nCASE\n    WHEN (status = 'draft'::text) THEN (approved_at IS NULL)\n    WHEN (status = ANY (ARRAY['approved'::text, 'sent'::text, 'accepted'::text, 'rejected'::text])) THEN (approved_at IS NOT NULL)\n    ELSE true\nEND))",
+    "quotes_created_by_profiles_id_fk FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    "quotes_currency_check CHECK ((currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
+    "quotes_decided_stamp_check CHECK (((decided_at IS NOT NULL) = (status = ANY (ARRAY['accepted'::text, 'rejected'::text, 'withdrawn'::text]))))",
+    "quotes_discount_check CHECK ((((discount_kind = 'none'::text) AND (discount_value IS NULL)) OR ((discount_kind = 'amount'::text) AND (discount_value > (0)::numeric) AND ((discount_value * (100)::numeric) <= ((30)::numeric * list_price)) AND ((currency <> 'PYG'::text) OR (discount_value = trunc(discount_value)))) OR ((discount_kind = 'percent'::text) AND (discount_value > (0)::numeric) AND (discount_value <= (30)::numeric))))",
+    "quotes_discount_kind_check CHECK ((discount_kind = ANY (ARRAY['none'::text, 'amount'::text, 'percent'::text])))",
+    "quotes_list_price_check CHECK (((list_price > (0)::numeric) AND ((currency <> 'PYG'::text) OR (list_price = trunc(list_price)))))",
+    "quotes_notes_check CHECK ((((char_length(notes) >= 1) AND (char_length(notes) <= 500)) AND (notes = btrim(notes, (' '::text || chr(10)))) AND (translate(notes, chr(10), ''::text) !~ '[[:cntrl:]]'::text)))",
+    "quotes_number_check CHECK ((number > 0))",
+    "quotes_opportunity_fk FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+    "quotes_organization_id_number_key UNIQUE (organization_id, number)",
+    "quotes_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "quotes_sent_stamp_check CHECK (\nCASE\n    WHEN (status = ANY (ARRAY['draft'::text, 'approved'::text])) THEN (sent_at IS NULL)\n    WHEN (status = ANY (ARRAY['sent'::text, 'accepted'::text, 'rejected'::text])) THEN (sent_at IS NOT NULL)\n    ELSE true\nEND)",
+    "quotes_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'approved'::text, 'sent'::text, 'accepted'::text, 'rejected'::text, 'withdrawn'::text])))",
+    "quotes_total_price_check CHECK ((total_price =\nCASE discount_kind\n    WHEN 'none'::text THEN list_price\n    WHEN 'amount'::text THEN (list_price - discount_value)\n    ELSE round(((list_price * ((100)::numeric - discount_value)) / (100)::numeric),\n    CASE\n        WHEN (currency = 'PYG'::text) THEN 0\n        ELSE 2\n    END)\nEND))",
+    "quotes_valid_until_check CHECK (((valid_until >= ((created_at AT TIME ZONE 'America/Asuncion'::text))::date) AND (valid_until <= (((created_at AT TIME ZONE 'America/Asuncion'::text))::date + 30))))",
+    "quotes_vehicle_fk FOREIGN KEY (organization_id, vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
+  ],
+  uniqueIndexes: [
+    "quotes_accepted_opportunity_key CREATE UNIQUE INDEX quotes_accepted_opportunity_key ON public.quotes USING btree (organization_id, opportunity_id) WHERE (status = 'accepted'::text)",
+    "quotes_organization_id_number_key CREATE UNIQUE INDEX quotes_organization_id_number_key ON public.quotes USING btree (organization_id, number)",
+  ],
+  triggers: [
+    "O CREATE TRIGGER quotes_assign_number BEFORE INSERT ON public.quotes FOR EACH ROW EXECUTE FUNCTION private.assign_quote_number()",
+    "O CREATE TRIGGER quotes_status_transition BEFORE UPDATE ON public.quotes FOR EACH ROW EXECUTE FUNCTION private.enforce_quote_status_transition()",
+  ],
+  functions: [
+    'private.assign_quote_number() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+    'private.enforce_quote_status_transition() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+  ],
+};
+
+/**
  * Toque de actividad (Hito 4, 0011, DEC-036 §1 y §2): una nota o un mensaje
  * nuevos mueven `last_activity_at` con un trigger AFTER INSERT de fila,
  * habilitado, cuya función es SECURITY DEFINER de postgres, con search_path
@@ -568,10 +646,11 @@ export const EXPECTED_TEAM_SETTINGS = {
  * Hito 8, DEC-040 §4), las altas de H1.2
  * (contacts, opportunities), H1.3B (vehicles), H1.4
  * (opportunity_demand_facts), el Hito 2 (opportunity_notes), el Hito 4
- * (messages), el Hito 6 (memberships) y el Hito 9 (test_drives), estas de
- * tabla (diseño A), y los UPDATE de H1.3C (vehicles), H1.6 y el Hito 2
- * (opportunities), el Hito 6 (organizations, memberships) y el Hito 9
- * (test_drives), que son por columna (AUTHENTICATED_UPDATE_COLUMNS).
+ * (messages), el Hito 6 (memberships), el Hito 9 (test_drives) y el Hito 10
+ * (quotes), estas de tabla (diseño A), y los UPDATE de H1.3C (vehicles),
+ * H1.6 y el Hito 2 (opportunities), el Hito 6 (organizations, memberships),
+ * el Hito 9 (test_drives) y el Hito 10 (quotes), que son por columna
+ * (AUTHENTICATED_UPDATE_COLUMNS).
  * Ningún DELETE.
  */
 const AUTHENTICATED_PRIVILEGES = [
@@ -581,19 +660,21 @@ const AUTHENTICATED_PRIVILEGES = [
   "INSERT opportunities",
   "INSERT opportunity_demand_facts",
   "INSERT opportunity_notes",
+  "INSERT quotes",
   "INSERT test_drives",
   "INSERT vehicles",
   ...MEMBER_READABLE_TABLES.map((table) => `SELECT ${table}`),
   "UPDATE memberships",
   "UPDATE opportunities",
   "UPDATE organizations",
+  "UPDATE quotes",
   "UPDATE test_drives",
   "UPDATE vehicles",
 ];
 
 /**
  * Lo único que authenticated puede actualizar (H1.3C, H1.6, el Hito 2, el
- * cierre de DEC-034, el Hito 6 y el Hito 9): nunca la tabla.
+ * cierre de DEC-034, el Hito 6, el Hito 9 y el Hito 10): nunca la tabla.
  */
 const AUTHENTICATED_UPDATE_COLUMNS = [
   "memberships.active",
@@ -612,6 +693,8 @@ const AUTHENTICATED_UPDATE_COLUMNS = [
   "organizations.default_currency",
   "organizations.name",
   "organizations.updated_at",
+  "quotes.status",
+  "quotes.updated_at",
   "test_drives.status",
   "test_drives.updated_at",
   "vehicles.status",
@@ -1180,6 +1263,79 @@ export async function verifyCatalog(
       "schema.test-drives",
       equal(testDrivesFound, EXPECTED_TEST_DRIVES),
       `test_drives: ${testDrivesFound.constraints.length} constraints (expected: ${EXPECTED_TEST_DRIVES.constraints.length}, exact definitions); triggers: ${list(testDrivesFound.triggers)}; status function: ${testDrivesFound.function ?? "missing"}`,
+    ),
+  );
+
+  // Cotizaciones (Hito 10): constraints, índices únicos, triggers y sus
+  // funciones.
+  const [quoteCatalog] = await tx<
+    {
+      constraints: string[] | null;
+      uniqueIndexes: string[] | null;
+      triggers: string[] | null;
+      functions: string[] | null;
+    }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.quotes')
+          AND contype IN ('c', 'f', 'u')
+      ) AS constraints,
+      (
+        SELECT array_agg(c.relname || ' ' || pg_get_indexdef(i.indexrelid) ORDER BY c.relname)
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE i.indrelid = to_regclass('public.quotes')
+          AND i.indisunique
+          AND NOT i.indisprimary
+      ) AS "uniqueIndexes",
+      (
+        SELECT array_agg(t.tgenabled::text || ' ' || pg_get_triggerdef(t.oid) ORDER BY t.tgname)
+        FROM pg_trigger t
+        WHERE t.tgrelid = to_regclass('public.quotes') AND NOT t.tgisinternal
+      ) AS triggers,
+      (
+        SELECT array_agg(
+          p.oid::regprocedure::text
+            || ' SECURITY DEFINER=' || p.prosecdef
+            || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+            || ' EXECUTE authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+            || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+            || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+            || ' guards=' || (
+              p.oid = to_regprocedure('private.assign_quote_number()')
+              OR (
+                position('quotes_status_transition' in p.prosrc) > 0
+                AND position('quotes_immutable' in p.prosrc) > 0
+                AND position('quotes_expired' in p.prosrc) > 0
+                AND position('quotes_opportunity_closed' in p.prosrc) > 0
+                AND position('quotes_vehicle_unavailable' in p.prosrc) > 0
+                AND position('quotes_discount_requires_admin' in p.prosrc) > 0
+                AND position('quotes_approval_requires_user' in p.prosrc) > 0
+              )
+            )
+          ORDER BY p.proname
+        )
+        FROM pg_proc p
+        WHERE p.oid IN (
+          to_regprocedure('private.assign_quote_number()'),
+          to_regprocedure('private.enforce_quote_status_transition()')
+        )
+      ) AS functions
+  `;
+  const quotesFound = {
+    constraints: quoteCatalog?.constraints ?? [],
+    uniqueIndexes: quoteCatalog?.uniqueIndexes ?? [],
+    triggers: quoteCatalog?.triggers ?? [],
+    functions: quoteCatalog?.functions ?? [],
+  };
+  findings.push(
+    finding(
+      "schema.quotes",
+      equal(quotesFound, EXPECTED_QUOTES),
+      `quotes: ${quotesFound.constraints.length} constraints (expected: ${EXPECTED_QUOTES.constraints.length}, exact definitions); unique indexes: ${quotesFound.uniqueIndexes.length} (expected: ${EXPECTED_QUOTES.uniqueIndexes.length}); triggers: ${list(quotesFound.triggers)}; functions: ${list(quotesFound.functions)}`,
     ),
   );
 

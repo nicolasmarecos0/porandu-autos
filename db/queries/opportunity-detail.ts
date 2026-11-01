@@ -20,9 +20,14 @@ import { matchRail, type MatchRail } from "@/domains/match/presentation";
 import {
   closureFromRow,
   closureSummary,
+  todayInAsuncion,
   type ClosureSummary,
 } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
+import {
+  quotesPanelData,
+  type QuotesPanelData,
+} from "@/domains/quotes/presentation";
 import {
   canChangeVehicleLink,
   linkedVehicleCard,
@@ -36,6 +41,7 @@ import { selectDemandRows } from "./demand-rows";
 import { selectOpportunityMessages } from "./messages";
 import { selectOpportunityNotes } from "./opportunity-notes";
 import { stageFromDb } from "./opportunities";
+import { selectOpportunityQuotes, selectQuotableVehicles } from "./quotes";
 import { selectMatchCandidates, selectVehicleById } from "./vehicles";
 
 /*
@@ -67,6 +73,11 @@ import { selectMatchCandidates, selectVehicleById } from "./vehicles";
  * - Muro de actividad (Hito 4, DEC-036 §11): en la misma transacción lee los
  *   mensajes registrados de la oportunidad y los combina con las notas, del
  *   más reciente al más viejo (activityTimeline()).
+ * - Cotizaciones (Hito 10, DEC-042 §9): en la misma transacción lee las
+ *   cotizaciones de la oportunidad con su unidad y las unidades que se
+ *   pueden cotizar (en stock y con precio publicado). Las acciones de cada
+ *   cotización las decide el dominio con el rol de la membership del que
+ *   mira; el servidor y la base las vuelven a exigir.
  * - Solo lee: no toca `last_activity_at`, el ledger, las notas, los
  *   mensajes ni el stock.
  */
@@ -93,6 +104,8 @@ export type OpportunityDetail = Readonly<{
   }>;
   /** Notas y mensajes en un solo muro, del registro más reciente al más viejo. */
   activity: readonly ActivityEntry[];
+  /** Panel "Cotizaciones" (Hito 10) y lo que necesita el drawer de alta. */
+  quotes: QuotesPanelData;
 }>;
 
 /** Texto opcional del legado: vacío o en blanco no cuenta. */
@@ -161,11 +174,38 @@ export async function getOpportunityDetail(
       ctx.organizationId,
       opportunity.id,
     );
-    return { opportunity, rows, candidates, linked, notes, messages };
+    const quoteRows = await selectOpportunityQuotes(
+      tx,
+      ctx.organizationId,
+      opportunity.id,
+    );
+    const quotableVehicles = await selectQuotableVehicles(
+      tx,
+      ctx.organizationId,
+    );
+    return {
+      opportunity,
+      rows,
+      candidates,
+      linked,
+      notes,
+      messages,
+      quoteRows,
+      quotableVehicles,
+    };
   });
   if (!found) return null;
 
-  const { opportunity, rows, candidates, linked, notes, messages } = found;
+  const {
+    opportunity,
+    rows,
+    candidates,
+    linked,
+    notes,
+    messages,
+    quoteRows,
+    quotableVehicles,
+  } = found;
   const stage = stageFromDb[opportunity.stage];
   const closure = closureFromRow({ ...opportunity, stage });
   const truth = resolveDemand(rows);
@@ -194,5 +234,12 @@ export async function getOpportunityDetail(
       linked: linked ? linkedVehicleCard(linked) : null,
     },
     activity: activityTimeline(notes, messages, ctx.userId),
+    quotes: quotesPanelData(quoteRows, quotableVehicles, {
+      viewerUserId: ctx.userId,
+      viewerIsAdmin: ctx.role === "admin",
+      opportunityStage: stage,
+      linkedVehicleId: opportunity.vehicleId,
+      today: todayInAsuncion(new Date()),
+    }),
   };
 }

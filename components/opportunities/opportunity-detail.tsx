@@ -18,6 +18,8 @@ import type { ActivityEntry } from "@/domains/conversations/timeline";
 import type { ClosureSummary } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
 import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
+import type { QuotesPanelData } from "@/domains/quotes/presentation";
+import { QuotesPanel } from "@/components/quotes/quotes-panel";
 
 import { ClosureSummaryCard } from "./closure-summary";
 import { LinkedVehicle } from "./linked-vehicle";
@@ -33,7 +35,9 @@ import { VehicleLinkButton, VehicleLinkProvider } from "./vehicle-link";
  * unidad del stock ofrecerle (Match v0, H1.5, DEC-031 §5) y, desde Hito 2
  * (DEC-033), qué pasó en la negociación y qué unidad se negocia, y cómo se
  * cerró (DEC-034). Desde el Hito 4 (DEC-036), las notas y los mensajes
- * registrados conviven en el muro "Actividad".
+ * registrados conviven en el muro "Actividad". Desde el Hito 10 (DEC-042),
+ * el panel "Cotizaciones" muestra los presupuestos formales, con su alta y
+ * sus cambios de estado.
  *
  *   ┌ contacto · etapa ──────────────────────────── Volver · Editar ┐
  *   │ Etapa                                 │ Unidad en negociación  │
@@ -149,6 +153,8 @@ type OpportunityDetailViewProps = Readonly<{
   }>;
   /** Notas y mensajes en un solo muro, del registro más reciente al más viejo. */
   activity: readonly ActivityEntry[];
+  /** Panel "Cotizaciones" (Hito 10, DEC-042 §9). */
+  quotes: QuotesPanelData;
 }>;
 
 /** Copy de la marca de la tarjeta de match que ya es la unidad vinculada. */
@@ -209,6 +215,7 @@ export function OpportunityDetailView({
   matches,
   vehicleLink,
   activity,
+  quotes,
 }: OpportunityDetailViewProps) {
   const { linked } = vehicleLink;
   return (
@@ -242,6 +249,7 @@ export function OpportunityDetailView({
         saleVehicle={
           linked ? { name: linked.name, detail: linked.detail } : null
         }
+        acceptedQuoteTotal={quotes.acceptedTotal}
       />
       {closure ? (
         <ClosureSummaryCard
@@ -249,6 +257,7 @@ export function OpportunityDetailView({
           vehicleName={linked?.name ?? null}
         />
       ) : null}
+      <QuotesPanel opportunityId={id} data={quotes} />
       <OpportunityActivity opportunityId={id} activity={activity} />
       <section aria-labelledby="demand-heading" className="max-w-3xl">
         <Panel>

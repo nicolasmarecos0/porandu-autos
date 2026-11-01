@@ -47,6 +47,7 @@ describe("readRepoMigrations", () => {
       [13, "0013_whatsapp_ingestion"],
       [14, "0014_whatsapp_outbound"],
       [15, "0015_test_drives"],
+      [16, "0016_quotes"],
     ]);
   });
 
@@ -75,14 +76,14 @@ describe("compareHistory", () => {
       applied: [REPO[0]],
       pending: REPO.slice(1),
     });
-    // Staging con H1.4/H1.5: 0008 a 0015 pendientes.
+    // Staging con H1.4/H1.5: 0008 a 0016 pendientes.
     expect(compareHistory(REPO, applied(8))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 8),
       pending: REPO.slice(8),
     });
-    expect(REPO.slice(8)).toHaveLength(8);
-    // Staging con H1.6: 0009 a 0015 pendientes.
+    expect(REPO.slice(8)).toHaveLength(9);
+    // Staging con H1.6: 0009 a 0016 pendientes.
     expect(compareHistory(REPO, applied(9))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 9),
@@ -94,45 +95,60 @@ describe("compareHistory", () => {
         REPO[13],
         REPO[14],
         REPO[15],
+        REPO[16],
       ],
     });
-    // Staging con el Hito 2: 0010 a 0015 pendientes.
+    // Staging con el Hito 2: 0010 a 0016 pendientes.
     expect(compareHistory(REPO, applied(10))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 10),
-      pending: [REPO[10], REPO[11], REPO[12], REPO[13], REPO[14], REPO[15]],
+      pending: [
+        REPO[10],
+        REPO[11],
+        REPO[12],
+        REPO[13],
+        REPO[14],
+        REPO[15],
+        REPO[16],
+      ],
     });
-    // Staging con el Hito 2A: 0011 a 0015 pendientes.
+    // Staging con el Hito 2A: 0011 a 0016 pendientes.
     expect(compareHistory(REPO, applied(11))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 11),
-      pending: [REPO[11], REPO[12], REPO[13], REPO[14], REPO[15]],
+      pending: [REPO[11], REPO[12], REPO[13], REPO[14], REPO[15], REPO[16]],
     });
-    // Staging con el Hito 4/5: 0012 a 0015 pendientes.
+    // Staging con el Hito 4/5: 0012 a 0016 pendientes.
     expect(compareHistory(REPO, applied(12))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 12),
-      pending: [REPO[12], REPO[13], REPO[14], REPO[15]],
+      pending: [REPO[12], REPO[13], REPO[14], REPO[15], REPO[16]],
     });
-    // Staging con el Hito 6: 0013 a 0015 pendientes.
+    // Staging con el Hito 6: 0013 a 0016 pendientes.
     expect(compareHistory(REPO, applied(13))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 13),
-      pending: [REPO[13], REPO[14], REPO[15]],
+      pending: [REPO[13], REPO[14], REPO[15], REPO[16]],
     });
-    // Staging con el Hito 7: 0014 y 0015 pendientes.
+    // Staging con el Hito 7: 0014 a 0016 pendientes.
     expect(compareHistory(REPO, applied(14))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 14),
-      pending: [REPO[14], REPO[15]],
+      pending: [REPO[14], REPO[15], REPO[16]],
     });
-    // Staging con el Hito 8: solo 0015 pendiente (DEC-041).
+    // Staging con el Hito 8: 0015 y 0016 pendientes.
     expect(compareHistory(REPO, applied(15))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 15),
-      pending: [REPO[15]],
+      pending: [REPO[15], REPO[16]],
     });
-    expect(compareHistory(REPO, [...applied(16)].reverse())).toMatchObject({
+    // Staging con el Hito 9: solo 0016 pendiente (DEC-042).
+    expect(compareHistory(REPO, applied(16))).toEqual({
+      kind: "consistent",
+      applied: REPO.slice(0, 16),
+      pending: [REPO[16]],
+    });
+    expect(compareHistory(REPO, [...applied(17)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -152,8 +168,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(16), { id: 17, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 16",
+      [...applied(17), { id: 18, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 17",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -192,7 +208,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0015: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0016: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -374,6 +390,20 @@ describe("expectedFootprint", () => {
         "test_drives.test_drives_update_member",
       ].sort(),
     };
-    expect(expectedFootprint(REPO)).toEqual(hito9);
+    expect(expectedFootprint(REPO.slice(0, 16))).toEqual(hito9);
+    // 0016 suma las cotizaciones (DEC-042), con sus policies de lectura,
+    // alta y edición. Los triggers de número y de estados son SQL custom: no
+    // figuran.
+    const hito10 = {
+      ...hito9,
+      tables: [...hito9.tables, "quotes"].sort(),
+      policies: [
+        ...hito9.policies,
+        "quotes.quotes_insert_member",
+        "quotes.quotes_select_member",
+        "quotes.quotes_update_member",
+      ].sort(),
+    };
+    expect(expectedFootprint(REPO)).toEqual(hito10);
   });
 });

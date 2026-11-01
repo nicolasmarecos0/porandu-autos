@@ -137,6 +137,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
       "0015_test_drives",
+      "0016_quotes",
     ]);
   });
 
@@ -364,6 +365,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.team-settings",
         "schema.whatsapp-ingestion",
         "schema.test-drives",
+        "schema.quotes",
         "schema.whatsapp-outbound",
         "private.schema",
         "private.user_org_ids",
@@ -882,6 +884,54 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta un trigger de cotizaciones deshabilitado, sin sus reglas, sin el índice de la aceptada o con un CHECK cambiado (Hito 10, DEC-042)", async () => {
+    const signature = "private.enforce_quote_status_transition()";
+    const [current] = await migrated.admin<{ definition: string }[]>`
+      SELECT pg_get_functiondef(${signature}::regprocedure) AS definition
+    `;
+    for (const [broken, restore] of [
+      [
+        "ALTER TABLE public.quotes DISABLE TRIGGER quotes_assign_number",
+        "ALTER TABLE public.quotes ENABLE TRIGGER quotes_assign_number",
+      ],
+      [
+        current!.definition.replace(
+          /quotes_discount_requires_admin/g,
+          "no guard",
+        ),
+        current!.definition,
+      ],
+      [
+        "DROP INDEX public.quotes_accepted_opportunity_key",
+        "CREATE UNIQUE INDEX quotes_accepted_opportunity_key ON public.quotes USING btree (organization_id, opportunity_id) WHERE (status = 'accepted'::text)",
+      ],
+      [
+        "ALTER TABLE public.quotes DROP CONSTRAINT quotes_discount_check; ALTER TABLE public.quotes ADD CONSTRAINT quotes_discount_check CHECK (discount_value IS NULL OR discount_value > 0)",
+        "ALTER TABLE public.quotes DROP CONSTRAINT quotes_discount_check; ALTER TABLE public.quotes ADD CONSTRAINT quotes_discount_check CHECK (((discount_kind = 'none') AND (discount_value IS NULL)) OR ((discount_kind = 'amount') AND (discount_value > 0) AND ((discount_value * 100) <= (30 * list_price)) AND ((currency <> 'PYG') OR (discount_value = trunc(discount_value)))) OR ((discount_kind = 'percent') AND (discount_value > 0) AND (discount_value <= 30)))",
+      ],
+    ] as const) {
+      await migrated.admin.unsafe(broken);
+      try {
+        const sql = connect(migrated.migrationUrl);
+        const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+        await sql.end({ timeout: 5 });
+        expect(
+          findings.filter((f) => !f.ok).map((f) => f.check),
+          broken.slice(0, 60),
+        ).toEqual(["schema.quotes"]);
+      } finally {
+        await migrated.admin.unsafe(restore);
+      }
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("la verificación detecta el trigger de estados deshabilitado, sin sus reglas o una FK de la prueba que no es compuesta (Hito 9, DEC-041)", async () => {
     const signature = "private.enforce_test_drive_status_transition()";
     const [current] = await migrated.admin<{ definition: string }[]>`
@@ -933,9 +983,9 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-041): 0015 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 8 (0000 a 0014) si
- * 0014 ya se aplicó; si no, en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * El próximo rollout real (DEC-042): 0016 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 9 (0000 a 0015) si
+ * 0015 ya se aplicó; si no, en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
@@ -957,6 +1007,7 @@ describe.each([
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
       "0015_test_drives",
+      "0016_quotes",
     ],
   },
   {
@@ -972,6 +1023,7 @@ describe.each([
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
       "0015_test_drives",
+      "0016_quotes",
     ],
   },
   {
@@ -986,6 +1038,7 @@ describe.each([
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
       "0015_test_drives",
+      "0016_quotes",
     ],
   },
   {
@@ -999,6 +1052,7 @@ describe.each([
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
       "0015_test_drives",
+      "0016_quotes",
     ],
   },
   {
@@ -1011,6 +1065,7 @@ describe.each([
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
       "0015_test_drives",
+      "0016_quotes",
     ],
   },
   {
@@ -1022,6 +1077,7 @@ describe.each([
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
       "0015_test_drives",
+      "0016_quotes",
     ],
   },
   {
@@ -1032,22 +1088,29 @@ describe.each([
       "0013_whatsapp_ingestion",
       "0014_whatsapp_outbound",
       "0015_test_drives",
+      "0016_quotes",
     ],
   },
   {
     stagingAt: "0013_whatsapp_ingestion",
     label: "Hito 7",
     applied: 14,
-    expected: ["0014_whatsapp_outbound", "0015_test_drives"],
+    expected: ["0014_whatsapp_outbound", "0015_test_drives", "0016_quotes"],
   },
   {
     stagingAt: "0014_whatsapp_outbound",
     label: "Hito 8",
     applied: 15,
-    expected: ["0015_test_drives"],
+    expected: ["0015_test_drives", "0016_quotes"],
+  },
+  {
+    stagingAt: "0015_test_drives",
+    label: "Hito 9",
+    applied: 16,
+    expected: ["0016_quotes"],
   },
 ])(
-  "staging en $label: rollout hasta 0015",
+  "staging en $label: rollout hasta 0016",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

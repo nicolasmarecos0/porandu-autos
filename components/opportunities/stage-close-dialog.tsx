@@ -14,6 +14,7 @@ import {
   ConfirmDialogTrigger,
 } from "@/components/ui/confirm-dialog";
 import { ChevronRightIcon } from "@/components/ui/icons";
+import { formatAmount, type Money } from "@/domains/money";
 import {
   CLOSURE_FIELDS,
   OUTCOME_FIELDS,
@@ -58,6 +59,11 @@ type StageCloseDialogProps = Readonly<{
   stage: Stage;
   /** La unidad vinculada: la que se vende al ganar. */
   saleVehicle: SaleVehicle | null;
+  /**
+   * Total de la cotización aceptada (Hito 10, DEC-042 §7): precarga el
+   * precio final y la moneda al ganar. Se puede cambiar.
+   */
+  acceptedQuoteTotal?: Money | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Respuesta que cierra el diálogo: el panel la avisa. */
@@ -113,6 +119,7 @@ export function StageCloseDialog({
   opportunityId,
   stage,
   saleVehicle,
+  acceptedQuoteTotal = null,
   open,
   onOpenChange,
   onSettled,
@@ -138,7 +145,12 @@ export function StageCloseDialog({
   const echo =
     state?.status === "invalid" || state?.status === "failed"
       ? state.values
-      : undefined;
+      : to === "won" && acceptedQuoteTotal
+        ? {
+            salePrice: formatAmount(acceptedQuoteTotal.amount),
+            saleCurrency: acceptedQuoteTotal.currency,
+          }
+        : undefined;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

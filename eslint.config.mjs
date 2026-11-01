@@ -300,6 +300,19 @@ const testDrivesWriteImport = {
   message: TEST_DRIVES_WRITE_MESSAGE,
 };
 
+// Hito 10 (DEC-042 §8): las cotizaciones tienen una sola puerta, las Server
+// Actions de lib/quotes/actions.ts (createQuote() y changeQuoteStatus()),
+// que obtienen el contexto con requireTenant() y leen el pedido antes de
+// escribir.
+const QUOTES_WRITE_MESSAGE =
+  "Quotes are written only through the Server Actions in lib/quotes/actions.ts: requireTenant(), server-side validation, then withTenant().";
+const quotesWriteImport = {
+  regex: "(^|/)db/queries/quotes-write$|^\\.{1,2}/quotes-write$",
+  // Los tipos de los resultados no escriben nada.
+  allowTypeImports: true,
+  message: QUOTES_WRITE_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -354,6 +367,7 @@ const basePatterns = [
   demandFactsImport,
   phoneLibraryImport,
   testDrivesWriteImport,
+  quotesWriteImport,
 ];
 
 const eslintConfig = defineConfig([
@@ -516,6 +530,7 @@ const eslintConfig = defineConfig([
             demandFactsImport,
             phoneLibraryImport,
             testDrivesWriteImport,
+            quotesWriteImport,
           ],
         },
       ],
@@ -548,6 +563,7 @@ const eslintConfig = defineConfig([
             demandFactsImport,
             phoneLibraryImport,
             testDrivesWriteImport,
+            quotesWriteImport,
           ],
         },
       ],
@@ -576,6 +592,7 @@ const eslintConfig = defineConfig([
             whatsappApiImport,
             phoneLibraryImport,
             testDrivesWriteImport,
+            quotesWriteImport,
           ],
         },
       ],
@@ -590,6 +607,20 @@ const eslintConfig = defineConfig([
         {
           patterns: basePatterns.filter(
             (pattern) => pattern !== settingsWriteImport,
+          ),
+        },
+      ],
+    },
+  },
+  // Única puerta de las cotizaciones (Hito 10, DEC-042 §8).
+  {
+    files: ["lib/quotes/actions.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== quotesWriteImport,
           ),
         },
       ],
@@ -650,6 +681,7 @@ const eslintConfig = defineConfig([
             demandFactsImport,
             phoneLibraryImport,
             testDrivesWriteImport,
+            quotesWriteImport,
             stockMockImport,
           ],
         },
@@ -762,6 +794,7 @@ const eslintConfig = defineConfig([
             demandFactsImport,
             phoneLibraryImport,
             testDrivesWriteImport,
+            quotesWriteImport,
           ],
         },
       ],

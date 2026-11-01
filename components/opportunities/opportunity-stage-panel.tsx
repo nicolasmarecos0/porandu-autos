@@ -19,6 +19,8 @@ import { changeOpportunityStage } from "@/lib/opportunities/actions";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 import type { ChangeStageState } from "@/lib/opportunities/stage-change";
 
+import type { Money } from "@/domains/money";
+
 import type { SaleVehicle } from "./closure-fields";
 import { StageBadge } from "./stage-badge";
 import { StageCloseDialog } from "./stage-close-dialog";
@@ -54,6 +56,11 @@ type OpportunityStagePanelProps = Readonly<{
   stage: Stage;
   /** La unidad vinculada: la que se vende al marcarla ganada. */
   saleVehicle: SaleVehicle | null;
+  /**
+   * Precio final que propone "Marcar como ganada": el total de la
+   * cotización aceptada (Hito 10, DEC-042 §7), si hay. Editable.
+   */
+  acceptedQuoteTotal?: Money | null;
 }>;
 
 type Notice = { text: string; tone: "info" | "error" };
@@ -186,6 +193,7 @@ export function OpportunityStagePanel({
   opportunityId,
   stage,
   saleVehicle,
+  acceptedQuoteTotal = null,
 }: OpportunityStagePanelProps) {
   const [dialog, setDialog] = useState<"won" | "lost" | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -215,6 +223,7 @@ export function OpportunityStagePanel({
     opportunityId,
     stage,
     saleVehicle,
+    acceptedQuoteTotal,
     onSettled: (result: Exclude<CloseOpportunityState, null>) => {
       settled.current = true;
       setNotice(closureNoticeOf(result));

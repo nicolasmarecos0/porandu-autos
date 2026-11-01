@@ -75,7 +75,7 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines) y la del Hito 9 (test_drives)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives) y la del Hito 10 (quotes)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "conversations",
@@ -86,6 +86,7 @@ describe("db/schema", () => {
       "opportunity_notes",
       "organizations",
       "profiles",
+      "quotes",
       "test_drives",
       "vehicles",
       "whatsapp_lines",
@@ -169,7 +170,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin) y test_drives (Hito 9) la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9) y quotes (Hito 10) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -364,6 +365,35 @@ describe("db/schema", () => {
         to: ["authenticated"],
         using: '"profiles"."id" = (select auth.uid())',
         withCheck: undefined,
+      },
+      {
+        table: "quotes",
+        name: "quotes_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck:
+          '"quotes"."organization_id" IN (SELECT private.user_org_ids()) AND "quotes"."created_by" = (select auth.uid()) AND "quotes"."status" = \'draft\' AND "quotes"."approved_by" IS NULL AND "quotes"."approved_at" IS NULL AND "quotes"."sent_at" IS NULL AND "quotes"."decided_at" IS NULL AND "quotes"."created_at" = now() AND "quotes"."updated_at" = now() AND EXISTS (SELECT FROM "opportunities" WHERE "opportunities"."organization_id" = "quotes"."organization_id" AND "opportunities"."id" = "quotes"."opportunity_id" AND "opportunities"."stage" IN (\'qualifying\', \'negotiating\')) AND EXISTS (SELECT FROM "vehicles" WHERE "vehicles"."organization_id" = "quotes"."organization_id" AND "vehicles"."id" = "quotes"."vehicle_id" AND "vehicles"."status" IN (\'available\', \'reserved\') AND "vehicles"."price" = "quotes"."list_price" AND "vehicles"."currency" = "quotes"."currency")',
+      },
+      {
+        table: "quotes",
+        name: "quotes_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using: '"quotes"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "quotes",
+        name: "quotes_update_member",
+        as: "permissive",
+        for: "update",
+        to: ["authenticated"],
+        using: '"quotes"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck:
+          '"quotes"."organization_id" IN (SELECT private.user_org_ids())',
       },
       {
         table: "test_drives",
@@ -1160,6 +1190,7 @@ describe("db/schema", () => {
       "opportunities",
       "opportunity_demand_facts",
       "opportunity_notes",
+      "quotes",
       "test_drives",
       "vehicles",
       "whatsapp_lines",
