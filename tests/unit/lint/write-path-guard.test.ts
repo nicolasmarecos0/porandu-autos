@@ -32,6 +32,8 @@ import { describe, expect, it } from "vitest";
  * - el envío de mensajes de WhatsApp (Hito 8) (db/queries/outbound-message
  *   y el cliente de Meta, lib/whatsapp/api), también: POST
  *   /api/messages/send (lib/conversations/send.ts);
+ * - la agenda de pruebas de manejo (Hito 9) (db/queries/test-drives-write),
+ *   también: las Server Actions de lib/calendar/actions.ts;
  * - ninguna escritura puede saltear el boundary: db/client sigue vedado;
  * - la demanda (H1.4) tiene un único módulo de escritura
  *   (db/queries/demand-facts), que solo usan el alta
@@ -818,6 +820,69 @@ describe(
         await restrictedBy(
           "components/inbox/message-composer.tsx",
           `import type { SendTarget } from "@/db/queries/outbound-message";\nimport type { WhatsAppSendResult } from "@/lib/whatsapp/api";\nexport type T = SendTarget | WhatsAppSendResult;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importTestDrivesWrite = `import { insertTestDrive } from "@/db/queries/test-drives-write";\nexport const use = insertTestDrive;\n`;
+
+describe(
+  "una sola puerta para la agenda de pruebas de manejo (Hito 9)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/calendar/page.tsx",
+      "components/calendar/calendar-view.tsx",
+      "components/calendar/test-drive-card.tsx",
+      "lib/calendar/requests.ts",
+      "lib/opportunities/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/settings/actions.ts",
+      "lib/conversations/actions.ts",
+      "lib/tenant/session.ts",
+      "db/queries/calendar.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importTestDrivesWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/calendar.ts",
+          `import { insertTestDrive } from "./test-drives-write";\nexport const use = insertTestDrive;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en las Server Actions de lib/calendar/actions.ts", async () => {
+      expect(
+        await restrictedBy("lib/calendar/actions.ts", importTestDrivesWrite),
+      ).toEqual([]);
+    });
+
+    it("las Server Actions de la agenda no importan otras escrituras ni el cliente", async () => {
+      for (const code of [
+        importWrite,
+        importSettingsWrite,
+        `import { db } from "@/db/client";\nexport const use = db;\n`,
+      ]) {
+        expect(await restrictedBy("lib/calendar/actions.ts", code)).toContain(
+          "no-restricted-imports",
+        );
+      }
+    });
+
+    it("los tipos de los resultados sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/calendar/requests.ts",
+          `import type { ScheduleOutcome } from "@/db/queries/test-drives-write";\nexport type S = ScheduleOutcome;\n`,
         ),
       ).toEqual([]);
     });

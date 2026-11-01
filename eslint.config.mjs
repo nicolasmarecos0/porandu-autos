@@ -287,6 +287,19 @@ const whatsappApiImport = {
   message: WHATSAPP_API_MESSAGE,
 };
 
+// Hito 9 (DEC-041 §3): la agenda de pruebas de manejo tiene una sola
+// puerta, las Server Actions de lib/calendar/actions.ts (scheduleTestDrive()
+// y changeTestDriveStatus()), que obtienen el contexto con requireTenant() y
+// validan el pedido antes de escribir.
+const TEST_DRIVES_WRITE_MESSAGE =
+  "Test drives are written only through the Server Actions in lib/calendar/actions.ts: requireTenant(), server-side validation, then withTenant().";
+const testDrivesWriteImport = {
+  regex: "(^|/)db/queries/test-drives-write$|^\\.{1,2}/test-drives-write$",
+  // Los tipos de los resultados no escriben nada.
+  allowTypeImports: true,
+  message: TEST_DRIVES_WRITE_MESSAGE,
+};
+
 // H1.4 (DEC-030 §8, C-8): la demanda tiene un único módulo de escritura,
 // db/queries/demand-facts.ts. Lo usan solo el alta de una oportunidad
 // (db/queries/create-opportunity.ts, en su misma transacción) y la Server
@@ -340,6 +353,7 @@ const basePatterns = [
   whatsappApiImport,
   demandFactsImport,
   phoneLibraryImport,
+  testDrivesWriteImport,
 ];
 
 const eslintConfig = defineConfig([
@@ -501,6 +515,7 @@ const eslintConfig = defineConfig([
             whatsappApiImport,
             demandFactsImport,
             phoneLibraryImport,
+            testDrivesWriteImport,
           ],
         },
       ],
@@ -532,6 +547,7 @@ const eslintConfig = defineConfig([
             whatsappApiImport,
             demandFactsImport,
             phoneLibraryImport,
+            testDrivesWriteImport,
           ],
         },
       ],
@@ -559,6 +575,7 @@ const eslintConfig = defineConfig([
             sendMessageImport,
             whatsappApiImport,
             phoneLibraryImport,
+            testDrivesWriteImport,
           ],
         },
       ],
@@ -573,6 +590,20 @@ const eslintConfig = defineConfig([
         {
           patterns: basePatterns.filter(
             (pattern) => pattern !== settingsWriteImport,
+          ),
+        },
+      ],
+    },
+  },
+  // Única puerta de la agenda de pruebas de manejo (Hito 9, DEC-041 §3).
+  {
+    files: ["lib/calendar/actions.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== testDrivesWriteImport,
           ),
         },
       ],
@@ -618,6 +649,7 @@ const eslintConfig = defineConfig([
             whatsappApiImport,
             demandFactsImport,
             phoneLibraryImport,
+            testDrivesWriteImport,
             stockMockImport,
           ],
         },
@@ -729,6 +761,7 @@ const eslintConfig = defineConfig([
             whatsappApiImport,
             demandFactsImport,
             phoneLibraryImport,
+            testDrivesWriteImport,
           ],
         },
       ],
