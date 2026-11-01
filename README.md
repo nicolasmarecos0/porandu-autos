@@ -732,7 +732,7 @@ contacto → conversación abierta → oportunidad abierta única → mensaje (i
 - **Tenant por la línea:** `whatsapp_lines.phone_number_id` (único global) es lo único que determina la organización. El payload no elige `organization_id`. Una línea desconocida o inactiva responde `200` sin escribir nada (`unknown_line`).
 - **Identidad de sistema:** `authenticated` **sin claims**. Sin usuario no hay membership, así que RLS no deja ver ni escribir ninguna fila: solo se escribe por la función de ingesta, que rechaza con `42501` cualquier llamada con claims (un miembro no puede ingerir). Sin service role, roles nuevos ni credenciales nuevas: `app_runtime` sigue siendo miembro solo de `authenticated`. `withIngestion()` vive en `db/tenant.ts` y solo lo importa `db/queries/ingest-whatsapp-message.ts`, que solo importa `lib/whatsapp/webhook.ts` (ESLint).
 - **Dominio puro** en `domains/webhooks/` (la capa de Ingestion de DEC-029 §2, la única que conoce el payload de WhatsApp):
-  - `whatsapp.ts`: esquemas Zod del sobre y de cada mensaje de texto (`id`, `from`, `timestamp`, `text.body`, `metadata.phone_number_id`), estrictos en lo que se usa y tolerantes a campos nuevos del proveedor. Estados de entrega, media, reacciones y otros campos se ignoran; un mensaje con un campo inválido se descarta sin frenar el lote.
+  - `whatsapp.ts`: esquemas Zod del sobre y de cada mensaje de texto (`id`, `from`, `timestamp`, `text.body`, `metadata.phone_number_id`), estrictos en lo que se usa y tolerantes a campos nuevos del proveedor. Media, reacciones y otros campos se ignoran; un mensaje con un campo inválido se descarta sin frenar el lote. Los estados de entrega (`statuses[]`) se ingieren desde el Hito 12C (abajo).
   - `inbound-message.ts`: el contrato propio `InboundMessage` (estricto, sin forma del proveedor) y el nombre de un contacto nuevo (el perfil de WhatsApp o "Contacto de WhatsApp").
   - `domains/conversations/conversations.ts`: canales y estados de una conversación y `messagePreview()` (una línea, hasta 160 caracteres, con "…").
 - **Conversaciones (`conversations`):** una abierta por contacto y canal (unique parcial `WHERE status = 'open'`), con `last_message_at` (cuándo lo envió el cliente) y `last_message_preview`. Un mensaje viejo que llega tarde no pisa el último. Los miembros solo las leen; ningún flujo las cierra todavía.
@@ -831,7 +831,7 @@ domains/conversations (inbox, thread-layout, chat-time, opportunity-link) → In
 
 - **Orden:** el historial sigue por `sent_at` (desempate `created_at` e id), separado por día de Asunción ("Hoy", "Ayer", "Lunes 26 de octubre") y con las burbujas seguidas del mismo autor, a 5 minutos o menos, en un grupo. La lista usa la hora de chat ("14:32", "Ayer", "Lunes", "26 oct"), con la fecha completa en el `title`.
 - **Oportunidad:** el encabezado del historial dice a qué se suma lo que se responde, con la regla con la que la base asocia cada mensaje: la abierta única del contacto (con enlace), varias (no se asocia; menú de Radix con hasta cinco) o ninguna.
-- **Estado de entrega:** todo saliente registrado se muestra "Enviado", porque la base lo registra después del `200` de Meta. La regla de los estados siguientes (`delivered`, `read`, `failed`) ya está en `domains/conversations/delivery.ts`; su ingesta es 12C.
+- **Estado de entrega:** todo saliente registrado nace "Enviado", porque la base lo registra después del `200` de Meta. La regla de los estados siguientes (`delivered`, `read`, `failed`) está en `domains/conversations/delivery.ts`; su ingesta es 12C (abajo).
 - **No leídos:** la regla por miembro (cursor por `created_at`, responder es leer, solo avanza) y el pedido de marcar visto están en `domains/conversations/read-state.ts`; la tabla, la función y la Server Action son 12B (abajo).
 - **Teléfono:** debajo de `lg`, maestro/detalle por URL: sin `?c=` la lista, con `?c=` el chat con "Volver". En pantallas táctiles, Enter es una línea nueva y se envía con el botón.
 
@@ -859,6 +859,34 @@ y mensaje de ella, cursor = created_at con GREATEST → revalidar /conversations
 - **Puerta única:** ESLint impide importar `recordConversationRead()` de `db/queries/conversation-reads.ts` fuera de `lib/conversations/read.ts`; las lecturas del mismo módulo las usa el loader.
 - **Fuera de este bloque:** tiempo real o refresco automático, el contador en la navegación, "solo no leídos", desplazarse hasta el separador al abrir y los estados de entrega de 12C.
 - `0018_conversation_reads` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0018_conversation_reads` si staging ya tiene `0017` (o con las anteriores que falten delante, en orden). La verificación suma `schema.conversation-reads` y amplía `schema.tables`, `rls.policies`, `schema.whatsapp-ingestion` y `privileges.authenticated`.
+
+## Bandeja: estados de entrega (Hito 12C)
+
+Cada mensaje que envía el equipo muestra su estado real de entrega en WhatsApp: "Enviado", "Entregado", "Leído" o "No entregado" (DEC-044 §3). Es el "visto" del cliente, distinto del leído interno del equipo (12B). Porandú no le envía a Meta confirmaciones de lectura de los entrantes (DEC-044 §3.4).
+
+```text
+Ingesta: POST /api/webhooks/whatsapp → firma y sobre (como el Hito 7) → statuses[] con Zod
+(domains/webhooks/whatsapp-status.ts) → por cada estado: withIngestion(): authenticated sin
+claims → private.ingest_whatsapp_status() (SECURITY DEFINER): organización de la línea →
+el saliente (organization_id, external_id, direction = 'outbound') → INSERT en
+message_statuses (idempotente) → 200 con los conteos
+
+Lectura: getInbox() → requireTenant() → withTenant() → los estados de cada saliente del
+historial (message_statuses, sobre su PK) → currentDeliveryStatus() → DeliveryMark
+```
+
+- **Regla (DEC-044 §3.2):** el estado vigente es el de mayor precedencia entre los recibidos, `sent` < `failed` < `delivered` < `read`, sin importar el orden de llegada ni las repeticiones. Un "No entregado" que llega tarde nunca pisa un "Entregado" ni un "Leído". Sin estados recibidos, el saliente está "Enviado".
+- **Append-only (C-11):** el mensaje no cambia. Cada estado recibido es una fila de `message_statuses`, y el vigente lo calcula el dominio al leer. La PK `(organization_id, message_id, status)` es la autoridad de la idempotencia: un estado repetido o un reintento del proveedor, también simultáneos, dejan una sola fila (`duplicate`).
+- **Tenant por la línea:** la organización sale de la línea receptora (`metadata.phone_number_id`), y el mensaje se busca entre los salientes de esa organización por su wamid. Un id desconocido, el de un entrante o el de otra organización es `unknown_message`, y una línea desconocida o inactiva es `unknown_line`: no se escribe nada y se responde `200`, para que el proveedor no reintente.
+- **Payload** (`domains/webhooks/whatsapp-status.ts`, puro): valida `id`, `status` y `timestamp` de cada estado, estricto en lo que se usa y tolerante a lo demás (`recipient_id`, `conversation`, `pricing`, `errors`). Otro estado del proveedor (`deleted`, `warning`…) se ignora; uno con un campo inválido se descarta sin frenar el lote.
+- **Respuesta del webhook:** los conteos de los mensajes no cambian y se suma `statuses` (`received`, `recorded`, `duplicate`, `unknown_line`, `unknown_message`, `invalid`). Primero se ingieren los mensajes del lote y después los estados, cada uno en su transacción: si una escritura falla, `500` y el reintento encuentra lo ya registrado como `duplicate`.
+- **Identidades:** la ingesta es la de DEC-039 §4 (`authenticated` sin claims); la función rechaza con `42501` una llamada con claims, así que un miembro no puede registrar estados. Los miembros leen los estados de su organización (policy `message_statuses_select_member`) y nadie de la app los escribe, edita ni borra directo; `service_role` tampoco los edita ni borra.
+- **UI:** cada burbuja saliente muestra el ícono (una tilde, dos tildes o la alerta) y el estado en texto, junto a la hora (`DeliveryMark`). Solo "No entregado" usa un tono de estado, junto a su texto (DEC-013).
+- **Puerta única:** `db/queries/ingest-whatsapp-status.ts` solo lo importa el webhook (`lib/whatsapp/webhook.ts`), y `withIngestion()` solo los dos módulos de ingesta (ESLint).
+- **Base (`0019_whatsapp_delivery_status`):** tabla `message_statuses` (`organization_id`, `message_id`, `status`, `occurred_at` del proveedor y `created_at` de la base) con PK `(organization_id, message_id, status)`, CHECK de los cuatro estados, FK compuesta al mensaje (RESTRICT, sobre la unique nueva `messages (organization_id, id)`) y RLS de lectura para los miembros, con solo `SELECT` para `authenticated` y sin `UPDATE`, `DELETE` ni `TRUNCATE` para `service_role`. La función `private.ingest_whatsapp_status()` es `SECURITY DEFINER` de `postgres`, con `search_path` vacío y EXECUTE solo para `authenticated`. Repite las postcondiciones de 0018 y suma las de DEC-044 §3. No toca filas existentes: los salientes ya registrados siguen "Enviado".
+- **Limitaciones conocidas:** un estado que llega antes de que el envío quede registrado (o de un envío `500 unrecorded`) es `unknown_message` y no se reintenta; para `sent` no cambia nada. El motivo de un "No entregado" (el código de error de Meta) no se guarda ni se muestra.
+- **Fuera de este bloque:** tiempo real o refresco automático, el estado en la lista de conversaciones, el motivo de las fallas, reintentos de envío, confirmaciones de lectura al cliente (DEC-044 §3.4) y plantillas.
+- `0019_whatsapp_delivery_status` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0019_whatsapp_delivery_status` si staging ya tiene `0018` (o con las anteriores que falten delante, en orden). La verificación suma `schema.message-statuses` y `privileges.service_role-message-statuses`, y amplía `schema.tables`, `rls.policies`, `schema.messages` y `privileges.authenticated`.
 
 ## Convenciones
 
