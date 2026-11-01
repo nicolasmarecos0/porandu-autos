@@ -2,6 +2,7 @@ import { cn } from "@/components/ui/cn";
 import type { ThreadBubble } from "@/domains/conversations/thread-layout";
 
 import { DeliveryMark } from "./delivery-mark";
+import { NewMessagesDivider } from "./thread-log";
 
 /*
  * Un mensaje del historial como burbuja de chat (Hito 8, DEC-040 §1; Hito
@@ -14,6 +15,10 @@ import { DeliveryMark } from "./delivery-mark";
  * solo la primera muestra el autor y la cola, y van más juntas. Cada una
  * lleva su hora (el día lo dice la sección) y, si es saliente, su estado de
  * entrega.
+ *
+ * Solo un entrante puede estar sin leer (DEC-044 §2.2): cada uno lleva el
+ * lugar del separador "Mensajes nuevos", que se muestra antes del primero
+ * sin leer (Hito 12B, ThreadLog).
  */
 
 const DIRECTION_LABELS = {
@@ -30,17 +35,17 @@ export function MessageBubble({ bubble }: { bubble: ThreadBubble }) {
       data-direction={bubble.direction}
       data-position={bubble.position}
       className={cn(
-        "flex",
-        outbound ? "justify-end" : "justify-start",
+        "flex flex-col",
         startsGroup ? "mt-2 first:mt-0" : "mt-0.5",
       )}
     >
+      {outbound ? null : <NewMessagesDivider messageId={bubble.id} />}
       <div
         className={cn(
           "flex max-w-[85%] flex-col gap-0.5 rounded-lg border px-3 pt-1.5 pb-1 shadow-sm sm:max-w-[70%]",
           outbound
-            ? "border-brand-border bg-brand-soft"
-            : "border-border-default bg-surface-1",
+            ? "self-end border-brand-border bg-brand-soft"
+            : "self-start border-border-default bg-surface-1",
           startsGroup && (outbound ? "rounded-tr-xs" : "rounded-tl-xs"),
         )}
       >
