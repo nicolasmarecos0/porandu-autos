@@ -819,6 +819,22 @@ del dominio → UPDATE status → trigger test_drives_status_transition
 - **Fuera de este bloque:** recordatorios, reprogramar, duración configurable, bloqueo de superposiciones, asignación, otros eventos, calendarios externos, vistas mensual o diaria, el feed del Cockpit y la recencia de la oportunidad.
 - `0015_test_drives` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0015_test_drives` (o con las anteriores que falten delante, en orden).
 
+## Bandeja premium (Hito 12A)
+
+La bandeja de `/conversations` pasa a ser un chat premium y responsivo (DEC-044). No hay migración: usa los datos que ya existen.
+
+```text
+getInbox() → requireTenant() → withTenant() → conversaciones abiertas, el historial
+de la elegida y las oportunidades abiertas de su contacto (organization_id) → RLS →
+domains/conversations (inbox, thread-layout, chat-time, opportunity-link) → InboxView
+```
+
+- **Orden:** el historial sigue por `sent_at` (desempate `created_at` e id), separado por día de Asunción ("Hoy", "Ayer", "Lunes 26 de octubre") y con las burbujas seguidas del mismo autor, a 5 minutos o menos, en un grupo. La lista usa la hora de chat ("14:32", "Ayer", "Lunes", "26 oct"), con la fecha completa en el `title`.
+- **Oportunidad:** el encabezado del historial dice a qué se suma lo que se responde, con la regla con la que la base asocia cada mensaje: la abierta única del contacto (con enlace), varias (no se asocia; menú de Radix con hasta cinco) o ninguna.
+- **Estado de entrega:** todo saliente registrado se muestra "Enviado", porque la base lo registra después del `200` de Meta. La regla de los estados siguientes (`delivered`, `read`, `failed`) ya está en `domains/conversations/delivery.ts`; su ingesta es 12C.
+- **No leídos:** la regla por miembro (cursor por `created_at`, responder es leer, solo avanza) y el pedido de marcar visto están en `domains/conversations/read-state.ts`; la tabla, la función y la Server Action son 12B.
+- **Teléfono:** debajo de `lg`, maestro/detalle por URL: sin `?c=` la lista, con `?c=` el chat con "Volver". En pantallas táctiles, Enter es una línea nueva y se envía con el botón.
+
 ## Convenciones
 
 - Código, rutas, DB e identificadores en inglés. Copy de UI en español es-PY (DEC-011).

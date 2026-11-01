@@ -1,9 +1,8 @@
 import "server-only";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import {
-  conversationThread,
   inboxItems,
   INBOX_CONVERSATION_LIMIT,
   THREAD_MESSAGE_LIMIT,
@@ -11,13 +10,19 @@ import {
   type Inbox,
   type InboxThread,
 } from "@/domains/conversations/inbox";
+import {
+  conversationOpportunity,
+  LINKABLE_STAGES,
+  OPPORTUNITY_LINK_LIMIT,
+} from "@/domains/conversations/opportunity-link";
+import { threadSections } from "@/domains/conversations/thread-layout";
 import { requireTenant } from "@/lib/tenant/session";
 
-import { contacts, conversations, messages } from "../schema";
+import { contacts, conversations, messages, opportunities } from "../schema";
 import { withTenant } from "../tenant";
 
 /*
- * Bandeja de /conversations (Hito 8, DEC-040 §1). Solo lee:
+ * Bandeja de /conversations (Hito 8, DEC-040 §1; Hito 12, DEC-044). Solo lee:
  *
  *   request → requireTenant() → TenantContext → withTenant() → las
  *   conversaciones activas y el historial de la elegida, filtrados por la
@@ -31,15 +36,26 @@ import { withTenant } from "../tenant";
  *   organización (aun con membership activa en ella), inexistente o cerrada
  *   es `not_found`, sin revelar cuál.
  * - El historial: los THREAD_MESSAGE_LIMIT mensajes más recientes de la
- *   conversación, con su total. Los ordena para el chat el dominio
- *   (conversationThread()).
- * - Todo en la misma transacción. Leer no cambia nada.
+ *   conversación, con su total. Los ordena y agrupa por día de Asunción el
+ *   dominio (threadSections()).
+ * - La oportunidad (DEC-044 §4): las abiertas del contacto en la
+ *   organización activa (a lo sumo OPPORTUNITY_LINK_LIMIT, por actividad
+ *   más reciente) con su total. El dominio dice si hay una, ninguna o
+ *   varias: la misma regla con la que la base asocia cada mensaje.
+ * - Todo en la misma transacción. Leer no cambia nada: tampoco marca leído
+ *   (un prefetch de la lista no puede marcar una conversación como vista).
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Loader de /conversations. `selected` es el `?c=` de la URL, sin validar. */
-export async function getInbox(selected: string | undefined): Promise<Inbox> {
+/**
+ * Loader de /conversations. `selected` es el `?c=` de la URL, sin validar;
+ * `now`, el instante de la request (rotula "Hoy", "Ayer" y la hora de chat).
+ */
+export async function getInbox(
+  selected: string | undefined,
+  now: Date = new Date(),
+): Promise<Inbox> {
   const ctx = await requireTenant();
   const selectedId =
     selected !== undefined && UUID.test(selected)
@@ -131,6 +147,26 @@ export async function getInbox(selected: string | undefined): Promise<Inbox> {
             desc(messages.id),
           )
           .limit(THREAD_MESSAGE_LIMIT);
+
+        const candidates = await tx
+          .select({
+            id: opportunities.id,
+            stage: opportunities.stage,
+            lastActivityAt: opportunities.lastActivityAt,
+            total: sql<number>`count(*) over ()`.mapWith(Number),
+          })
+          .from(opportunities)
+          .where(
+            and(
+              eq(opportunities.organizationId, organizationId),
+              // Usa el índice (organization_id, contact_id).
+              eq(opportunities.contactId, conversation.contactId),
+              inArray(opportunities.stage, [...LINKABLE_STAGES]),
+            ),
+          )
+          .orderBy(desc(opportunities.lastActivityAt), desc(opportunities.id))
+          .limit(OPPORTUNITY_LINK_LIMIT);
+
         thread = {
           kind: "found",
           conversationId: conversation.id,
@@ -138,14 +174,19 @@ export async function getInbox(selected: string | undefined): Promise<Inbox> {
             conversation.contactName,
             conversation.contactPhone,
           ),
-          messages: conversationThread(rows, ctx.userId),
+          opportunity: conversationOpportunity(
+            candidates,
+            candidates[0]?.total ?? 0,
+          ),
+          sections: threadSections(rows, ctx.userId, now),
+          shown: rows.length,
           total: rows[0]?.total ?? 0,
         };
       }
     }
 
     return {
-      conversations: inboxItems(list),
+      conversations: inboxItems(list, now),
       total: list[0]?.total ?? 0,
       selectedId,
       thread,
