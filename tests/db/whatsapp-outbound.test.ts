@@ -665,17 +665,65 @@ describe("bandeja: getInbox() (DEC-040 §1)", () => {
     if (inbox.thread.kind !== "found") throw new Error("not found");
     expect(inbox.thread.contact.maskedPhone).not.toBe(conversation.phone);
     expect(
-      inbox.thread.messages.map((message) => [
-        message.direction,
-        message.author,
-        message.body,
-      ]),
+      inbox.thread.sections
+        .flatMap((section) => section.bubbles)
+        .map((bubble) => [
+          bubble.direction,
+          bubble.author,
+          bubble.body,
+          bubble.delivery,
+        ]),
     ).toEqual([
-      ["inbound", "Cliente", expect.stringMatching(/^Hola \d+$/)],
-      ["outbound", "Vos", "Respuesta de C"],
-      ["outbound", "Otro miembro", "Respuesta de A"],
+      ["inbound", "Cliente", expect.stringMatching(/^Hola \d+$/), null],
+      ["outbound", "Vos", "Respuesta de C", "sent"],
+      ["outbound", "Otro miembro", "Respuesta de A", "sent"],
     ]);
+    expect(inbox.thread.shown).toBe(3);
     expect(JSON.stringify(inbox)).not.toContain(conversation.phone);
+  });
+
+  it("la oportunidad del contacto (DEC-044 §4): ninguna, la única abierta o varias, como asocia la base", async () => {
+    const conversation = await conversationOn(LINE_1);
+    const opportunity = async () => {
+      const inbox = await getInbox(conversation.conversationId);
+      if (inbox.thread.kind !== "found") throw new Error("not found");
+      return inbox.thread.opportunity;
+    };
+
+    expect(await opportunity()).toEqual({ kind: "none" });
+
+    const first = await openOpportunity(ORG_1, conversation.contactId);
+    expect(await opportunity()).toMatchObject({
+      kind: "linked",
+      opportunity: { id: first, href: `/opportunities/${first}` },
+    });
+
+    // Una cerrada del mismo contacto no cuenta.
+    await db.admin`
+      INSERT INTO public.opportunities ${db.admin({
+        id: randomUUID(),
+        organization_id: ORG_1,
+        contact_id: conversation.contactId,
+        stage: "lost",
+        source: "whatsapp",
+        ...closureColumns("lost"),
+      })}
+    `;
+    expect(await opportunity()).toMatchObject({ kind: "linked" });
+
+    const second = await openOpportunity(ORG_1, conversation.contactId);
+    const ambiguous = await opportunity();
+    expect(ambiguous).toMatchObject({ kind: "ambiguous", total: 2 });
+    if (ambiguous.kind !== "ambiguous") throw new Error("not ambiguous");
+    expect(ambiguous.opportunities.map((item) => item.id).sort()).toEqual(
+      [first, second].sort(),
+    );
+
+    // La base asocia igual: con varias abiertas, el saliente no tiene oportunidad.
+    const sent = await recordOutboundMessage(tenantContext(USER_C, ORG_1), {
+      ...outbound(conversation.conversationId),
+    });
+    expect(sent).toMatchObject({ outcome: "recorded", opportunityId: null });
   });
 
   it.each([

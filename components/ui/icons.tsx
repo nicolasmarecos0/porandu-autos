@@ -204,6 +204,42 @@ export function ChevronRightIcon(props: IconProps) {
   );
 }
 
+export function ChevronLeftIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M14.5 6l-6 6 6 6" />
+    </Icon>
+  );
+}
+
+export function ChevronDownIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 9.5l6 6 6-6" />
+    </Icon>
+  );
+}
+
+/** Dos tildes: entregado o leído (estado de entrega de WhatsApp). */
+export function DoubleCheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 12.5l4.5 4.5 9.5-9.5" />
+      <path d="M12 16.5l.5.5 9-9.5" />
+    </Icon>
+  );
+}
+
+export function AlertIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5v5.5" />
+      <path d="M12 16.25h.01" />
+    </Icon>
+  );
+}
+
 export function UndoIcon(props: IconProps) {
   return (
     <Icon {...props}>

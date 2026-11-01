@@ -1,14 +1,18 @@
 import { formatDemandDate } from "@/domains/demand/presentation";
 import { initialsOf, maskPhone } from "@/domains/opportunities/prospect";
 
+import { chatListTime } from "./chat-time";
 import type { MessageDirection } from "./messages";
+import type { ConversationOpportunity } from "./opportunity-link";
+import type { ThreadSection } from "./thread-layout";
 
 /*
- * Bandeja de conversaciones (Hito 8, DEC-040 §1): la lista de conversaciones
- * activas y el historial de la elegida, listos para mostrar. Puro y
- * determinista: la presentación (autor "Cliente", "Vos" u "Otro miembro",
- * fecha de Asunción, teléfono enmascarado) se arma contra el usuario que
- * mira y no expone ids de usuario ni teléfonos completos.
+ * Bandeja de conversaciones (Hito 8, DEC-040 §1; Hito 12, DEC-044): la lista
+ * de conversaciones activas y el historial de la elegida, listos para
+ * mostrar. Puro y determinista: la presentación (autor "Cliente", "Vos" u
+ * "Otro miembro", fecha de Asunción, teléfono enmascarado) se arma contra el
+ * usuario que mira y el instante de la request, y no expone ids de usuario
+ * ni teléfonos completos.
  */
 
 /** Cuántas conversaciones muestra la lista, las más recientes. */
@@ -39,6 +43,10 @@ export type InboxItem = Readonly<{
   preview: string;
   /** Fecha y hora de Asunción del último mensaje, o null sin mensajes. */
   at: string | null;
+  /** La hora de chat del último mensaje: "14:32", "Ayer", "Lunes", "26 oct". */
+  time: string | null;
+  /** El instante del último mensaje en ISO 8601, para `<time dateTime>`. */
+  dateTime: string | null;
 }>;
 
 /** Un mensaje de una conversación tal como lo lee la capa de datos. */
@@ -53,7 +61,7 @@ export type ThreadMessageRow = Readonly<{
   createdAt: Date;
 }>;
 
-/** Un mensaje del historial, listo para mostrar como burbuja. */
+/** Un mensaje del historial, listo para mostrar. */
 export type ThreadMessage = Readonly<{
   id: string;
   /** `inbound`: del cliente. `outbound`: de un miembro. */
@@ -83,8 +91,12 @@ export type InboxThread =
       kind: "found";
       conversationId: string;
       contact: ThreadContact;
-      /** Del más viejo al más nuevo, a lo sumo THREAD_MESSAGE_LIMIT. */
-      messages: readonly ThreadMessage[];
+      /** A qué oportunidad se suma lo que se responda ahora (DEC-044 §4). */
+      opportunity: ConversationOpportunity;
+      /** Por día de Asunción, del más viejo al más nuevo. */
+      sections: readonly ThreadSection[];
+      /** Mensajes que se muestran: a lo sumo THREAD_MESSAGE_LIMIT. */
+      shown: number;
       /** Mensajes de la conversación, también los que no se muestran. */
       total: number;
     }>;
@@ -102,10 +114,12 @@ export type Inbox = Readonly<{
 
 /**
  * Las conversaciones de la lista, en el orden en que llegan (la capa de
- * datos las ordena por `last_message_at` descendente).
+ * datos las ordena por `last_message_at` descendente). `now` es el instante
+ * de la request: rotula la hora de chat ("14:32" hoy, "Ayer"…).
  */
 export function inboxItems(
   rows: readonly InboxConversationRow[],
+  now: Date,
 ): readonly InboxItem[] {
   return rows.map((row) => ({
     id: row.id,
@@ -113,6 +127,8 @@ export function inboxItems(
     initials: initialsOf(row.contactName),
     preview: row.lastMessagePreview ?? EMPTY_PREVIEW,
     at: row.lastMessageAt ? formatDemandDate(row.lastMessageAt) : null,
+    time: row.lastMessageAt ? chatListTime(row.lastMessageAt, now) : null,
+    dateTime: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
   }));
 }
 
@@ -134,28 +150,52 @@ function authorOf(row: ThreadMessageRow, viewerUserId: string): string {
 }
 
 /**
- * El historial de una conversación como en un chat: del mensaje más viejo
- * al más nuevo, por el momento en que se envió (`sent_at`, DEC-039 §10). A
- * igual instante el orden es determinista: por registro y después por id.
+ * El instante de un mensaje en el chat: cuándo se envió (`sent_at`, DEC-039
+ * §10) o, si faltara, cuándo se registró.
+ */
+export function threadInstant(row: ThreadMessageRow): Date {
+  return row.sentAt ?? row.createdAt;
+}
+
+/**
+ * El orden del chat, del más viejo al más nuevo: por el momento en que se
+ * envió y, a igual instante, de forma determinista por registro y por id.
+ */
+export function compareThreadRows(
+  a: ThreadMessageRow,
+  b: ThreadMessageRow,
+): number {
+  return (
+    threadInstant(a).getTime() - threadInstant(b).getTime() ||
+    a.createdAt.getTime() - b.createdAt.getTime() ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+/** Un mensaje del historial contra el usuario que mira. */
+export function threadMessage(
+  row: ThreadMessageRow,
+  viewerUserId: string,
+): ThreadMessage {
+  return {
+    id: row.id,
+    direction: row.direction,
+    body: row.content,
+    author: authorOf(row, viewerUserId),
+    at: formatDemandDate(threadInstant(row)),
+  };
+}
+
+/**
+ * El historial de una conversación como en un chat, en una sola lista: del
+ * mensaje más viejo al más nuevo (compareThreadRows()). La bandeja lo
+ * muestra por día con threadSections() (./thread-layout.ts).
  */
 export function conversationThread(
   rows: readonly ThreadMessageRow[],
   viewerUserId: string,
 ): readonly ThreadMessage[] {
-  const sentAt = (row: ThreadMessageRow) =>
-    (row.sentAt ?? row.createdAt).getTime();
   return rows
-    .toSorted(
-      (a, b) =>
-        sentAt(a) - sentAt(b) ||
-        a.createdAt.getTime() - b.createdAt.getTime() ||
-        a.id.localeCompare(b.id),
-    )
-    .map((row) => ({
-      id: row.id,
-      direction: row.direction,
-      body: row.content,
-      author: authorOf(row, viewerUserId),
-      at: formatDemandDate(row.sentAt ?? row.createdAt),
-    }));
+    .toSorted(compareThreadRows)
+    .map((row) => threadMessage(row, viewerUserId));
 }

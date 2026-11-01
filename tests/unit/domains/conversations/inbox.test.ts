@@ -16,6 +16,8 @@ import {
 
 const VIEWER = "00000000-0000-4000-8000-00000000000c";
 const OTHER = "00000000-0000-4000-8000-00000000000a";
+/** 29 oct 2026, 15:00 de Asunción. */
+const NOW = new Date("2026-10-29T18:00:00Z");
 
 function row(overrides: Partial<ThreadMessageRow>): ThreadMessageRow {
   return {
@@ -32,20 +34,23 @@ function row(overrides: Partial<ThreadMessageRow>): ThreadMessageRow {
 describe("inboxItems", () => {
   it("mantiene el orden de la capa de datos y arma contacto, iniciales, preview y fecha de Asunción", () => {
     expect(
-      inboxItems([
-        {
-          id: "c1",
-          contactName: "Ramón Benítez",
-          lastMessageAt: new Date("2026-10-29T15:32:00Z"),
-          lastMessagePreview: "¿Sigue disponible?",
-        },
-        {
-          id: "c2",
-          contactName: "Contacto de WhatsApp",
-          lastMessageAt: null,
-          lastMessagePreview: null,
-        },
-      ]),
+      inboxItems(
+        [
+          {
+            id: "c1",
+            contactName: "Ramón Benítez",
+            lastMessageAt: new Date("2026-10-29T15:32:00Z"),
+            lastMessagePreview: "¿Sigue disponible?",
+          },
+          {
+            id: "c2",
+            contactName: "Contacto de WhatsApp",
+            lastMessageAt: null,
+            lastMessagePreview: null,
+          },
+        ],
+        NOW,
+      ),
     ).toEqual([
       {
         id: "c1",
@@ -53,6 +58,8 @@ describe("inboxItems", () => {
         initials: "RB",
         preview: "¿Sigue disponible?",
         at: "29 oct 2026 12:32",
+        time: "12:32",
+        dateTime: "2026-10-29T15:32:00.000Z",
       },
       {
         id: "c2",
@@ -60,8 +67,33 @@ describe("inboxItems", () => {
         initials: "CW",
         preview: EMPTY_PREVIEW,
         at: null,
+        time: null,
+        dateTime: null,
       },
     ]);
+  });
+
+  it("la hora de chat depende del día de Asunción, no del de UTC", () => {
+    const [yesterday, older] = inboxItems(
+      [
+        {
+          id: "c1",
+          contactName: "Ana Ríos",
+          // 28 oct, 22:30 de Asunción: ya es 29 en UTC.
+          lastMessageAt: new Date("2026-10-29T01:30:00Z"),
+          lastMessagePreview: "Gracias",
+        },
+        {
+          id: "c2",
+          contactName: "Juan Pérez",
+          lastMessageAt: new Date("2026-10-10T15:00:00Z"),
+          lastMessagePreview: "Hola",
+        },
+      ],
+      NOW,
+    );
+    expect(yesterday?.time).toBe("Ayer");
+    expect(older?.time).toBe("10 oct");
   });
 });
 

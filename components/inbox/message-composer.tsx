@@ -34,15 +34,26 @@ import {
  * aceptó.
  *
  * Enviar es irreversible: lo dispara solo el botón o Enter (Shift+Enter es
- * una línea nueva), nunca nada automático. Al enviar, el texto se vacía y la
- * página se refresca: el mensaje aparece al pie del historial, leído del
- * servidor. Una falla deja lo escrito y dice si el cliente lo recibió.
+ * una línea nueva), nunca nada automático. En una pantalla táctil (puntero
+ * `coarse`), Enter es una línea nueva y se envía solo con el botón, como en
+ * los chats de teléfono (Hito 12, DEC-044 §5). Al enviar, el texto se vacía
+ * y la página se refresca: el mensaje aparece al pie del historial, leído
+ * del servidor. Una falla deja lo escrito y dice si el cliente lo recibió.
  */
 
 export const SEND_ENDPOINT = "/api/messages/send";
 
+/** En una pantalla táctil, Enter escribe una línea nueva. */
+function touchKeyboard(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse)").matches
+  );
+}
+
 const textareaClassName =
-  "min-h-20 w-full resize-y rounded-md border border-border-default bg-surface-1 px-3 py-2 text-body text-text-primary transition-[border-color] hover:border-border-strong focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring aria-invalid:border-danger disabled:cursor-not-allowed disabled:bg-surface-2";
+  "min-h-12 w-full resize-y sm:min-h-20 rounded-md border border-border-default bg-surface-1 px-3 py-2 text-body text-text-primary transition-[border-color] hover:border-border-strong focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring aria-invalid:border-danger disabled:cursor-not-allowed disabled:bg-surface-2";
 
 export function MessageComposer({
   conversationId,
@@ -110,7 +121,8 @@ export function MessageComposer({
     if (
       event.key === "Enter" &&
       !event.shiftKey &&
-      !event.nativeEvent.isComposing
+      !event.nativeEvent.isComposing &&
+      !touchKeyboard()
     ) {
       event.preventDefault();
       void send();
@@ -122,7 +134,7 @@ export function MessageComposer({
       onSubmit={submit}
       noValidate
       aria-busy={busy}
-      className="flex flex-col gap-2 border-t border-border-subtle bg-surface-2 px-4 py-3"
+      className="flex flex-col gap-2 border-t border-border-subtle bg-surface-2 px-3 py-3 sm:px-4"
     >
       <label htmlFor={textId} className="sr-only">
         Respuesta por WhatsApp
@@ -143,7 +155,7 @@ export function MessageComposer({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <p
           id={hintId}
-          className="flex items-center gap-1 text-caption text-text-muted"
+          className="hidden items-center gap-1 text-caption text-text-muted sm:flex"
         >
           <Kbd>Enter</Kbd> envía · <Kbd>Shift</Kbd>+<Kbd>Enter</Kbd> nueva línea
         </p>
