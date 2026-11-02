@@ -58,6 +58,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-042 | Cotizaciones formales (Deal Management, Hito 10) | Aceptada | 2026-11-01 |
 | DEC-043 | Dashboard Directivo: KPIs comerciales, rangos de fechas y política de caché | Aceptada en principio | 2026-11-01 |
 | DEC-044 | Bandeja premium: orden del chat, leído por miembro, estados de entrega y oportunidad de la conversación (Hito 12) | Aceptada en principio | 2026-11-01 |
+| DEC-045 | Agenda ejecutiva: grilla horaria semanal, día en foco y lenguaje de estados (Hito 13) | Aceptada en principio | 2026-11-02 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1272,6 +1273,40 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
     - **Puerta única.** ESLint: `db/queries/ingest-whatsapp-status.ts` solo lo importa el webhook (`lib/whatsapp/webhook.ts`), y `withIngestion()` solo los dos módulos de ingesta. `CLAUDE.md` §3 se alinea.
     - **Limitaciones.** Un estado que llega antes de que el envío quede registrado (la carrera entre el `200` de Meta y el registro, o un `500 unrecorded`, DEC-040 §8) es `unknown_message` y se ignora con `200`, como manda §3.3: no se reintenta. El motivo de una falla (el código de error de Meta) no se guarda ni se muestra.
     - **Staging.** `0019_whatsapp_delivery_status` se aplica después del merge con `preflight → migrate → verify`. La verificación suma `schema.message-statuses` y `privileges.service_role-message-statuses`, y amplía `schema.tables`, `rls.policies`, `schema.messages` y `privileges.authenticated`.
+
+---
+
+## DEC-045 — Agenda ejecutiva: grilla horaria semanal, día en foco y lenguaje de estados (Hito 13)
+- **Estado:** Aceptada en principio · 2026-11-02. Formaliza el pedido del fundador del 2 nov 2026 (interfaz "Calendario Ejecutivo" de la agenda de pruebas de manejo con Radix y Tailwind, 100 % responsiva: lista o grilla ágil en teléfono y vista de semana en escritorio, filtrada por día y por semana, con el estado de cada prueba identificable a simple vista). Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** DEC-041 (Hito 9) ya puso la agenda semanal con su backend completo: `0015_test_drives` (RLS, trigger de estados y grants), las Server Actions `scheduleTestDrive()` y `changeTestDriveStatus()` y el loader `getCalendarAgenda()`. Su vista apila tarjetas en siete columnas en desktop, dos en tablet y una lista de los siete días en teléfono: las tarjetas no se ubican por hora, así que la semana no se lee como un calendario, y en teléfono hay que recorrer los días anteriores para llegar a hoy. DEC-041 §7 dejó fuera la vista diaria. El pedido nombra los estados "Pendiente, Completada, No asistió": son los de DEC-041 con otro nombre (§5).
+- **Decisión:**
+  1. **Sin cambios de datos.** Ni migración, ni Server Actions, ni escrituras nuevas: la misma tabla `test_drives`, los mismos estados, la misma matriz y la misma confirmación de cada cambio (DEC-041 §3), el mismo loader (`requireTenant()` → `withTenant()` → RLS) y los mismos topes (500 pruebas por semana, 200 opciones por select). Es una capa de presentación sobre lo que ya existe.
+  2. **Semana y día en foco en la URL.** La semana sigue en `?w=YYYY-MM-DD` y cualquier día la identifica (DEC-041 §4). Ese día pasa a ser además el **día en foco**; sin `?w=` válido, el día en foco es hoy. Anterior y siguiente llevan al mismo día de la semana anterior o siguiente, y "Hoy", a hoy. Todo es navegación GET (se comparte, se vuelve atrás y se recarga) y elegir un día no lee nada distinto: el loader sigue leyendo la semana. Al agendar, la agenda salta a la semana de la prueba con su día en foco.
+  3. **Escritorio (desde `lg`): grilla horaria semanal.** Siete columnas, de lunes a domingo, sobre un eje de horas de Asunción común a la semana. Cada prueba es un bloque ubicado por su hora, con el alto de la franja de 60 minutos que DEC-041 ya usa para avisar superposiciones (`TEST_DRIVE_SLOT_MINUTES`). No es una duración: DEC-041 §7 la deja fuera.
+     - *Propuesta de implementación:* el eje va de 08:00 a 20:00 y se extiende hasta la hora entera que contiene la prueba más temprana de la semana y hasta la que cierra la franja de la más tardía, como mucho la medianoche: nunca deja una prueba afuera.
+     - Los bloques de un día cuyas franjas se pisan, aunque sean de unidades distintas, se reparten el ancho en carriles en orden de hora. Es solo presentación: el aviso "Unidad superpuesta" (la misma unidad, DEC-041 §4) no cambia y además se marca en el bloque con un contorno de advertencia y un ícono.
+     - El bloque muestra hora, estado, cliente y unidad, recortados si el carril es angosto (la forma del estado se ve siempre). Es un botón que abre un drawer (Radix Dialog, `components/ui/drawer.tsx`) con la tarjeta completa de DEC-041 §4: cliente con enlace a su oportunidad, unidad, estado, aviso, quién la agendó y el menú de estados con su confirmación, más "Ver oportunidad".
+     - El encabezado de cada día queda fijo al recorrer las horas, con la cantidad de pruebas; hoy se destaca y los días pasados se atenúan.
+     - *Propuesta de implementación:* una línea "ahora" sobre la columna de hoy, que arranca con la hora del request y se mueve sola cada minuto en el navegador. Es solo visual: no revalida la agenda.
+  4. **Teléfono y tablet (debajo de `lg`): día en foco.** Una tira de los siete días (con la cantidad de pruebas de cada uno, hoy con un anillo y el día en foco destacado) y, debajo, la agenda del día en foco de la más temprana a la más tardía con las tarjetas completas de DEC-041 §4. Tocar un día es un enlace a `?w=<día>`: funciona sin JavaScript y el botón atrás vuelve al día anterior. Es la misma semana, presentada de a un día.
+  5. **Lenguaje de estados.** Los cinco estados y su copy no cambian (DEC-041 §3): Agendada, Confirmada, Realizada, No asistió y Cancelada. Del pedido, "Pendiente" son las agendadas y las confirmadas, y "Completada" es Realizada.
+     - Cada estado tiene el color de su token y además una forma propia, para que el color nunca sea la única señal (DEC-013), también en un bloque angosto: Agendada (anillo), Confirmada (punto lleno), Realizada (tilde), No asistió (alerta) y Cancelada (cruz, contorno punteado y hora tachada).
+     - El resumen de la semana agrupa con la regla de los test drives del Dashboard (DEC-043 §5): **Por realizar** (agendadas + confirmadas, con su desglose), Realizadas, No asistió y Canceladas, siempre en ese orden y con el 0 atenuado. *Propuesta de implementación:* encima, un medidor segmentado de la distribución por estado, como el de Stock.
+  6. **Accesibilidad y movimiento.** Radix para el drawer, el menú y la confirmación. En la grilla, cada día es una sección con su título para lectores de pantalla y sus bloques en orden de hora; el eje y los encabezados visuales se ocultan, porque cada bloque dice su hora y su estado en texto. La tira marca el día en foco con `aria-current="page"` y el título del día se anuncia al cambiar. Sin animaciones al cambiar de día o de semana: son navegaciones frecuentes.
+  7. **Capas.** Dominio puro en `domains/calendar/`: `time-grid.ts` (eje, carriles, ubicación de los bloques y línea "ahora"), `agenda.ts` (minuto del día de cada prueba, día en foco y resumen por grupo), `week.ts` (día en foco y saltos de semana) y `zoned-time.ts` (`minuteOfDay()`). UI en `components/calendar/`: Server Components salvo los bloques, las tarjetas, la línea "ahora" y el drawer de alta. Sin dependencias nuevas (DEC-009).
+  8. **Autorización.** Sin cambios (DEC-041 §3): cualquier membership activa ve y mueve cualquier prueba de su organización.
+  9. **Fuera de este bloque:** vista mensual, vista diaria de escritorio, filtros por vendedor ("Mis pruebas"), por estado o por unidad, arrastrar un bloque para reprogramar, duración configurable, refresco automático de la agenda (más allá de la línea "ahora"), marcar las pruebas pasadas que siguen abiertas, el feed de agenda del Cockpit y todo lo que DEC-041 §7 sigue dejando fuera.
+- **Aclara / supersede:**
+  - DEC-041 §4: en desktop, la grilla horaria reemplaza las columnas de tarjetas; debajo de `lg`, el día en foco reemplaza "dos columnas en tablet y una lista de días en teléfono". La tarjeta, sus datos y la confirmación de cada cambio no cambian.
+  - DEC-041 §7 ("vista mensual o diaria"): entra el día en foco como presentación de la semana debajo de `lg`, por pedido del fundador. La vista diaria de escritorio y la mensual siguen fuera.
+  - B1 §4 ("optimización móvil más allá de razonablemente usable"): la agenda es responsiva por pedido del fundador, como la bandeja (DEC-044 §5).
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: no hay accesos nuevos a datos.
+- **Consecuencias:**
+  - Sin migración: no hay nada que aplicar a staging. Requiere `0015_test_drives` aplicada (DEC-041).
+  - El enlace del Dashboard (`/calendar?w=<lunes>`, DEC-043 §5) abre la semana en curso con el lunes en foco en teléfono. Si se prefiere hoy, el enlace pasa a `/calendar` (decisión del fundador).
+  - Tres o más pruebas que se pisan el mismo día en el mismo rango dejan carriles angostos: el bloque recorta el texto y el detalle sigue a un toque.
+  - El shell sigue siendo desktop-first (rail de 4rem): en teléfono la tira y la agenda usan el ancho que queda.
 
 ---
 
