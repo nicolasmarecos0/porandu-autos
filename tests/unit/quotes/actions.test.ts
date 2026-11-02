@@ -215,7 +215,7 @@ describe("createQuote()", () => {
 const CHANGE = { quoteId: QUOTE, from: "draft", to: "approved" };
 
 describe("changeQuoteStatus()", () => {
-  it("planea con el rol de la membership y revalida el detalle de la oportunidad", async () => {
+  it("planea con el rol de la membership y revalida el detalle de la oportunidad y el presupuesto", async () => {
     let decisions: unknown[] = [];
     mocks.updateQuoteStatus.mockImplementation(
       async (
@@ -253,6 +253,8 @@ describe("changeQuoteStatus()", () => {
       "requireTenant",
       "update",
       `revalidate /opportunities/${OPPORTUNITY}`,
+      // La vista previa del presupuesto (Hito 14) muestra el estado y el PDF.
+      `revalidate /opportunities/${OPPORTUNITY}/quotes/${QUOTE}`,
     ]);
     expect(mocks.updateQuoteStatus.mock.calls[0]![1]).toEqual({
       quoteId: QUOTE,
@@ -318,6 +320,9 @@ describe("changeQuoteStatus()", () => {
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith(
       `/opportunities/${OPPORTUNITY}`,
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      `/opportunities/${OPPORTUNITY}/quotes/${QUOTE}`,
     );
   });
 

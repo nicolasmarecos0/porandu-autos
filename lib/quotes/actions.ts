@@ -13,6 +13,7 @@ import { parseQuoteTerms } from "@/domains/quotes/request";
 import { planQuoteTransition } from "@/domains/quotes/statuses";
 import { requireTenant } from "@/lib/tenant/session";
 
+import { opportunityPath, quoteDocumentPath } from "./paths";
 import {
   parseCreateQuoteRequest,
   parseQuoteStatusChangeRequest,
@@ -51,8 +52,14 @@ import {
  * El estado previo (`_previous`) lo envía el cliente: no se usa.
  */
 
-function opportunityPath(opportunityId: string): string {
-  return `/opportunities/${opportunityId}`;
+/*
+ * Un cambio de estado se ve en el panel de la oportunidad y en la vista
+ * previa del presupuesto (Hito 14, DEC-046 §6), que muestra el estado y si
+ * el PDF se puede descargar.
+ */
+function revalidateQuote(opportunityId: string, quoteId: string): void {
+  revalidatePath(opportunityPath(opportunityId));
+  revalidatePath(quoteDocumentPath(opportunityId, quoteId));
 }
 
 /*
@@ -148,16 +155,16 @@ export async function changeQuoteStatus(
 
   switch (outcome.outcome) {
     case "changed":
-      revalidatePath(opportunityPath(outcome.opportunityId));
+      revalidateQuote(outcome.opportunityId, quoteId);
       return { status: "changed", quoteId, to: outcome.status };
     case "unchanged":
       // Muestra el estado real que dejó otra persona.
-      revalidatePath(opportunityPath(outcome.opportunityId));
+      revalidateQuote(outcome.opportunityId, quoteId);
       return { status: "unchanged", quoteId, current: outcome.current };
     case "not_found":
       return { status: "not_found" };
     case "already_accepted":
-      revalidatePath(opportunityPath(outcome.opportunityId));
+      revalidateQuote(outcome.opportunityId, quoteId);
       return { status: "already_accepted" };
     case "invalid_transition":
     case "expired":

@@ -142,6 +142,15 @@ export function DocumentIcon(props: IconProps) {
   );
 }
 
+export function DownloadIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5" />
+      <path d="M5 19.5h14" />
+    </Icon>
+  );
+}
+
 export function SwapIcon(props: IconProps) {
   return (
     <Icon {...props}>
