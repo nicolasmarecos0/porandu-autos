@@ -1,27 +1,23 @@
 import type { Metadata } from "next";
-import { BuildStatusBadge } from "@/components/shell/module-placeholder";
+import { CockpitView } from "@/components/cockpit/cockpit-view";
 import { getNavItem } from "@/components/shell/navigation";
-import { PageHeader } from "@/components/shell/page-header";
-import { WorkspaceLayout } from "@/components/shell/workspace-layout";
-import {
-  ContextRailSkeleton,
-  FeedPanelSkeleton,
-  SummaryBandSkeleton,
-} from "@/components/shell/workspace-skeletons";
+import { getCockpitFeed } from "@/db/queries/cockpit";
 
 const { label } = getNavItem("cockpit");
 
 export const metadata: Metadata = { title: label };
 
-export default function CockpitPage() {
-  return (
-    <WorkspaceLayout
-      header={<PageHeader title={label} status={<BuildStatusBadge />} />}
-      summary={<SummaryBandSkeleton />}
-      aside={<ContextRailSkeleton />}
-    >
-      <FeedPanelSkeleton rows={4} />
-      <FeedPanelSkeleton rows={3} />
-    </WorkspaceLayout>
-  );
+/*
+ * Cockpit (Hito 15, DEC-047): el feed de actividad del día sale de
+ * PostgreSQL por el loader tenant-scoped (requireTenant() → withTenant() →
+ * RLS), en una transacción por request. La página no conoce Drizzle ni las
+ * reglas del feed.
+ *
+ * Dinámica: lee cookies (la sesión y la organización activa). Sin caché
+ * compartida entre requests (DEC-043 §6). Solo lee: abrir el Cockpit no
+ * marca conversaciones como vistas ni cambia estados.
+ */
+export default async function CockpitPage() {
+  const feed = await getCockpitFeed();
+  return <CockpitView title={label} feed={feed} />;
 }

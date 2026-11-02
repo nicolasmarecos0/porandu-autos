@@ -1,13 +1,29 @@
 import "server-only";
 
-import { and, eq, gte, inArray, max, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  max,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
+import type { UnreadConversationSource } from "@/domains/cockpit/feed";
 import type {
   MarkReadRequest,
   ReadCursor,
 } from "@/domains/conversations/read-state";
 
-import { conversationReads, conversations, messages } from "../schema";
+import {
+  contacts,
+  conversationReads,
+  conversations,
+  messages,
+} from "../schema";
 import {
   withTenant,
   type ScopedTransaction,
@@ -25,6 +41,9 @@ import {
  *     (organization_id, conversation_id, created_at).
  *   - selectReadCursor(): el cursor y la última respuesta propia de la
  *     conversación elegida, para el separador "Mensajes nuevos".
+ * Y dentro de la del loader del Cockpit (getCockpitFeed(), Hito 15):
+ *   - selectUnreadConversations(): las conversaciones con entrantes sin leer
+ *     para quien mira, con la misma regla.
  *
  * Escritura: recordConversationRead() → withTenant() →
  *   private.mark_conversation_read() (SECURITY DEFINER): usuario en los
@@ -51,6 +70,42 @@ import {
  * cursores propios) y la función la vuelve a validar.
  */
 
+/*
+ * Las dos piezas de la regla, compartidas por las lecturas que cuentan no
+ * leídos (la lista de /conversations y el feed del Cockpit): las dos se
+ * usan sobre una fila externa de `conversations` unida a
+ * `conversation_reads` del miembro y a ownReplyOf() como LATERAL.
+ */
+
+/**
+ * La última respuesta de `userId` en la conversación de la fila externa:
+ * responder es leer (DEC-044 §2.4). Va como LATERAL; la recorre hacia atrás
+ * el índice parcial (organization_id, conversation_id, created_at).
+ */
+function ownReplyOf(tx: ScopedTransaction, userId: string) {
+  return tx
+    .select({ at: max(messages.createdAt).as("at") })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.organizationId, conversations.organizationId),
+        eq(messages.conversationId, conversations.id),
+        eq(messages.direction, "outbound"),
+        eq(messages.recordedBy, userId),
+      ),
+    )
+    .as("own_reply");
+}
+
+/**
+ * El primer instante sin leer: el milisegundo siguiente al de hasta dónde
+ * leyó (el más nuevo entre el cursor y la respuesta propia). Sin cursor ni
+ * respuesta propia, todo está sin leer (DEC-044 §2.6).
+ */
+function unreadFrom(): SQL {
+  return sql`coalesce(date_trunc('milliseconds', greatest(${conversationReads.readUpTo}, ${sql.identifier("own_reply")}.${sql.identifier("at")})) + interval '1 millisecond', '-infinity'::timestamptz)`;
+}
+
 /**
  * Los entrantes sin leer para quien mira de cada conversación pedida, de la
  * organización activa. Una conversación sin no leídos (o que no es de la
@@ -64,30 +119,12 @@ export async function selectUnreadCounts(
   if (conversationIds.length === 0) return new Map();
   const { organizationId, userId } = ctx;
 
-  // La última respuesta de quien mira en cada conversación: responder es
-  // leer (DEC-044 §2.4). La recorre hacia atrás el índice parcial
-  // (organization_id, conversation_id, created_at).
-  const ownReply = tx
-    .select({ at: max(messages.createdAt).as("at") })
-    .from(messages)
-    .where(
-      and(
-        eq(messages.organizationId, conversations.organizationId),
-        eq(messages.conversationId, conversations.id),
-        eq(messages.direction, "outbound"),
-        eq(messages.recordedBy, userId),
-      ),
-    )
-    .as("own_reply");
+  const ownReply = ownReplyOf(tx, userId);
 
-  // El primer instante sin leer: el milisegundo siguiente al de hasta dónde
-  // leyó (el más nuevo entre el cursor y la respuesta propia). Sin cursor ni
-  // respuesta propia, todo está sin leer (DEC-044 §2.6).
-  const unreadFrom = sql`coalesce(date_trunc('milliseconds', greatest(${conversationReads.readUpTo}, ${sql.identifier("own_reply")}.${sql.identifier("at")})) + interval '1 millisecond', '-infinity'::timestamptz)`;
-
-  // Los entrantes registrados desde ese instante, por conversación. Como
-  // subconsulta LATERAL el instante llega como parámetro: el índice parcial
-  // recorre solo el rango sin leer, no toda la conversación.
+  // Los entrantes registrados desde el primer instante sin leer, por
+  // conversación. Como subconsulta LATERAL el instante llega como parámetro:
+  // el índice parcial recorre solo el rango sin leer, no toda la
+  // conversación.
   const unread = tx
     .select({
       count:
@@ -100,7 +137,7 @@ export async function selectUnreadCounts(
       and(
         eq(messages.organizationId, conversations.organizationId),
         eq(messages.conversationId, conversations.id),
-        gte(messages.createdAt, unreadFrom),
+        gte(messages.createdAt, unreadFrom()),
       ),
     )
     .as("unread");
@@ -126,6 +163,128 @@ export async function selectUnreadCounts(
     );
 
   return new Map(rows.map((row) => [row.conversationId, row.unread]));
+}
+
+/**
+ * Las conversaciones abiertas de la organización activa con entrantes sin
+ * leer para quien mira (Hito 15, DEC-047 §2): las `limit` con el entrante
+ * sin leer más nuevo, de la más reciente a la más vieja, con el total de
+ * conversaciones y de entrantes sin leer en la misma lectura (`over ()`, se
+ * calcula antes del LIMIT). Misma regla y mismos LATERAL que
+ * selectUnreadCounts(), sobre el índice parcial (organization_id,
+ * conversation_id, created_at): por conversación abierta, una búsqueda de
+ * la respuesta propia, una del rango sin leer y una del más nuevo.
+ *
+ * El orden es (entrante sin leer más nuevo al milisegundo desc, id desc): el
+ * del feed (domains/cockpit/feed.ts), para que la mezcla de fuentes sea
+ * exacta. Solo lee: el Cockpit nunca marca nada como visto (DEC-044 §2.7).
+ */
+export async function selectUnreadConversations(
+  tx: ScopedTransaction,
+  ctx: TenantContext,
+  limit: number,
+): Promise<UnreadConversationSource> {
+  const { organizationId, userId } = ctx;
+
+  const ownReply = ownReplyOf(tx, userId);
+
+  const unread = tx
+    .select({
+      count:
+        sql<number>`count(*) FILTER (WHERE ${messages.direction} = 'inbound')`
+          .mapWith(Number)
+          .as("unread_count"),
+      lastAt:
+        sql<Date | null>`max(${messages.createdAt}) FILTER (WHERE ${messages.direction} = 'inbound')`
+          .mapWith(messages.createdAt)
+          .as("last_unread_at"),
+    })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.organizationId, conversations.organizationId),
+        eq(messages.conversationId, conversations.id),
+        gte(messages.createdAt, unreadFrom()),
+      ),
+    )
+    .as("unread");
+
+  // El texto del entrante sin leer más nuevo (el preview del feed).
+  const latest = tx
+    .select({ content: messages.content })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.organizationId, conversations.organizationId),
+        eq(messages.conversationId, conversations.id),
+        eq(messages.direction, "inbound"),
+        gte(messages.createdAt, unreadFrom()),
+      ),
+    )
+    .orderBy(desc(messages.createdAt), desc(messages.id))
+    .limit(1)
+    .as("latest_unread");
+
+  const rows = await tx
+    .select({
+      conversationId: conversations.id,
+      contactName: contacts.name,
+      unread: unread.count,
+      lastUnreadAt: unread.lastAt,
+      lastUnreadContent: latest.content,
+      total: sql<number>`count(*) over ()`.mapWith(Number),
+      unreadMessages: sql<number>`sum(${unread.count}) over ()`.mapWith(Number),
+    })
+    .from(conversations)
+    .innerJoin(
+      contacts,
+      and(
+        eq(contacts.organizationId, conversations.organizationId),
+        eq(contacts.id, conversations.contactId),
+      ),
+    )
+    .leftJoin(
+      conversationReads,
+      and(
+        eq(conversationReads.organizationId, conversations.organizationId),
+        eq(conversationReads.conversationId, conversations.id),
+        eq(conversationReads.userId, userId),
+      ),
+    )
+    .leftJoinLateral(ownReply, sql`true`)
+    .leftJoinLateral(unread, sql`true`)
+    .leftJoinLateral(latest, sql`true`)
+    .where(
+      and(
+        eq(conversations.organizationId, organizationId),
+        eq(conversations.status, "open"),
+        gt(unread.count, 0),
+      ),
+    )
+    .orderBy(
+      sql`date_trunc('milliseconds', ${unread.lastAt}) DESC`,
+      desc(conversations.id),
+    )
+    .limit(limit);
+
+  const shown = rows.flatMap((row) =>
+    row.lastUnreadAt !== null && row.lastUnreadContent !== null
+      ? [
+          {
+            conversationId: row.conversationId,
+            contactName: row.contactName,
+            unread: row.unread,
+            lastUnreadAt: row.lastUnreadAt,
+            lastUnreadContent: row.lastUnreadContent,
+          },
+        ]
+      : [],
+  );
+  return {
+    rows: shown,
+    total: rows[0]?.total ?? 0,
+    unreadMessages: rows[0]?.unreadMessages ?? 0,
+  };
 }
 
 /**
