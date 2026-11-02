@@ -15,6 +15,9 @@ import {
  *
  * La semana viaja en la URL (`/calendar?w=YYYY-MM-DD`). Cualquier día de la
  * semana la identifica; un valor ausente o inválido es la semana de hoy.
+ * Ese día es además el día en foco (Hito 13, DEC-045 §2): debajo de `lg` la
+ * agenda muestra ese día, y anterior y siguiente saltan al mismo día de la
+ * otra semana. Sin `?w=` válido, el día en foco es hoy.
  */
 
 /** Parámetro de búsqueda de la semana. */
@@ -36,6 +39,8 @@ export type CalendarDay = Readonly<{
   isToday: boolean;
   /** El día ya terminó. */
   isPast: boolean;
+  /** Es el día en foco de la semana (DEC-045 §2). */
+  isFocus: boolean;
 }>;
 
 export type CalendarWeek = Readonly<{
@@ -46,7 +51,14 @@ export type CalendarWeek = Readonly<{
   days: readonly CalendarDay[];
   /** "2 – 8 nov 2026". */
   label: string;
+  /**
+   * `YYYY-MM-DD` del día en foco: el de `?w=` si es válido; si no, hoy.
+   * Siempre es un día de esta semana.
+   */
+  focusKey: string;
+  /** El día en foco una semana antes: identifica la semana anterior. */
   previousKey: string;
+  /** El día en foco una semana después: identifica la semana siguiente. */
   nextKey: string;
   todayKey: string;
   isCurrent: boolean;
@@ -81,7 +93,7 @@ function rangeLabel(monday: CalendarDate, sunday: CalendarDate): string {
 
 /**
  * La semana que contiene el día `param` (`YYYY-MM-DD`) o, si falta o no es
- * una fecha válida, la que contiene `now`.
+ * una fecha válida, la que contiene `now`. Ese día (o hoy) queda en foco.
  */
 export function calendarWeek(
   param: string | undefined,
@@ -94,6 +106,7 @@ export function calendarWeek(
   const anchor = (param !== undefined && parseIsoDate(param)) || today;
   const monday = mondayOf(anchor);
   const todayKey = isoDate(today);
+  const focusKey = isoDate(anchor);
 
   const days: CalendarDay[] = [];
   for (let offset = 0; offset < 7; offset += 1) {
@@ -113,6 +126,7 @@ export function calendarWeek(
       dayOfMonth: date.day,
       isToday: isoDate(date) === todayKey,
       isPast: end.getTime() <= now.getTime(),
+      isFocus: isoDate(date) === focusKey,
     });
   }
 
@@ -127,8 +141,9 @@ export function calendarWeek(
     end: last.end,
     days,
     label: rangeLabel(monday, sunday),
-    previousKey: isoDate(addDays(monday, -7)),
-    nextKey: isoDate(addDays(monday, 7)),
+    focusKey,
+    previousKey: isoDate(addDays(anchor, -7)),
+    nextKey: isoDate(addDays(anchor, 7)),
     todayKey,
     isCurrent: key === isoDate(mondayOf(today)),
   };

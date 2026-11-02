@@ -7,12 +7,14 @@ import {
   type TestDriveStatus,
 } from "./test-drives";
 import type { CalendarDay, CalendarWeek } from "./week";
+import { minuteOfDay } from "./zoned-time";
 
 /*
- * Presentación de la agenda semanal (Hito 9, DEC-041): agrupa las pruebas
- * de manejo por día, marca superposiciones de una misma unidad y cuenta por
- * estado. Puro: recibe las filas que leyó la capa de datos, el usuario de
- * la request y `now`.
+ * Presentación de la agenda semanal (Hito 9, DEC-041; Hito 13, DEC-045):
+ * agrupa las pruebas de manejo por día, marca superposiciones de una misma
+ * unidad, cuenta por estado y resume la semana por grupo de lectura. Puro:
+ * recibe las filas que leyó la capa de datos, el usuario de la request y
+ * `now`.
  */
 
 /** Una prueba de manejo tal como la lee la capa de datos. */
@@ -36,6 +38,11 @@ export type AgendaItem = Readonly<{
   scheduledAtIso: string;
   /** "10:30", hora de Asunción. */
   timeLabel: string;
+  /**
+   * Minutos desde la medianoche de Asunción (0 a 1439): ubica el bloque en
+   * la grilla horaria (DEC-045 §3).
+   */
+  minuteOfDay: number;
   /** "lunes 2 de noviembre, 10:30". */
   whenLabel: string;
   opportunityId: string;
@@ -154,6 +161,7 @@ export function agendaDays(
         status: row.status,
         scheduledAtIso: row.scheduledAt.toISOString(),
         timeLabel: testDriveTimeLabel(row.scheduledAt),
+        minuteOfDay: minuteOfDay(row.scheduledAt, CALENDAR_TIME_ZONE),
         whenLabel: testDriveWhenLabel(row.scheduledAt),
         opportunityId: row.opportunityId,
         contactName: row.contactName,
@@ -181,6 +189,94 @@ export function agendaCounts(rows: readonly TestDriveRow[]): AgendaCounts {
 /** "1 prueba" / "3 pruebas". */
 export function testDrivesLabel(count: number): string {
   return count === 1 ? "1 prueba" : `${count} pruebas`;
+}
+
+/**
+ * El día en foco de la semana (DEC-045 §2). calendarWeek() siempre marca
+ * uno; si faltara, el primero.
+ */
+export function focusedDay<T extends CalendarDay>(days: readonly T[]): T {
+  const day = days.find((candidate) => candidate.isFocus) ?? days[0];
+  if (!day) throw new RangeError("calendar: empty week");
+  return day;
+}
+
+/* Resumen de la semana (DEC-045 §5). */
+
+/**
+ * Grupos de lectura del resumen, en orden de presentación. "Por realizar"
+ * reúne los dos estados abiertos, con la misma regla que los test drives
+ * del Dashboard (DEC-043 §5). Los estados y su copy no cambian (DEC-041).
+ */
+export const AGENDA_STATUS_GROUPS = [
+  {
+    id: "pending",
+    label: "Por realizar",
+    statuses: ["scheduled", "confirmed"],
+  },
+  { id: "completed", label: "Realizadas", statuses: ["completed"] },
+  { id: "no_show", label: "No asistió", statuses: ["no_show"] },
+  { id: "cancelled", label: "Canceladas", statuses: ["cancelled"] },
+] as const satisfies readonly Readonly<{
+  id: string;
+  label: string;
+  statuses: readonly TestDriveStatus[];
+}>[];
+
+export type AgendaStatusGroup = (typeof AGENDA_STATUS_GROUPS)[number];
+
+export type AgendaStatusGroupId = AgendaStatusGroup["id"];
+
+/** Pruebas de la semana en un grupo de lectura. */
+export function groupCount(
+  counts: AgendaCounts,
+  group: AgendaStatusGroup,
+): number {
+  return group.statuses.reduce(
+    (sum: number, status: TestDriveStatus) => sum + counts[status],
+    0,
+  );
+}
+
+/** Singular y plural del conteo de cada estado (es-PY). */
+const STATUS_COUNT_NOUNS: Readonly<
+  Record<TestDriveStatus, readonly [one: string, many: string]>
+> = {
+  scheduled: ["agendada", "agendadas"],
+  confirmed: ["confirmada", "confirmadas"],
+  completed: ["realizada", "realizadas"],
+  // El rótulo del estado no cambia con el número, como en el Dashboard.
+  no_show: ["no asistió", "no asistió"],
+  cancelled: ["cancelada", "canceladas"],
+};
+
+/** "1 agendada", "3 confirmadas", "2 no asistió". */
+export function statusCountLabel(
+  status: TestDriveStatus,
+  count: number,
+): string {
+  const [one, many] = STATUS_COUNT_NOUNS[status];
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/** Desglose de un grupo de varios estados: "1 agendada · 2 confirmadas". */
+export function groupBreakdown(
+  counts: AgendaCounts,
+  group: AgendaStatusGroup,
+): string {
+  return group.statuses
+    .map((status: TestDriveStatus) => statusCountLabel(status, counts[status]))
+    .join(" · ");
+}
+
+/**
+ * Distribución de la semana para lectores de pantalla, en el orden de los
+ * estados y sin los que están en 0: "1 agendada, 2 realizadas".
+ */
+export function distributionLabel(counts: AgendaCounts): string {
+  return TEST_DRIVE_STATUSES.filter((status) => counts[status] > 0)
+    .map((status) => statusCountLabel(status, counts[status]))
+    .join(", ");
 }
 
 /* Opciones del formulario de alta. */
