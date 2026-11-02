@@ -888,6 +888,26 @@ historial (message_statuses, sobre su PK) → currentDeliveryStatus() → Delive
 - **Fuera de este bloque:** tiempo real o refresco automático, el estado en la lista de conversaciones, el motivo de las fallas, reintentos de envío, confirmaciones de lectura al cliente (DEC-044 §3.4) y plantillas.
 - `0019_whatsapp_delivery_status` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0019_whatsapp_delivery_status` si staging ya tiene `0018` (o con las anteriores que falten delante, en orden). La verificación suma `schema.message-statuses` y `privileges.service_role-message-statuses`, y amplía `schema.tables`, `rls.policies`, `schema.messages` y `privileges.authenticated`.
 
+## Agenda ejecutiva (Hito 13)
+
+`/calendar` pasa a ser un calendario ejecutivo y responsivo (DEC-045): grilla horaria de la semana en escritorio y el día en foco en teléfono y tablet. No hay migración ni escrituras nuevas: usa el loader, las Server Actions y la tabla del Hito 9.
+
+```text
+getCalendarAgenda(?w=) → requireTenant() → withTenant() → la semana (como el Hito 9) →
+domains/calendar: calendarWeek() (semana y día en foco) → agendaDays() (minuto del día de
+cada prueba) → weekTimeGrid() (eje, carriles y ubicación) → CalendarView
+  desde lg: AgendaSummary + WeekGrid (TestDriveBlock → drawer con TestDriveCard) + NowIndicator
+  debajo:   AgendaSummary + DayStrip + DayAgenda (TestDriveCard)
+```
+
+- **URL:** `?w=YYYY-MM-DD` sigue identificando la semana (cualquier día) y ese día queda en foco; sin `?w=` válido, el foco es hoy. Anterior y siguiente saltan al mismo día de la otra semana; "Hoy", a hoy. Elegir un día no lee nada distinto: el loader sigue leyendo la semana.
+- **Escritorio (desde `lg`):** siete columnas sobre un eje de horas de Asunción, de 08:00 a 20:00, extendido si una prueba cae afuera (`timeGridRange()`). Cada prueba es un bloque con el alto de la franja de 60 minutos (`TEST_DRIVE_SLOT_MINUTES`, no es una duración); los que se pisan se reparten el ancho en carriles (`placeTimeGridBlocks()`). El bloque abre un drawer (Radix Dialog) con la tarjeta completa y "Ver oportunidad". Encabezados de día fijos, hoy destacado, días pasados atenuados y la línea "ahora", que se mueve sola cada minuto.
+- **Teléfono y tablet:** tira de siete días con la cantidad de pruebas (hoy con anillo, el día en foco destacado) y la agenda del día en foco con las tarjetas del Hito 9. Cada día es un enlace (`aria-current="page"` en el foco).
+- **Estados:** los cinco de DEC-041 con su copy, cada uno con su color y su forma: Agendada (anillo), Confirmada (punto), Realizada (tilde), No asistió (alerta) y Cancelada (cruz, contorno punteado y hora tachada). El resumen agrupa como el Dashboard: Por realizar (agendadas + confirmadas, con su desglose), Realizadas, No asistió y Canceladas, con un medidor de la distribución.
+- **Superposición:** "Unidad superpuesta" (la misma unidad a menos de 60 minutos) no cambia; en la grilla se marca además con un contorno de advertencia y un ícono, visibles aunque el carril sea angosto.
+- **Dominio puro:** `domains/calendar/time-grid.ts` (nuevo), `agenda.ts` (`minuteOfDay`, `focusedDay()`, grupos del resumen), `week.ts` (`focusKey`, `isFocus`) y `zoned-time.ts` (`minuteOfDay()`). Sin dependencias nuevas.
+- **Fuera de este bloque:** vista mensual, vista diaria de escritorio, filtros por vendedor, estado o unidad, arrastrar para reprogramar, duración configurable, refresco automático de la agenda, marcar las pruebas pasadas abiertas y el feed del Cockpit.
+
 ## Convenciones
 
 - Código, rutas, DB e identificadores en inglés. Copy de UI en español es-PY (DEC-011).

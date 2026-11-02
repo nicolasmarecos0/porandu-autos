@@ -3,9 +3,15 @@ import { describe, expect, it } from "vitest";
 import { testDriveStatuses } from "@/db/schema/test-drives";
 import { testDriveScheduleToleranceMinutes } from "@/db/schema/test-drives";
 import {
+  AGENDA_STATUS_GROUPS,
   agendaCounts,
   agendaDays,
+  distributionLabel,
+  focusedDay,
+  groupBreakdown,
+  groupCount,
   overlappingTestDrives,
+  statusCountLabel,
   testDrivesLabel,
   type TestDriveRow,
 } from "@/domains/calendar/agenda";
@@ -28,9 +34,10 @@ import {
 import { calendarWeek } from "@/domains/calendar/week";
 
 /*
- * Agenda de pruebas de manejo (Hito 9, DEC-041), lógica pura: la matriz de
- * estados (que espeja el trigger de 0015), la hora de pared de Asunción, la
- * semana y la presentación.
+ * Agenda de pruebas de manejo (Hito 9, DEC-041; Hito 13, DEC-045), lógica
+ * pura: la matriz de estados (que espeja el trigger de 0015), la hora de
+ * pared de Asunción, la semana con su día en foco, la presentación y el
+ * resumen por grupo de lectura.
  */
 
 const MINUTE = 60_000;
@@ -198,9 +205,46 @@ describe("semana", () => {
       false,
     ]);
     expect(week.isCurrent).toBe(true);
+    // Sin parámetro, el día en foco es hoy (lunes 2).
+    expect(week.focusKey).toBe("2026-11-02");
+    expect(
+      week.days.filter((day) => day.isFocus).map((day) => day.date),
+    ).toEqual(["2026-11-02"]);
     expect(week.previousKey).toBe("2026-10-26");
     expect(week.nextKey).toBe("2026-11-09");
     expect(week.label).toBe("2 – 8 nov 2026");
+  });
+
+  it("el día de ?w= queda en foco y anterior y siguiente saltan al mismo día", () => {
+    const week = calendarWeek("2026-11-04", NOW, CALENDAR_TIME_ZONE);
+    expect(week.key).toBe("2026-11-02");
+    expect(week.focusKey).toBe("2026-11-04");
+    expect(week.days.map((day) => day.isFocus)).toEqual([
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    // Miércoles 28 oct y miércoles 11 nov: cada uno identifica su semana.
+    expect(week.previousKey).toBe("2026-10-28");
+    expect(week.nextKey).toBe("2026-11-11");
+    expect(calendarWeek(week.previousKey, NOW, CALENDAR_TIME_ZONE).key).toBe(
+      "2026-10-26",
+    );
+    expect(calendarWeek(week.nextKey, NOW, CALENDAR_TIME_ZONE).key).toBe(
+      "2026-11-09",
+    );
+    // Un valor inválido es la semana de hoy, con hoy en foco.
+    expect(calendarWeek("2026-02-30", NOW, CALENDAR_TIME_ZONE).focusKey).toBe(
+      "2026-11-02",
+    );
+    // En otra semana, el foco es el día pedido aunque no sea hoy.
+    const later = calendarWeek("2026-11-15", NOW, CALENDAR_TIME_ZONE);
+    expect(later.focusKey).toBe("2026-11-15");
+    expect(focusedDay(later.days).date).toBe("2026-11-15");
   });
 
   it("cualquier día identifica su semana; un valor inválido es la de hoy", () => {
@@ -286,11 +330,13 @@ describe("presentación de la agenda", () => {
     const [a, b] = days[1]!.items;
     expect(a).toMatchObject({
       timeLabel: "09:30",
+      minuteOfDay: 9 * 60 + 30,
       vehicleLabel: "Toyota Hilux 2021",
       scheduledByLabel: "Vos",
       overlaps: false,
       transitions: ["confirmed", "cancelled"],
     });
+    expect(days[6]!.items[0]?.minuteOfDay).toBe(23 * 60 + 30);
     expect(b?.scheduledByLabel).toBe("Otro miembro");
     expect(days[6]!.items[0]?.transitions).toEqual([]);
   });
@@ -322,5 +368,37 @@ describe("presentación de la agenda", () => {
     });
     expect(testDrivesLabel(1)).toBe("1 prueba");
     expect(testDrivesLabel(0)).toBe("0 pruebas");
+  });
+
+  it("resume por grupo: por realizar reúne agendadas y confirmadas", () => {
+    const counts = agendaCounts([
+      row("a", "2026-11-03T13:00:00Z"),
+      row("b", "2026-11-03T14:00:00Z", "confirmed"),
+      row("c", "2026-11-03T15:00:00Z", "confirmed"),
+      row("d", "2026-11-03T16:00:00Z", "completed"),
+      row("e", "2026-11-03T17:00:00Z", "no_show"),
+      row("f", "2026-11-03T18:00:00Z", "no_show"),
+    ]);
+    expect(AGENDA_STATUS_GROUPS.map((group) => group.label)).toEqual([
+      "Por realizar",
+      "Realizadas",
+      "No asistió",
+      "Canceladas",
+    ]);
+    // Cada estado está en exactamente un grupo.
+    expect(
+      AGENDA_STATUS_GROUPS.flatMap((group) => [...group.statuses]).sort(),
+    ).toEqual([...TEST_DRIVE_STATUSES].sort());
+    expect(
+      AGENDA_STATUS_GROUPS.map((group) => groupCount(counts, group)),
+    ).toEqual([3, 1, 2, 0]);
+    const [pending] = AGENDA_STATUS_GROUPS;
+    expect(groupBreakdown(counts, pending)).toBe("1 agendada · 2 confirmadas");
+    expect(distributionLabel(counts)).toBe(
+      "1 agendada, 2 confirmadas, 1 realizada, 2 no asistió",
+    );
+    expect(statusCountLabel("cancelled", 1)).toBe("1 cancelada");
+    expect(statusCountLabel("cancelled", 0)).toBe("0 canceladas");
+    expect(statusCountLabel("no_show", 3)).toBe("3 no asistió");
   });
 });

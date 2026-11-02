@@ -208,3 +208,13 @@ export function zonedDate(instant: Date, timeZone: string): CalendarDate {
   const { year, month, day } = wallClock(instant.getTime(), timeZone);
   return { year, month, day };
 }
+
+/**
+ * Minutos desde la medianoche de pared de `timeZone` (0 a 1439), sin
+ * segundos: la grilla horaria de la agenda ubica cada prueba con este valor
+ * (Hito 13, DEC-045 §3).
+ */
+export function minuteOfDay(instant: Date, timeZone: string): number {
+  const { hour, minute } = wallClock(instant.getTime(), timeZone);
+  return hour * 60 + minute;
+}
