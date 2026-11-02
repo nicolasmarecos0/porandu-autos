@@ -60,6 +60,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-044 | Bandeja premium: orden del chat, leído por miembro, estados de entrega y oportunidad de la conversación (Hito 12) | Aceptada en principio | 2026-11-01 |
 | DEC-045 | Agenda ejecutiva: grilla horaria semanal, día en foco y lenguaje de estados (Hito 13) | Aceptada en principio | 2026-11-02 |
 | DEC-046 | Presupuesto formal en PDF: vista previa, reglas de exportación y descarga (Hito 14) | Aceptada en principio | 2026-11-02 |
+| DEC-047 | Cockpit: feed de actividad del día (Hito 15) | Aceptada en principio | 2026-11-02 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1358,6 +1359,55 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - El PDF se regenera con los datos vigentes del concesionario, el cliente y la unidad; las condiciones económicas son inmutables. Hoy solo el nombre del concesionario es editable (DEC-038): si cambia, un presupuesto viejo se descarga con el nombre nuevo. Habilitar la edición de contactos o unidades, o la descarga de documentos con valor fiscal, exige antes decidir un snapshot del documento al aprobarlo (o guardar el PDF).
   - Helvetica no tiene glifos fuera de WinAnsi: las nasales del guaraní se imprimen sin tilde y los emojis se omiten. Si hace falta fidelidad completa, se embebe una fuente Unicode (Inter, OFL) con `@pdf-lib/fontkit`, con su decisión de dependencia.
   - Las condiciones particulares tienen hasta 500 caracteres (DEC-042 §4): el presupuesto entra en una página; el generador pagina si alguna vez no entrara.
+
+---
+
+## DEC-047 — Cockpit: feed de actividad del día (Hito 15)
+- **Estado:** Aceptada en principio · 2026-11-02. Formaliza el pedido del fundador del 2 nov 2026 (módulo "Cockpit": feed de actividad reciente de ventas como pantalla de inicio, una línea de tiempo con los mensajes de WhatsApp sin leer, las pruebas de manejo próximas y vencidas y las cotizaciones actualizadas, cada ítem con ícono, hora y una acción rápida; evaluar una consulta unificada con UNION sobre `messages`, `test_drives`, `quotes` y `opportunity_notes` u otra estructura; estilo ejecutivo, Tailwind y Radix, 100 % responsivo). Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** `/cockpit` es el home desde B1 (DEC-020: el login aterriza ahí; MC §7 y DEC-037 §1: Action Cockpit) y sigue mostrando los skeletons de B1. DEC-017 le asigna una responsabilidad transversal ("¿qué necesita atención en todo el negocio ahora mismo?"), con eventos de Conversations, Calendar y Opportunities, sin replicar `/opportunities`. Las fuentes ya existen: el leído por miembro (DEC-044 §2, `0018`), las pruebas de manejo (DEC-041, `0015`), las cotizaciones (DEC-042, `0016`) y la bitácora (DEC-033). DEC-041 §7, DEC-042 §10 y DEC-045 §9 dejaron fuera "el feed de agenda del Cockpit" y "mostrar cotizaciones en el Cockpit": este bloque los incorpora por pedido del fundador.
+- **Decisión:**
+  1. **Alcance.** `/cockpit` muestra el feed de actividad del día de quien mira, en la organización activa. Solo lee: sin migración, tablas, policies, grants ni Server Actions. La navegación no cambia.
+  2. **Arquitectura de lectura: lecturas acotadas por fuente y mezcla pura, no UNION ni tabla de eventos.** El loader `getCockpitFeed()` (`db/queries/cockpit.ts`): `requireTenant()` → `withTenant()` → cinco lecturas en la misma transacción, cada una con filtro explícito por `organization_id` sobre RLS, sus joins por las dos columnas de la FK compuesta, su índice, su orden, su tope y su total (`count(*) over ()`, antes del LIMIT) → `domains/cockpit/feed.ts`.
+     - *Descartado UNION ALL:* cada fuente tiene otra forma (un chat sin leer es un agregado por conversación con la regla del leído por miembro, que necesita LATERAL; una cotización es una fila con su oportunidad, su cliente y su unidad) y otro orden (las próximas van de la más cercana a la más lejana; el resto, de la más nueva a la más vieja). Un UNION obligaría a una proyección común de columnas nulas o `jsonb` en SQL crudo, sin los tipos de Drizzle, y la base igual tendría que cortar cada rama con su propio LIMIT para no ordenar todo.
+     - *Descartada una tabla de eventos (`activity_events`):* triggers en cuatro tablas, backfill (contradice "no toca filas existentes"), RLS, grants y postcondiciones nuevas y una segunda fuente de verdad del estado (una cotización aprobada después sigue "Borrador" en el evento). Se reconsidera solo si hacen falta historial largo, notificaciones o tiempo real.
+     - **Mezcla exacta.** Cada fuente reciente se ordena por (instante al milisegundo desc, id desc) y corta en RECENT_EVENT_LIMIT; el dominio ordena la concatenación con el mismo orden total (a igual milisegundo: mensaje, prueba, cotización, nota; después id) y corta en el mismo tope. Los primeros N de la unión siempre están entre los primeros N de cada fuente: el resultado es el de un ORDER BY global, con a lo sumo 4 × N filas en memoria. Un test lo verifica contra el orden de todo.
+  3. **Fuentes y ventanas** (`domains/cockpit/window.ts`, puro, con el instante de la request y días de calendario de Asunción):
+     1. *Chats sin leer:* las conversaciones abiertas con entrantes sin leer para quien mira, con la regla de DEC-044 §2 (cursor por miembro, responder es leer, al milisegundo), en el módulo que ya la tiene (`selectUnreadConversations()`, `db/queries/conversation-reads.ts`, que comparte sus piezas SQL con `selectUnreadCounts()`). Un ítem por conversación (no por mensaje), con cuántos y el texto del más nuevo. Sin ventana: un entrante sin leer sigue pendiente hasta que el miembro lo abre en la bandeja.
+     2. *Próximas pruebas:* `scheduled` o `confirmed` cuya franja (60 minutos, `TEST_DRIVE_SLOT_MINUTES`) no terminó, hasta el fin de mañana. *Propuesta de implementación:* "En curso" durante la franja; recién al terminarla pasa a vencida.
+     3. *Pruebas vencidas:* abiertas con la franja terminada, de los últimos siete días. Es un estado derivado, no guardado, como "Vencida" de las cotizaciones (DEC-042 §2): no hay jobs.
+     4. *Cotizaciones actualizadas:* las de `updated_at` (el alta o el último cambio de estado, que fija el trigger) en los últimos siete días. Un ítem por cotización, con su estado actual (o "Vencida", derivado).
+     5. *Notas del equipo* (*propuesta de implementación*): las de otros miembros en los últimos siete días; las propias no son novedad para quien mira.
+     - *Propuesta de implementación:* "últimos siete días" = hoy y los 6 días anteriores de Asunción, desde el primer instante de ese día (como "Últimos 30 días", DEC-043 §2).
+  4. **Paginación y límites** (*propuesta de implementación*). Sin paginación ni scroll infinito: el Cockpit es la pantalla del día, no un archivo. A lo sumo 10 próximas y 30 recientes (cada fuente reciente corta en 30, §2). La franja y los avisos usan los totales: "Hay N pruebas más hasta mañana" y "Se muestran los 30 eventos más recientes de N", con enlaces a Conversaciones y Calendario. El historial completo sigue en cada módulo.
+  5. **Línea de tiempo y acciones.** Un solo hilo vertical: "Próximas pruebas" (la más cercana arriba, "Hoy 15:00" / "Mañana 10:00"), el marcador "Ahora · HH:MM" y lo reciente por día ("Hoy", "Ayer", "Lunes 2 de noviembre"), de lo más nuevo a lo más viejo. Cada evento: un nodo con el ícono de su tipo y su tono, la hora (`<time>` con la fecha completa en el `title`), el cliente, su estado (los chips de la agenda y de cotizaciones; "En curso" y "Vencida" para las fases), una línea de contexto y **una** acción rápida:
+     | Evento | Ícono | Acción |
+     |---|---|---|
+     | Chat sin leer | conversación | "Responder" → `/conversations?c=<id>` |
+     | Próxima prueba (por venir o en curso) | volante | "Ver en agenda" → `/calendar?w=<día>` (día en foco, DEC-045 §2) |
+     | Prueba vencida | volante, tono de advertencia | "Registrar resultado" → `/calendar?w=<día>` |
+     | Cotización en borrador vigente de una oportunidad cotizable | documento | "Revisar y aprobar" → `/opportunities/<id>/quotes/<quoteId>` |
+     | Cotización que se puede entregar (`quoteExportability()`, DEC-046 §2) | documento | "Ver PDF" → la misma vista previa, con "Descargar PDF" |
+     | Cualquier otra cotización | documento | "Ver presupuesto" → la misma vista previa |
+     | Nota de otro miembro | nota | "Ver oportunidad" → `/opportunities/<id>` |
+     - Cada acción es un enlace: el Cockpit no aprueba, no confirma ni marca nada. Los cambios de estado siguen en su módulo, con su confirmación y su regla (CLAUDE.md §2). "Ver PDF" abre la vista previa y no descarga directo, para que un error se explique en es-PY (DEC-046 §6).
+     - *Propuesta de implementación:* `prefetch={false}` en los enlaces del feed (hasta 40 páginas dinámicas que nadie pidió, como DEC-043 §6).
+  6. **Franja superior.** Cuatro números de los totales de las mismas lecturas (nunca consultas agregadas aparte, así que coinciden con el feed): Chats sin leer (con los mensajes), Próximas pruebas, Pruebas vencidas y Cotizaciones movidas en siete días. Lo que pide acción lleva un ícono y su texto ("Registrá el resultado"), nunca solo color (DEC-013).
+  7. **Capas.** Dominio puro en `domains/cockpit/` (`window.ts`, `feed.ts`): sin rutas (cada acción dice a qué apunta y la UI arma el enlace en `components/cockpit/links.ts` con los helpers de cada módulo). UI en `components/cockpit/`, Server Components sin JavaScript de cliente, con los tokens de DEC-013 y las primitivas existentes; un ícono nuevo (`NoteIcon`). Columna centrada en escritorio; en teléfono la acción baja debajo del texto. Sin dependencias nuevas (DEC-009).
+  8. **Caché y lectura.** Sin caché compartida entre requests (DEC-043 §6): cada request lee el último dato confirmado en una transacción. Leer no escribe: no marca conversaciones como vistas (DEC-044 §2.7), no toca `last_activity_at`, `updated_at` ni estados. "Actualizado HH:MM" dice la hora de la lectura.
+  9. **Autorización.** Cualquier membership activa (DEC-023: sin responsable asignado). Lo único personal es el leído (por miembro) y las notas propias, que no se muestran.
+  10. **Fuera de este bloque:** tiempo real o refresco automático, paginación o historial más allá de siete días, filtros por tipo o "Mis pruebas", acciones que escriben desde el feed, marcar leído desde el Cockpit, notificaciones, pruebas abiertas de más de siete días, el contador en la navegación, el resto del Cockpit de B1 (Prioridad Hoy, Match Feed, Impacto) y todo lo listado como futuro (CLAUDE.md §2), incluido el Morning Brief (DEC-007).
+- **Aclara / supersede:**
+  - B1 §3.2 y §6: `/cockpit` deja de ser skeleton con el feed; Prioridad Hoy y Match Feed siguen pendientes.
+  - DEC-041 §7, DEC-042 §10 y DEC-045 §9: el feed de agenda y las cotizaciones entran en el Cockpit, solo como lectura con enlaces.
+  - DEC-017: el Cockpit prioriza eventos de Conversations, Calendar y Opportunities sin replicar la cola: no muestra scores, NBA ni la lista de oportunidades.
+  - DEC-044 §2: la regla del leído no cambia; el Cockpit la lee con las mismas piezas SQL que la bandeja.
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: el acceso sigue `requireTenant()` → `withTenant()` → RLS (ADR-001) y no hay datos ni privilegios nuevos.
+- **Consecuencias:**
+  - Sin migración: no hay nada que aplicar a staging.
+  - Costo por request: cinco lecturas en una transacción. Las de chats y pruebas usan índices existentes (el parcial de `messages (organization_id, conversation_id, created_at)` con la PK de `conversation_reads`, y `test_drives (organization_id, scheduled_at)`). Las de cotizaciones y notas filtran por organización y recorren sus filas de la organización (cientos en el piloto). *Propuesta para cuando el volumen lo pida:* `0020_cockpit_indexes` con `quotes (organization_id, updated_at)` y `opportunity_notes (organization_id, recorded_at)`, solo índices, como `0017`.
+  - Una prueba abierta de más de siete días no aparece en el feed ni en la franja (sigue en `/calendar`). Mostrarlas, o cerrarlas solas, requiere una decisión nueva.
+  - El primer día después del despliegue, todo entrante sin leer de cada miembro aparece en su feed (DEC-044 §2.6), hasta que abra la conversación.
 
 ---
 

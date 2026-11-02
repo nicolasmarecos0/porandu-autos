@@ -931,6 +931,29 @@ de Asunción (409 + motivo) → buildQuoteDocument() → renderQuotePdf() (pdf-l
 - **Fuera de este bloque:** enviar el PDF por WhatsApp o email, logo y datos fiscales del concesionario, nombre del vendedor, firma, términos configurables, guardar el PDF o un historial de descargas, PDF de borradores y marcar enviada al descargar.
 - **Base:** sin migración. `pnpm test:db` suma `tests/db/quote-document.test.ts` (la vista previa y la descarga de punta a punta: admin y seller, otra organización, otra oportunidad, membership inactiva o sin elegir, borrador y anulada, y que leer no escribe nada).
 
+## Cockpit: feed de actividad (Hito 15)
+
+`/cockpit` deja de ser un skeleton: es el home del vendedor, con una franja de cuatro números y una línea de tiempo de su día (DEC-047). Solo lee: sin migración, sin tablas nuevas y sin Server Actions.
+
+```text
+getCockpitFeed() → requireTenant() → withTenant() → cinco lecturas acotadas en una transacción:
+  1. chats sin leer de quien mira   (selectUnreadConversations(), regla de DEC-044 §2)
+  2. próximas pruebas               (abiertas, franja en curso o por venir hasta mañana, asc, 10)
+  3. pruebas vencidas               (abiertas, franja terminada, últimos 7 días, desc, 30)
+  4. cotizaciones movidas           (updated_at de los últimos 7 días, desc, 30)
+  5. notas de otros miembros        (recorded_at de los últimos 7 días, desc, 30)
+→ RLS → domains/cockpit: cockpitWindow() (ventanas) → cockpitFeed() (eventos, mezcla exacta,
+días y franja) → CockpitView (CockpitSummary + ActivityTimeline)
+```
+
+- **Por qué no un UNION ALL ni una tabla de eventos:** cada fuente tiene su forma (un chat sin leer es un agregado por conversación y por miembro), su índice y su orden (las próximas, de la más cercana a la más lejana). Cada lectura corta en su tope con su orden; como cada fuente reciente trae los primeros 30 con el mismo orden total del feed (instante al milisegundo desc, id desc), mezclarlas en el dominio da exactamente los primeros 30 de la unión. Una tabla de eventos exigiría triggers en cuatro tablas, backfill y otra fuente de verdad del estado.
+- **Ventanas** (`domains/cockpit/window.ts`): recientes = hoy y los 6 días anteriores de Asunción; próximas = hasta el fin de mañana. Una prueba está "en curso" durante su franja de 60 minutos y recién después pasa a "Vencida". Los chats sin leer no vencen: siguen en el feed hasta que el miembro los abre en la bandeja.
+- **Eventos y acciones:** chat sin leer → "Responder" (`/conversations?c=`); próxima prueba → "Ver en agenda" y vencida → "Registrar resultado" (`/calendar?w=<día>`); cotización → "Revisar y aprobar" (borrador), "Ver PDF" (si se puede entregar, la regla de DEC-046) o "Ver presupuesto"; nota de otro miembro → "Ver oportunidad". Cada acción es un enlace (`prefetch={false}`): el Cockpit no cambia nada y cada cambio de estado sigue en su módulo, con su confirmación.
+- **Franja:** chats sin leer (con los mensajes), próximas pruebas, pruebas vencidas y cotizaciones movidas, de los totales de las mismas lecturas (`count(*) over ()`, antes del tope). Si algo no entra, el feed lo dice y enlaza a Conversaciones y Calendario.
+- **UI** (`components/cockpit/`, Server Components, tokens de DEC-013): "Próximas pruebas", el marcador "Ahora" y los días ("Hoy", "Ayer", "Lunes 2 de noviembre"). Cada evento tiene un nodo con el ícono de su tipo (WhatsApp, prueba, cotización, nota), la hora en un `<time>`, el cliente, el estado con los chips de la agenda y de cotizaciones, una línea de contexto y su acción. Columna centrada en escritorio; en teléfono la acción baja debajo del texto. Sin dependencias nuevas.
+- **Fuera de este bloque:** tiempo real o refresco automático, paginación o historial más allá de 7 días, filtros por tipo o "Mis pruebas", acciones que escriben desde el feed, marcar leído desde el Cockpit, notificaciones y el resto del Cockpit de B1 (Prioridad Hoy, Match Feed).
+- **Base:** sin migración. `pnpm test:db` suma `tests/db/cockpit.test.ts` (cada fuente solo de la organización activa, también con varias memberships; ventanas y estados cerrados afuera; el leído por miembro; las notas propias afuera; el tope con su total; y que leer no escribe nada).
+
 ## Convenciones
 
 - Código, rutas, DB e identificadores en inglés. Copy de UI en español es-PY (DEC-011).
