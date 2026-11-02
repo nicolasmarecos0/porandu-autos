@@ -83,7 +83,7 @@ export function QuotesPanel({
             >
               {quotes.map((quote) => (
                 <li key={quote.id}>
-                  <QuoteCard quote={quote} />
+                  <QuoteCard quote={quote} opportunityId={opportunityId} />
                 </li>
               ))}
             </ol>

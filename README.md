@@ -908,6 +908,29 @@ cada prueba) → weekTimeGrid() (eje, carriles y ubicación) → CalendarView
 - **Dominio puro:** `domains/calendar/time-grid.ts` (nuevo), `agenda.ts` (`minuteOfDay`, `focusedDay()`, grupos del resumen), `week.ts` (`focusKey`, `isFocus`) y `zoned-time.ts` (`minuteOfDay()`). Sin dependencias nuevas.
 - **Fuera de este bloque:** vista mensual, vista diaria de escritorio, filtros por vendedor, estado o unidad, arrastrar para reprogramar, duración configurable, refresco automático de la agenda, marcar las pruebas pasadas abiertas y el feed del Cockpit.
 
+## Presupuesto en PDF (Hito 14)
+
+Cada cotización (Hito 10) se ve como presupuesto formal y, cuando se puede entregar, se descarga en PDF (DEC-046). El PDF se genera en el servidor desde la fila de `quotes`, sin servicios externos: no hay migración, ni archivos guardados, ni Server Actions nuevas.
+
+```text
+Vista previa: /opportunities/[id]/quotes/[quoteId] → getQuoteDocumentPage() → requireTenant() →
+withTenant() → la cotización de esa oportunidad con su cliente, su unidad y el concesionario
+(organization_id) → RLS → buildQuoteDocument() → QuoteDocumentView (hoja HTML + barra de acciones)
+
+Descarga: "Descargar PDF" → GET /api/quotes/[quoteId]/pdf → resolveRequestTenant() (401/403) →
+getQuotePdfSource(ctx) → withTenant() → la misma lectura (404) → quoteExportability() con el día
+de Asunción (409 + motivo) → buildQuoteDocument() → renderQuotePdf() (pdf-lib) → 200 application/pdf
+```
+
+- **Cuándo se descarga** (`domains/quotes/exportability.ts`): aprobada o enviada, vigente y con la oportunidad en calificación o negociación; aceptada, siempre (es la constancia). Un borrador no se descarga (falta la aprobación humana), ni una vencida, anulada o rechazada. Lo decide el servidor en cada descarga; la UI usa la misma regla para ofrecer o explicar el botón. Descargar no marca la cotización como enviada ni le manda nada al cliente.
+- **Contenido** (`domains/quotes/document.ts`, puro): espacio del logo con el monograma del concesionario, su nombre, número, fecha de emisión (el día del alta en Asunción) y validez; cliente (nombre y ciudad, nunca el teléfono); unidad (marca, modelo, versión, año, kilometraje: lo que se conoce); desglose (lista, descuento y el total guardado); condiciones particulares; tres términos fijos (validez, moneda y que no reserva la unidad) y pie numerado. La vista previa y el PDF leen el mismo modelo: dicen lo mismo.
+- **Generador** (`lib/quotes/pdf.ts`, `server-only`): pdf-lib 1.17.1 (MIT, JavaScript puro), A4, Helvetica estándar sin embeber (unos KB, en milisegundos), texto vectorial, metadatos deterministas (mismo documento, mismos bytes) y paginado si no entra. `lib/pdf/text.ts` deja todo texto en lo que Helvetica sabe dibujar (WinAnsi): "−" → "–", "₲" → "Gs.", "ẽ" → "e", emojis omitidos. Los colores espejan `components/ui/tokens.css` y un test los compara. ESLint impide importar `pdf-lib` en cualquier otro módulo.
+- **Respuesta:** `Content-Disposition: attachment; filename="presupuesto-0007-<cliente>.pdf"` (ASCII), `Cache-Control: private, no-store` y `nosniff`. Los errores son JSON (`unauthenticated`, `forbidden`, `not_found`, `not_exportable` con su `reason`, `failed`) y los logs registran solo el tipo de error y el SQLSTATE.
+- **UI** (`components/quotes/`, tokens de DEC-013 y primitivas de `components/ui/`): maestro/detalle por URL como la bandeja. Desde `lg`, las cotizaciones de la oportunidad a la izquierda y el presupuesto a la derecha; debajo, solo el presupuesto con "Volver" a la oportunidad. Una barra fija arriba con el estado, lo que falta para entregarlo, "Descargar PDF" y el siguiente paso del ciclo (`QuoteStatusActions`, la misma confirmación de la tarjeta): revisar → aprobar → descargar → marcar enviada en una pantalla. La hoja tiene proporción A4 desde `md` y el sello "Vista previa" si no se entrega. Cada tarjeta del panel suma "Ver presupuesto" y, si corresponde, "Descargar PDF". La descarga es un `fetch()` que explica cualquier error en es-PY junto al botón y refresca la página ante un `404` o `409`.
+- **Autorización:** cualquier membership activa, como ver la cotización. Sin roles nuevos.
+- **Fuera de este bloque:** enviar el PDF por WhatsApp o email, logo y datos fiscales del concesionario, nombre del vendedor, firma, términos configurables, guardar el PDF o un historial de descargas, PDF de borradores y marcar enviada al descargar.
+- **Base:** sin migración. `pnpm test:db` suma `tests/db/quote-document.test.ts` (la vista previa y la descarga de punta a punta: admin y seller, otra organización, otra oportunidad, membership inactiva o sin elegir, borrador y anulada, y que leer no escribe nada).
+
 ## Convenciones
 
 - Código, rutas, DB e identificadores en inglés. Copy de UI en español es-PY (DEC-011).

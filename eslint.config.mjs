@@ -363,6 +363,18 @@ const phoneLibraryImport = {
   message: PHONE_LIBRARY_MESSAGE,
 };
 
+// Hito 14 (DEC-046 §4): pdf-lib solo vive detrás del generador del
+// presupuesto, lib/quotes/pdf.ts (`import "server-only"`). Ni la UI ni el
+// dominio lo conocen: el PDF se genera en el servidor, desde la base, en
+// GET /api/quotes/[quoteId]/pdf, y la librería no llega al bundle del
+// navegador.
+const PDF_LIBRARY_MESSAGE =
+  "PDF generation is server-only: use renderQuotePdf() from lib/quotes/pdf.ts (GET /api/quotes/[quoteId]/pdf).";
+const pdfLibraryImport = {
+  regex: "^pdf-lib(/|$)",
+  message: PDF_LIBRARY_MESSAGE,
+};
+
 const basePatterns = [
   dbClientImport,
   withUserImport,
@@ -386,6 +398,7 @@ const basePatterns = [
   testDrivesWriteImport,
   quotesWriteImport,
   conversationReadImport,
+  pdfLibraryImport,
 ];
 
 const eslintConfig = defineConfig([
@@ -822,6 +835,20 @@ const eslintConfig = defineConfig([
             whatsappApiImport,
             demandFactsImport,
           ],
+        },
+      ],
+    },
+  },
+  // Único módulo que importa pdf-lib (solo servidor, Hito 14).
+  {
+    files: ["lib/quotes/pdf.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== pdfLibraryImport,
+          ),
         },
       ],
     },
