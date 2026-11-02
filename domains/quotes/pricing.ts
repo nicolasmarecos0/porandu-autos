@@ -57,6 +57,19 @@ export type Discount =
 
 export const NO_DISCOUNT: Discount = { kind: "none" };
 
+/**
+ * El descuento de una fila guardada (`discount_kind` + `discount_value`).
+ * El CHECK `quotes_discount_check` garantiza que `none` va sin valor y los
+ * otros dos con uno; un valor ausente se lee como sin descuento.
+ */
+export function discountFrom(
+  kind: DiscountKind,
+  value: string | null,
+): Discount {
+  if (kind === "none" || value === null) return NO_DISCOUNT;
+  return { kind, value };
+}
+
 const DECIMAL = /^(\d+)\.(\d{2})$/;
 
 // Constantes BigInt sin literales `n`: el target de TypeScript es ES2017.

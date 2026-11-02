@@ -120,6 +120,29 @@ describe("quoteCardView", () => {
     expect(view.approvedLabel).toMatch(/^Aprobó: Otro miembro · /);
     expect(view.transitions).toEqual(["accepted", "rejected", "withdrawn"]);
   });
+
+  it("dice si el presupuesto se descarga hoy, con la misma regla que el servidor (Hito 14)", () => {
+    const approved = {
+      status: "approved" as const,
+      approvedBy: VIEWER,
+      approvedAt: new Date("2026-11-01T14:15:00Z"),
+    };
+    expect(quoteCardView(row(), context).exportability).toEqual({
+      exportable: false,
+      reason: "draft",
+    });
+    expect(quoteCardView(row(approved), context).exportability).toEqual({
+      exportable: true,
+    });
+    expect(
+      quoteCardView(row({ ...approved, validUntil: "2026-10-31" }), context)
+        .exportability,
+    ).toEqual({ exportable: false, reason: "expired" });
+    expect(
+      quoteCardView(row(approved), { ...context, opportunityStage: "lost" })
+        .exportability,
+    ).toEqual({ exportable: false, reason: "opportunity_closed" });
+  });
 });
 
 describe("quotesPanelData", () => {

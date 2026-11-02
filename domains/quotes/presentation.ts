@@ -4,8 +4,10 @@ import { formatMoney, type Money } from "@/domains/money";
 import { formatCalendarDate } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
 
+import { quoteExportability, type QuoteExportability } from "./exportability";
 import {
   discountAmount,
+  discountFrom,
   formatEffectivePercent,
   requiresAdminApproval,
   type Discount,
@@ -112,6 +114,8 @@ export type QuoteCardView = Readonly<{
   requiresAdmin: boolean;
   /** Aviso cuando el que mira no puede aprobarla por el descuento. */
   approvalHint: string | null;
+  /** ¿Se descarga hoy su presupuesto en PDF? Y si no, por qué (DEC-046 §2). */
+  exportability: QuoteExportability;
 }>;
 
 /** Lo que recibe el panel "Cotizaciones". */
@@ -133,13 +137,6 @@ export type QuotesPanelData = Readonly<{
 /** "N.º 0007": correlativo por organización, con cuatro dígitos. */
 export function quoteNumberLabel(number: number): string {
   return `N.º ${String(number).padStart(4, "0")}`;
-}
-
-function discountOf(row: QuoteRow): Discount {
-  if (row.discountKind === "none" || row.discountValue === null) {
-    return { kind: "none" };
-  }
-  return { kind: row.discountKind, value: row.discountValue };
 }
 
 /** Porcentaje es-PY sin ceros de más: "7.50" → "7,5", "10.00" → "10". */
@@ -182,7 +179,7 @@ export function quoteCardView(
 ): QuoteCardView {
   const listPrice: Money = { amount: row.listPrice, currency: row.currency };
   const total: Money = { amount: row.totalPrice, currency: row.currency };
-  const discount = discountOf(row);
+  const discount = discountFrom(row.discountKind, row.discountValue);
   const requiresAdmin = requiresAdminApproval(listPrice, discount);
   const target = {
     status: row.status,
@@ -230,6 +227,14 @@ export function quoteCardView(
     transitions,
     requiresAdmin,
     approvalHint: blockedApproval ? ADMIN_APPROVAL_HINT : null,
+    exportability: quoteExportability(
+      {
+        status: row.status,
+        validUntil: row.validUntil,
+        opportunityStage: context.opportunityStage,
+      },
+      context.today,
+    ),
   };
 }
 
