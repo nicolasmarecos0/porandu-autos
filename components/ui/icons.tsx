@@ -240,6 +240,16 @@ export function AlertIcon(props: IconProps) {
   );
 }
 
+/** Dos franjas que se pisan: la misma unidad en dos pruebas cercanas. */
+export function OverlapIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3" y="8" width="12" height="10" rx="2" />
+      <rect x="9" y="5" width="12" height="10" rx="2" />
+    </Icon>
+  );
+}
+
 export function UndoIcon(props: IconProps) {
   return (
     <Icon {...props}>

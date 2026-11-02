@@ -1,30 +1,41 @@
 import Link from "next/link";
-import { cn } from "@/components/ui/cn";
-import { CalendarIcon, ChevronRightIcon } from "@/components/ui/icons";
-import { testDrivesLabel, type AgendaDay } from "@/domains/calendar/agenda";
-import {
-  TEST_DRIVE_STATUS_LABELS,
-  TEST_DRIVE_STATUSES,
-} from "@/domains/calendar/test-drives";
-import { WEEK_PARAM } from "@/domains/calendar/week";
-import type { CalendarAgenda } from "@/db/queries/calendar";
 
+import { cn } from "@/components/ui/cn";
+import {
+  CalendarIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+} from "@/components/ui/icons";
+import type { CalendarAgenda } from "@/db/queries/calendar";
+import { focusedDay, testDrivesLabel } from "@/domains/calendar/agenda";
+import type { CalendarWeek } from "@/domains/calendar/week";
+
+import { AgendaSummary } from "./agenda-summary";
+import { DayAgenda } from "./day-agenda";
+import { DayStrip } from "./day-strip";
+import { calendarHref } from "./links";
 import { ScheduleTestDriveDrawer } from "./schedule-test-drive-drawer";
-import { TestDriveCard } from "./test-drive-card";
-import { TEST_DRIVE_DOT, TEST_DRIVE_TEXT } from "./test-drive-status";
+import { WeekGrid } from "./week-grid";
 
 /*
- * Agenda semanal de pruebas de manejo (Hito 9, DEC-041 §4). Server
- * Component: recibe el ViewModel del loader (requireTenant() →
- * withTenant() → RLS) y solo las tarjetas y el drawer de alta son de
- * cliente.
+ * Agenda ejecutiva de pruebas de manejo (Hito 9, DEC-041; Hito 13, DEC-045).
+ * Server Component: recibe el ViewModel del loader (requireTenant() →
+ * withTenant() → RLS) y solo los bloques, las tarjetas, la línea "ahora" y
+ * el drawer de alta son de cliente.
  *
- * Layout: en desktop ancho, siete columnas (lunes a domingo); en tablet,
- * dos; en teléfono, una lista de días. La semana viaja en la URL
- * (`?w=YYYY-MM-DD`), así que se puede compartir, volver atrás y recargar.
+ *   ┌ Agenda · 12 pruebas esta semana ─────────────── [+ Agendar prueba] ┐
+ *   │ [‹] [Hoy] [›]  2 – 8 nov 2026    ▬▬▬▬▬▬▬▬▬▬▬▬ (distribución)       │
+ *   │                 6 ○● Por realizar · 3 ✓ Realizadas · 1 ⚠ No asistió │
+ *   ├─────────────────────────────────────────────────────────────────────┤
+ *   │ desde lg: grilla horaria de la semana (WeekGrid)                    │
+ *   │ debajo:   tira de días (DayStrip) + agenda del día en foco          │
+ *   └─────────────────────────────────────────────────────────────────────┘
+ *
+ * La semana y el día en foco viajan en la URL (`?w=YYYY-MM-DD`), así que se
+ * puede compartir, volver atrás y recargar. Anterior y siguiente saltan al
+ * mismo día de la otra semana; "Hoy", a hoy. Las dos presentaciones salen
+ * del mismo HTML y las elige el CSS: cambiar el ancho no recarga nada.
  */
-
-const weekHref = (key: string) => `/calendar?${WEEK_PARAM}=${key}`;
 
 const navLinkClassName =
   "inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border-default bg-surface-1 px-2.5 text-label font-semibold text-text-primary transition-[transform,background-color,border-color] duration-150 ease-out-strong hover:border-border-strong hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring active:scale-[0.97] motion-reduce:active:scale-100";
@@ -37,10 +48,11 @@ export function CalendarView({
   agenda: CalendarAgenda;
 }) {
   const { week, days, counts, total } = agenda;
+  const focus = focusedDay(days);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="shrink-0 border-b border-border-subtle bg-surface-1 px-gutter pt-3 pb-4">
+      <header className="shrink-0 border-b border-border-subtle bg-surface-1 px-gutter pt-3 pb-3.5">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
           <div className="flex min-w-0 items-baseline gap-2">
             <h1 className="text-title text-text-primary">{title}</h1>
@@ -55,171 +67,69 @@ export function CalendarView({
           />
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-          <nav aria-label="Semana" className="flex items-center gap-2">
-            <Link
-              href={weekHref(week.previousKey)}
-              className={navLinkClassName}
-              aria-label="Semana anterior"
-              scroll={false}
-            >
-              <ChevronRightIcon
-                aria-hidden="true"
-                className="size-4 rotate-180"
-              />
-            </Link>
-            <Link
-              href={weekHref(week.todayKey)}
-              className={cn(
-                navLinkClassName,
-                week.isCurrent &&
-                  "border-brand-border bg-brand-soft text-brand-strong",
-              )}
-              aria-current={week.isCurrent ? "date" : undefined}
-              scroll={false}
-            >
-              Hoy
-            </Link>
-            <Link
-              href={weekHref(week.nextKey)}
-              className={navLinkClassName}
-              aria-label="Semana siguiente"
-              scroll={false}
-            >
-              <ChevronRightIcon aria-hidden="true" className="size-4" />
-            </Link>
-            <p
-              aria-live="polite"
-              className="ml-1 flex items-center gap-1.5 text-heading text-text-primary capitalize tabular-nums"
-            >
-              <CalendarIcon
-                aria-hidden="true"
-                className="size-4.5 text-text-muted"
-              />
-              {week.label}
-            </p>
-          </nav>
-
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-8 gap-y-3">
+          <WeekNav week={week} />
           {total > 0 ? (
-            <dl className="flex flex-wrap gap-x-6 gap-y-1">
-              {TEST_DRIVE_STATUSES.filter((status) => counts[status] > 0).map(
-                (status) => (
-                  // dt primero en el DOM; el número se ve primero.
-                  <div
-                    key={status}
-                    className="flex flex-row-reverse items-baseline justify-end gap-1.5"
-                  >
-                    <dt className="flex items-center gap-1.5 text-label text-text-secondary">
-                      <span
-                        aria-hidden="true"
-                        className={cn(
-                          "size-2 rounded-full",
-                          TEST_DRIVE_DOT[status],
-                        )}
-                      />
-                      {TEST_DRIVE_STATUS_LABELS[status]}
-                    </dt>
-                    <dd
-                      className={cn(
-                        "text-heading tabular-nums",
-                        TEST_DRIVE_TEXT[status],
-                      )}
-                    >
-                      {counts[status]}
-                    </dd>
-                  </div>
-                ),
-              )}
-            </dl>
+            <AgendaSummary counts={counts} className="w-full sm:w-auto" />
           ) : null}
         </div>
       </header>
 
+      <DayStrip days={days} className="lg:hidden" />
+
       <div className="min-h-0 flex-1 overflow-y-auto p-gutter">
-        {total === 0 ? <EmptyWeek /> : null}
-        <ol
-          aria-label={`Días de la semana del ${week.label}`}
-          className="grid grid-cols-1 gap-section md:grid-cols-2 xl:grid-cols-7"
-        >
-          {days.map((day) => (
-            <DayColumn key={day.date} day={day} />
-          ))}
-        </ol>
+        <DayAgenda day={focus} weekTotal={total} className="lg:hidden" />
+        <div className="max-lg:hidden">
+          {total === 0 ? <EmptyWeek /> : null}
+          <WeekGrid days={days} nowIso={agenda.nowIso} />
+        </div>
       </div>
     </div>
   );
 }
 
-function DayColumn({ day }: { day: AgendaDay }) {
-  const headingId = `day-${day.date}`;
+function WeekNav({ week }: { week: CalendarWeek }) {
   return (
-    <li
-      aria-labelledby={headingId}
-      className={cn(
-        "flex min-w-0 flex-col rounded-lg border bg-surface-2/60",
-        day.isToday
-          ? "border-brand-border ring-1 ring-brand-border"
-          : "border-border-subtle",
-        // En teléfono, los días ya pasados y vacíos no ocupan lugar.
-        day.isPast && day.items.length === 0 && "max-md:hidden",
-      )}
-    >
-      <h2
-        id={headingId}
-        className={cn(
-          "flex items-center gap-2 rounded-t-lg border-b px-3 py-2",
-          day.isToday
-            ? "border-brand-border bg-brand-soft"
-            : "border-border-subtle bg-surface-1",
-        )}
+    <nav aria-label="Semana" className="flex min-w-0 items-center gap-2">
+      <Link
+        href={calendarHref(week.previousKey)}
+        className={navLinkClassName}
+        aria-label="Semana anterior"
+        scroll={false}
       >
-        <span className="sr-only">{day.longLabel}</span>
-        <span
+        <ChevronLeftIcon aria-hidden="true" className="size-4" />
+      </Link>
+      <Link
+        href={calendarHref(week.todayKey)}
+        className={cn(
+          navLinkClassName,
+          week.isCurrent &&
+            "border-brand-border bg-brand-soft text-brand-strong",
+        )}
+        aria-current={week.isCurrent ? "date" : undefined}
+        scroll={false}
+      >
+        Hoy
+      </Link>
+      <Link
+        href={calendarHref(week.nextKey)}
+        className={navLinkClassName}
+        aria-label="Semana siguiente"
+        scroll={false}
+      >
+        <ChevronRightIcon aria-hidden="true" className="size-4" />
+      </Link>
+      <p
+        aria-live="polite"
+        className="ml-1 flex min-w-0 items-center gap-1.5 text-body font-semibold text-text-primary capitalize tabular-nums sm:text-heading"
+      >
+        <CalendarIcon
           aria-hidden="true"
-          className={cn(
-            "text-overline uppercase",
-            day.isToday ? "text-brand-strong" : "text-text-muted",
-          )}
-        >
-          {day.weekdayShort}
-        </span>
-        <span
-          aria-hidden="true"
-          className={cn(
-            "text-heading tabular-nums",
-            day.isToday
-              ? "text-brand-strong"
-              : day.isPast
-                ? "text-text-muted"
-                : "text-text-primary",
-          )}
-        >
-          {day.dayOfMonth}
-        </span>
-        {day.isToday ? (
-          <span className="ml-auto rounded-full bg-brand px-2 py-0.5 text-caption text-brand-contrast">
-            Hoy
-          </span>
-        ) : day.items.length > 0 ? (
-          <span className="ml-auto text-caption text-text-muted tabular-nums">
-            {day.items.length}
-          </span>
-        ) : null}
-      </h2>
-      {day.items.length > 0 ? (
-        <ul className="flex flex-col gap-2 p-2">
-          {day.items.map((item) => (
-            <li key={item.id}>
-              <TestDriveCard item={item} />
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="px-3 py-4 text-caption text-text-muted xl:py-6 xl:text-center">
-          Sin pruebas
-        </p>
-      )}
-    </li>
+          className="size-4.5 shrink-0 text-text-muted max-sm:hidden"
+        />
+        <span className="truncate">{week.label}</span>
+      </p>
+    </nav>
   );
 }
 
