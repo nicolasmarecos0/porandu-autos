@@ -142,6 +142,16 @@ export function DocumentIcon(props: IconProps) {
   );
 }
 
+/** Nota de la bitácora comercial: renglones y un lápiz. */
+export function NoteIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4.5 6.5h11M4.5 11h8M4.5 15.5h4.5" />
+      <path d="M13.5 20.5l.6-2.9 5.6-5.6a1.6 1.6 0 0 1 2.3 2.3l-5.6 5.6z" />
+    </Icon>
+  );
+}
+
 export function DownloadIcon(props: IconProps) {
   return (
     <Icon {...props}>
