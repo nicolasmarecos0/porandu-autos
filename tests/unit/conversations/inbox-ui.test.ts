@@ -96,6 +96,7 @@ const THREAD_ROWS: readonly ThreadMessageRow[] = [
     recordedBy: null,
     sentAt: new Date("2026-10-28T13:00:00Z"),
     createdAt: new Date("2026-10-28T13:00:01Z"),
+    deliveryStatuses: [],
   },
   {
     id: "m1",
@@ -104,6 +105,7 @@ const THREAD_ROWS: readonly ThreadMessageRow[] = [
     recordedBy: null,
     sentAt: new Date("2026-10-29T15:30:00Z"),
     createdAt: new Date("2026-10-29T15:30:01Z"),
+    deliveryStatuses: [],
   },
   {
     id: "m2",
@@ -112,6 +114,7 @@ const THREAD_ROWS: readonly ThreadMessageRow[] = [
     recordedBy: VIEWER,
     sentAt: new Date("2026-10-29T15:31:00Z"),
     createdAt: new Date("2026-10-29T15:31:00Z"),
+    deliveryStatuses: [],
   },
   {
     id: "m3",
@@ -120,6 +123,7 @@ const THREAD_ROWS: readonly ThreadMessageRow[] = [
     recordedBy: OTHER,
     sentAt: new Date("2026-10-29T15:32:00Z"),
     createdAt: new Date("2026-10-29T15:32:00Z"),
+    deliveryStatuses: [],
   },
   {
     id: "m4",
@@ -128,6 +132,7 @@ const THREAD_ROWS: readonly ThreadMessageRow[] = [
     recordedBy: OTHER,
     sentAt: new Date("2026-10-29T15:33:00Z"),
     createdAt: new Date("2026-10-29T15:33:00Z"),
+    deliveryStatuses: [],
   },
 ];
 
@@ -241,6 +246,46 @@ describe("bandeja", () => {
     expect(html.match(/data-delivery="sent"/g)).toHaveLength(3);
     expect(html.match(/>Enviado<\/span>/g)).toHaveLength(3);
     expect(html).not.toContain('data-delivery="read"');
+  });
+
+  it("muestra el estado real de cada saliente: el vigente, que uno inferior tardío no pisa (Hito 12C)", () => {
+    const rows = THREAD_ROWS.map((row) => {
+      if (row.id === "m2") {
+        return {
+          ...row,
+          // Leído y después un "No entregado" tardío: sigue leído.
+          deliveryStatuses: ["sent", "read", "failed", "delivered"] as const,
+        };
+      }
+      if (row.id === "m3") {
+        return { ...row, deliveryStatuses: ["sent", "failed"] as const };
+      }
+      if (row.id === "m4") {
+        return { ...row, deliveryStatuses: ["failed", "delivered"] as const };
+      }
+      return row;
+    });
+    const html = render({
+      ...found,
+      thread: { ...foundThread, sections: threadSections(rows, VIEWER, NOW) },
+    });
+
+    const marks = [
+      ...html.matchAll(
+        /<span data-delivery="(\w+)" class="([^"]*)"><svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>([^<]+)<\/span>/g,
+      ),
+    ].map(([, status, className, label]) => ({
+      status,
+      label,
+      danger: className!.split(" ").includes("text-danger"),
+    }));
+    expect(marks).toEqual([
+      { status: "read", label: "Leído", danger: false },
+      { status: "failed", label: "No entregado", danger: true },
+      { status: "delivered", label: "Entregado", danger: false },
+    ]);
+    // Solo los salientes tienen estado: los entrantes no llevan marca.
+    expect(html.match(/data-delivery=/g)).toHaveLength(3);
   });
 
   it("la franja de la oportunidad: una abierta lleva a ella", () => {

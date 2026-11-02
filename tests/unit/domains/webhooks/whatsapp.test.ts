@@ -4,7 +4,9 @@ import { parseWhatsAppWebhook } from "@/domains/webhooks/whatsapp";
 
 import {
   messagesValue,
+  rawStatus,
   rawText,
+  statusWebhook,
   TEST_LINE_ID,
   textMessage,
   textWebhook,
@@ -12,9 +14,11 @@ import {
 } from "../../support/whatsapp-payload";
 
 /*
- * Payload del webhook de la WhatsApp Cloud API (Hito 7, DEC-039 §3): sobre
- * estricto, mensajes de texto traducidos al contrato propio, el resto
- * ignorado y lo inválido descartado sin escribir.
+ * Payload del webhook de la WhatsApp Cloud API (Hito 7, DEC-039 §3; Hito
+ * 12C, DEC-044 §3.3): sobre estricto, mensajes de texto y estados de entrega
+ * traducidos a sus contratos propios, el resto ignorado y lo inválido
+ * descartado sin escribir. Cada estado por separado, en
+ * whatsapp-status.test.ts.
  */
 
 describe("parseWhatsAppWebhook: mensajes de texto", () => {
@@ -36,8 +40,10 @@ describe("parseWhatsAppWebhook: mensajes de texto", () => {
           sentAt: new Date(1_792_600_000 * 1000),
         },
       ],
+      statuses: [],
       ignored: 0,
       invalid: 0,
+      invalidStatuses: 0,
     });
   });
 
@@ -127,7 +133,7 @@ describe("parseWhatsAppWebhook: mensajes de texto", () => {
 });
 
 describe("parseWhatsAppWebhook: lo que no se ingiere", () => {
-  it("ignora estados de entrega, mensajes que no son de texto y otros campos", () => {
+  it("ignora mensajes que no son de texto, estados fuera del contrato y otros campos", () => {
     const text = textMessage();
     const payload = {
       object: "whatsapp_business_account",
@@ -156,8 +162,16 @@ describe("parseWhatsAppWebhook: lo que no se ingiere", () => {
                   },
                 ],
                 statuses: [
-                  { id: "wamid.OUT", status: "delivered" },
-                  { id: "wamid.OUT", status: "read" },
+                  rawStatus({
+                    id: "wamid.OUT",
+                    status: "deleted",
+                    timestamp: 1_792_600_000,
+                  }),
+                  rawStatus({
+                    id: "wamid.OUT",
+                    status: "warning",
+                    timestamp: 1_792_600_000,
+                  }),
                 ],
               }),
             },
@@ -167,23 +181,16 @@ describe("parseWhatsAppWebhook: lo que no se ingiere", () => {
       ],
     };
     const parsed = parseWhatsAppWebhook(payload);
-    expect(parsed).toMatchObject({ ok: true, ignored: 5, invalid: 0 });
+    expect(parsed).toMatchObject({
+      ok: true,
+      statuses: [],
+      ignored: 5,
+      invalid: 0,
+      invalidStatuses: 0,
+    });
     expect(parsed.ok && parsed.messages.map((m) => m.externalId)).toEqual([
       text.id,
     ]);
-  });
-
-  it("un webhook de solo estados no trae mensajes", () => {
-    expect(
-      parseWhatsAppWebhook(
-        webhook(
-          messagesValue({
-            messages: [],
-            statuses: [{ id: "wamid.OUT", status: "sent" }],
-          }),
-        ),
-      ),
-    ).toEqual({ ok: true, messages: [], ignored: 1, invalid: 0 });
   });
 
   it.each([
@@ -217,7 +224,14 @@ describe("parseWhatsAppWebhook: lo que no se ingiere", () => {
   ])("descarta un mensaje mal formado: %s", (_, raw) => {
     expect(
       parseWhatsAppWebhook(webhook(messagesValue({ messages: [raw] }))),
-    ).toEqual({ ok: true, messages: [], ignored: 0, invalid: 1 });
+    ).toEqual({
+      ok: true,
+      messages: [],
+      statuses: [],
+      ignored: 0,
+      invalid: 1,
+      invalidStatuses: 0,
+    });
   });
 
   it("acepta exactamente 4096 caracteres", () => {
@@ -225,6 +239,106 @@ describe("parseWhatsAppWebhook: lo que no se ingiere", () => {
       textWebhook([textMessage({ body: "x".repeat(4096) })]),
     );
     expect(parsed).toMatchObject({ ok: true, invalid: 0 });
+  });
+});
+
+describe("parseWhatsAppWebhook: estados de entrega (Hito 12C)", () => {
+  it("un webhook de solo estados (sin contacts ni messages) trae los estados de la línea, en orden", () => {
+    expect(
+      parseWhatsAppWebhook(
+        statusWebhook([
+          { id: "wamid.OUT1", status: "sent", timestamp: 1_792_600_000 },
+          { id: "wamid.OUT1", status: "delivered", timestamp: 1_792_600_005 },
+          { id: "wamid.OUT2", status: "failed", timestamp: 1_792_600_009 },
+        ]),
+      ),
+    ).toEqual({
+      ok: true,
+      messages: [],
+      statuses: [
+        {
+          lineId: TEST_LINE_ID,
+          externalId: "wamid.OUT1",
+          status: "sent",
+          occurredAt: new Date(1_792_600_000 * 1000),
+        },
+        {
+          lineId: TEST_LINE_ID,
+          externalId: "wamid.OUT1",
+          status: "delivered",
+          occurredAt: new Date(1_792_600_005 * 1000),
+        },
+        {
+          lineId: TEST_LINE_ID,
+          externalId: "wamid.OUT2",
+          status: "failed",
+          occurredAt: new Date(1_792_600_009 * 1000),
+        },
+      ],
+      ignored: 0,
+      invalid: 0,
+      invalidStatuses: 0,
+    });
+  });
+
+  it("cada estado toma la línea de su cambio, junto a los mensajes de otro", () => {
+    const text = textMessage();
+    const parsed = parseWhatsAppWebhook(
+      webhook(messagesValue({ messages: [rawText(text)] }), {
+        messaging_product: "whatsapp",
+        metadata: { phone_number_id: "100000000000002" },
+        statuses: [
+          rawStatus({
+            id: "wamid.OUT",
+            status: "read",
+            timestamp: 1_792_600_000,
+          }),
+        ],
+      }),
+    );
+    expect(parsed.ok && parsed.messages.map((m) => m.lineId)).toEqual([
+      TEST_LINE_ID,
+    ]);
+    expect(parsed.ok && parsed.statuses.map((s) => s.lineId)).toEqual([
+      "100000000000002",
+    ]);
+  });
+
+  it("descarta un estado inválido sin frenar el resto (invalidStatuses)", () => {
+    const parsed = parseWhatsAppWebhook(
+      webhook(
+        messagesValue({
+          messages: [rawText(textMessage())],
+          statuses: [
+            { id: "wamid.OUT", status: "read" },
+            rawStatus({ id: "wamid.OK", status: "read", timestamp: 1 }),
+            rawStatus({
+              id: "wamid.OK",
+              status: "delivered",
+              timestamp: 1_792_600_000,
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(parsed).toMatchObject({
+      ok: true,
+      ignored: 0,
+      invalid: 0,
+      invalidStatuses: 2,
+    });
+    expect(parsed.ok && parsed.messages).toHaveLength(1);
+    expect(parsed.ok && parsed.statuses.map((s) => s.status)).toEqual([
+      "delivered",
+    ]);
+  });
+
+  it("statuses que no es una lista invalida el sobre entero", () => {
+    expect(
+      parseWhatsAppWebhook(
+        webhook({ ...messagesValue(), statuses: { id: "wamid.OUT" } }),
+      ),
+    ).toEqual({ ok: false });
   });
 });
 

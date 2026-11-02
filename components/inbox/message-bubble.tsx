@@ -14,7 +14,7 @@ import { NewMessagesDivider } from "./thread-log";
  * Las burbujas seguidas del mismo autor forman un grupo (threadSections()):
  * solo la primera muestra el autor y la cola, y van más juntas. Cada una
  * lleva su hora (el día lo dice la sección) y, si es saliente, su estado de
- * entrega.
+ * entrega real (Hito 12C, DEC-044 §3), junto a la hora.
  *
  * Solo un entrante puede estar sin leer (DEC-044 §2.2): cada uno lleva el
  * lugar del separador "Mensajes nuevos", que se muestra antes del primero

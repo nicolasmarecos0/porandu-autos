@@ -134,6 +134,13 @@
       "when": 1793557424225,
       "tag": "0018_conversation_reads",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793572316479,
+      "tag": "0019_whatsapp_delivery_status",
+      "breakpoints": true
     }
   ]
 }

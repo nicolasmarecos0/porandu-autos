@@ -50,6 +50,7 @@ describe("readRepoMigrations", () => {
       [16, "0016_quotes"],
       [17, "0017_dashboard_indexes"],
       [18, "0018_conversation_reads"],
+      [19, "0019_whatsapp_delivery_status"],
     ]);
   });
 
@@ -81,16 +82,17 @@ describe("compareHistory", () => {
     // Cada etapa de staging: lo aplicado es un prefijo y lo pendiente, el
     // resto del journal, en orden.
     for (const [count, stage] of [
-      [8, "H1.4/H1.5: 0008 a 0018 pendientes"],
-      [9, "H1.6: 0009 a 0018 pendientes"],
-      [10, "Hito 2: 0010 a 0018 pendientes"],
-      [11, "Hito 2A: 0011 a 0018 pendientes"],
-      [12, "Hito 4/5: 0012 a 0018 pendientes"],
-      [13, "Hito 6: 0013 a 0018 pendientes"],
-      [14, "Hito 7: 0014 a 0018 pendientes"],
-      [15, "Hito 8: 0015 a 0018 pendientes"],
-      [16, "Hito 9: 0016 a 0018 pendientes"],
-      [17, "Hito 10: 0017 y 0018 pendientes"],
+      [8, "H1.4/H1.5: 0008 a 0019 pendientes"],
+      [9, "H1.6: 0009 a 0019 pendientes"],
+      [10, "Hito 2: 0010 a 0019 pendientes"],
+      [11, "Hito 2A: 0011 a 0019 pendientes"],
+      [12, "Hito 4/5: 0012 a 0019 pendientes"],
+      [13, "Hito 6: 0013 a 0019 pendientes"],
+      [14, "Hito 7: 0014 a 0019 pendientes"],
+      [15, "Hito 8: 0015 a 0019 pendientes"],
+      [16, "Hito 9: 0016 a 0019 pendientes"],
+      [17, "Hito 10: 0017 a 0019 pendientes"],
+      [18, "Hito 11: 0018 y 0019 pendientes"],
     ] as const) {
       expect(compareHistory(REPO, applied(count)), stage).toEqual({
         kind: "consistent",
@@ -98,15 +100,15 @@ describe("compareHistory", () => {
         pending: REPO.slice(count),
       });
     }
-    expect(REPO.slice(8)).toHaveLength(11);
-    // Staging con el Hito 11: solo 0018 pendiente (DEC-044).
-    expect(compareHistory(REPO, applied(18))).toEqual({
+    expect(REPO.slice(8)).toHaveLength(12);
+    // Staging con el Hito 12B: solo 0019 pendiente (DEC-044 §3.3).
+    expect(compareHistory(REPO, applied(19))).toEqual({
       kind: "consistent",
-      applied: REPO.slice(0, 18),
-      pending: [REPO[18]],
+      applied: REPO.slice(0, 19),
+      pending: [REPO[19]],
     });
-    expect(REPO[18]?.tag).toBe("0018_conversation_reads");
-    expect(compareHistory(REPO, [...applied(19)].reverse())).toMatchObject({
+    expect(REPO[19]?.tag).toBe("0019_whatsapp_delivery_status");
+    expect(compareHistory(REPO, [...applied(20)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -126,8 +128,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(19), { id: 20, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 19",
+      [...applied(20), { id: 21, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 20",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -166,7 +168,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0018: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0019: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -377,6 +379,18 @@ describe("expectedFootprint", () => {
         "conversation_reads.conversation_reads_select_own",
       ].sort(),
     };
-    expect(expectedFootprint(REPO)).toEqual(hito12b);
+    expect(expectedFootprint(REPO.slice(0, 19))).toEqual(hito12b);
+    // 0019 suma los estados de entrega (DEC-044 §3.3), con su policy de
+    // lectura de miembros. La función de ingesta de estados es SQL custom:
+    // no figura.
+    const hito12c = {
+      ...hito12b,
+      tables: [...hito12b.tables, "message_statuses"].sort(),
+      policies: [
+        ...hito12b.policies,
+        "message_statuses.message_statuses_select_member",
+      ].sort(),
+    };
+    expect(expectedFootprint(REPO)).toEqual(hito12c);
   });
 });

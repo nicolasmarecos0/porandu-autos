@@ -1,5 +1,5 @@
 import { chatDayKey, chatDayLabel, chatTime } from "./chat-time";
-import { INITIAL_DELIVERY_STATUS, type DeliveryStatus } from "./delivery";
+import { currentDeliveryStatus, type DeliveryStatus } from "./delivery";
 import {
   compareThreadRows,
   threadInstant,
@@ -35,9 +35,11 @@ export type ThreadBubble = ThreadMessage &
     dateTime: string;
     position: BubblePosition;
     /**
-     * Solo en un saliente: su estado de entrega. Hasta que entre la ingesta
-     * de estados (DEC-044 §3), todo saliente es INITIAL_DELIVERY_STATUS: la
-     * base lo registra después de que Meta lo aceptó (DEC-040 §6).
+     * Solo en un saliente: su estado de entrega vigente (DEC-044 §3.2), el
+     * de mayor precedencia entre los que informó WhatsApp
+     * (currentDeliveryStatus()). Sin ninguno todavía es "Enviado": la base
+     * lo registra después de que Meta lo aceptó (DEC-040 §6). En un entrante
+     * es null.
      */
     delivery: DeliveryStatus | null;
   }>;
@@ -55,6 +57,7 @@ type Placed = Readonly<{
   message: ThreadMessage;
   at: Date;
   dayKey: string;
+  delivery: DeliveryStatus | null;
 }>;
 
 function joins(previous: Placed | undefined, current: Placed): boolean {
@@ -90,6 +93,10 @@ export function threadSections(
       message: threadMessage(row, viewerUserId),
       at,
       dayKey: chatDayKey(at),
+      delivery:
+        row.direction === "outbound"
+          ? currentDeliveryStatus(row.deliveryStatuses)
+          : null,
     };
   });
 
@@ -113,8 +120,7 @@ export function threadSections(
       time: chatTime(item.at),
       dateTime: item.at.toISOString(),
       position: positionOf(joinsPrevious, joinsNext),
-      delivery:
-        item.message.direction === "outbound" ? INITIAL_DELIVERY_STATUS : null,
+      delivery: item.delivery,
     });
   });
   return sections;

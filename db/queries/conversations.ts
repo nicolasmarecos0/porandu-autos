@@ -3,6 +3,10 @@ import "server-only";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import {
+  isDeliveryStatus,
+  type DeliveryStatus,
+} from "@/domains/conversations/delivery";
+import {
   inboxItems,
   INBOX_CONVERSATION_LIMIT,
   THREAD_MESSAGE_LIMIT,
@@ -19,7 +23,13 @@ import {
 import { threadSections } from "@/domains/conversations/thread-layout";
 import { requireTenant } from "@/lib/tenant/session";
 
-import { contacts, conversations, messages, opportunities } from "../schema";
+import {
+  contacts,
+  conversations,
+  messageStatuses,
+  messages,
+  opportunities,
+} from "../schema";
 import { withTenant } from "../tenant";
 import { selectReadCursor, selectUnreadCounts } from "./conversation-reads";
 
@@ -40,6 +50,10 @@ import { selectReadCursor, selectUnreadCounts } from "./conversation-reads";
  * - El historial: los THREAD_MESSAGE_LIMIT mensajes más recientes de la
  *   conversación, con su total. Los ordena y agrupa por día de Asunción el
  *   dominio (threadSections()).
+ * - Los estados de entrega de cada saliente (Hito 12C, DEC-044 §3): los que
+ *   informó WhatsApp (`message_statuses`), sobre su PK. El vigente lo decide
+ *   el dominio por precedencia (currentDeliveryStatus()): uno inferior que
+ *   llegó tarde no pisa uno superior.
  * - La oportunidad (DEC-044 §4): las abiertas del contacto en la
  *   organización activa (a lo sumo OPPORTUNITY_LINK_LIMIT, por actividad
  *   más reciente) con su total. El dominio dice si hay una, ninguna o
@@ -54,6 +68,14 @@ import { selectReadCursor, selectUnreadCounts } from "./conversation-reads";
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Los estados de entrega de un mensaje tal como los devuelve la base
+ * (`text[]`). El CHECK de `message_statuses` ya los acota al contrato.
+ */
+function deliveryStatusesOf(value: unknown): DeliveryStatus[] {
+  return Array.isArray(value) ? value.filter(isDeliveryStatus) : [];
+}
 
 /**
  * Loader de /conversations. `selected` es el `?c=` de la URL, sin validar;
@@ -143,6 +165,14 @@ export async function getInbox(
             recordedBy: messages.recordedBy,
             sentAt: messages.sentAt,
             createdAt: messages.createdAt,
+            // Los estados recibidos del mensaje, de la misma organización
+            // (usa la PK (organization_id, message_id, status)).
+            deliveryStatuses: sql<DeliveryStatus[]>`coalesce((
+              SELECT array_agg(${messageStatuses.status})
+              FROM ${messageStatuses}
+              WHERE ${messageStatuses.organizationId} = ${messages.organizationId}
+                AND ${messageStatuses.messageId} = ${messages.id}
+            ), '{}'::text[])`.mapWith(deliveryStatusesOf),
             total: sql<number>`count(*) over ()`.mapWith(Number),
           })
           .from(messages)

@@ -40,21 +40,37 @@ export type InboundMessage = Readonly<{
   sentAt: Date;
 }>;
 
-// Fechas razonables para un mensaje: ni antes de 2000 ni después de 2100.
+// Fechas razonables del proveedor: ni antes de 2000 ni después de 2100.
 const EARLIEST = Date.UTC(2000, 0, 1);
 const LATEST = Date.UTC(2100, 0, 1);
+
+/** `phone_number_id` de una línea: solo dígitos. */
+export const lineIdSchema = z.string().regex(/^[0-9]{1,32}$/);
+
+/**
+ * Id de un mensaje en el proveedor (el wamid de Meta): de 1 a
+ * EXTERNAL_ID_MAX_LENGTH caracteres visibles, sin espacios. Es la clave de
+ * idempotencia de un entrante y la que encuentra un saliente cuando llega su
+ * estado de entrega (./whatsapp-status.ts).
+ */
+export const externalIdSchema = z
+  .string()
+  .min(1)
+  .max(EXTERNAL_ID_MAX_LENGTH)
+  .regex(/^[\x21-\x7e]+$/);
+
+/** Un instante informado por el proveedor, en un rango razonable. */
+export const providerInstantSchema = z
+  .date()
+  .refine((date) => date.getTime() >= EARLIEST && date.getTime() < LATEST);
 
 /*
  * Estricto: un campo de más es un error del llamador, no del proveedor (la
  * tolerancia a campos nuevos de Meta vive en whatsapp.ts).
  */
 const inboundMessageSchema = z.strictObject({
-  lineId: z.string().regex(/^[0-9]{1,32}$/),
-  externalId: z
-    .string()
-    .min(1)
-    .max(EXTERNAL_ID_MAX_LENGTH)
-    .regex(/^[\x21-\x7e]+$/),
+  lineId: lineIdSchema,
+  externalId: externalIdSchema,
   from: z.string().regex(/^[1-9][0-9]{5,14}$/),
   profileName: z
     .string()
@@ -65,9 +81,7 @@ const inboundMessageSchema = z.strictObject({
     .string()
     .min(1)
     .refine((content) => messageLength(content) <= MESSAGE_MAX_LENGTH),
-  sentAt: z
-    .date()
-    .refine((date) => date.getTime() >= EARLIEST && date.getTime() < LATEST),
+  sentAt: providerInstantSchema,
 });
 
 /** Valida un mensaje entrante ya traducido del proveedor, o null. */

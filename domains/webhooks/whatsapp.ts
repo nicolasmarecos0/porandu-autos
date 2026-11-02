@@ -7,16 +7,23 @@ import {
 } from "@/domains/conversations/messages";
 
 import {
+  lineIdSchema,
   normalizeProfileName,
   parseInboundMessage,
   type InboundMessage,
 } from "./inbound-message";
+import {
+  readDeliveryStatus,
+  type DeliveryStatusEvent,
+} from "./whatsapp-status";
 
 /*
  * Payload del webhook de la WhatsApp Cloud API (Hito 7, DEC-039 §3): el único
- * módulo que conoce su forma. Valida el sobre y cada mensaje, y traduce los
- * mensajes de texto entrantes al contrato propio (InboundMessage). Puro: no
- * conoce Next, la base, lib/ ni la firma (que se verifica antes, sobre el
+ * módulo que conoce su forma, junto con whatsapp-status.ts. Valida el sobre y
+ * cada mensaje, y traduce los mensajes de texto entrantes al contrato propio
+ * (InboundMessage) y los estados de entrega de los salientes (Hito 12C,
+ * DEC-044 §3.3) al suyo (DeliveryStatusEvent, en whatsapp-status.ts). Puro:
+ * no conoce Next, la base, lib/ ni la firma (que se verifica antes, sobre el
  * cuerpo crudo).
  *
  * Estricto en lo que se usa y tolerante a lo demás: z.object() descarta los
@@ -28,14 +35,12 @@ import {
  *     field "messages" → value: { messaging_product: "whatsapp",
  *       metadata: { phone_number_id }, contacts?: [{ wa_id, profile: { name } }],
  *       messages?: [{ id, from, timestamp, type, text?: { body } }],
- *       statuses?: [...] }
+ *       statuses?: [{ id, status, timestamp, … }] }
  *     otro field → se ignora
  */
 
 /** Tipo de mensaje que se ingiere. Los demás (media, reacciones…) no. */
 const TEXT = "text";
-
-const lineIdSchema = z.string().regex(/^[0-9]{1,32}$/);
 
 const messagesValueSchema = z.object({
   messaging_product: z.literal("whatsapp"),
@@ -79,9 +84,12 @@ const textMessageSchema = z.object({
  * Resultado de leer un webhook:
  * - `messages`: los mensajes de texto entrantes válidos, en el orden del
  *   payload;
- * - `ignored`: eventos que no se ingieren por diseño (estados de entrega,
- *   mensajes que no son de texto, cambios de otros campos);
- * - `invalid`: mensajes de texto descartados por un campo inválido.
+ * - `statuses`: los estados de entrega válidos de los salientes (Hito 12C),
+ *   en el orden del payload;
+ * - `ignored`: eventos que no se ingieren por diseño (mensajes que no son de
+ *   texto, estados que no son del contrato, cambios de otros campos);
+ * - `invalid`: mensajes de texto descartados por un campo inválido;
+ * - `invalidStatuses`: estados de entrega descartados por un campo inválido.
  *
  * Un sobre inválido es `{ ok: false }` y no se ingiere nada.
  */
@@ -89,8 +97,10 @@ export type WhatsAppWebhook =
   | Readonly<{
       ok: true;
       messages: readonly InboundMessage[];
+      statuses: readonly DeliveryStatusEvent[];
       ignored: number;
       invalid: number;
+      invalidStatuses: number;
     }>
   | Readonly<{ ok: false }>;
 
@@ -146,8 +156,10 @@ export function parseWhatsAppWebhook(payload: unknown): WhatsAppWebhook {
   if (!envelope.success) return { ok: false };
 
   const messages: InboundMessage[] = [];
+  const statuses: DeliveryStatusEvent[] = [];
   let ignored = 0;
   let invalid = 0;
+  let invalidStatuses = 0;
   for (const entry of envelope.data.entry) {
     for (const change of entry.changes) {
       if (change.field !== "messages") {
@@ -156,15 +168,20 @@ export function parseWhatsAppWebhook(payload: unknown): WhatsAppWebhook {
       }
       const value = messagesValueSchema.safeParse(change.value);
       if (!value.success) return { ok: false };
-      const { metadata, contacts, statuses } = value.data;
-      ignored += statuses?.length ?? 0;
+      const { metadata, contacts } = value.data;
       for (const raw of value.data.messages ?? []) {
         const message = readMessage(raw, metadata.phone_number_id, contacts);
         if (message === "ignored") ignored += 1;
         else if (message === "invalid") invalid += 1;
         else messages.push(message);
       }
+      for (const raw of value.data.statuses ?? []) {
+        const status = readDeliveryStatus(raw, metadata.phone_number_id);
+        if (status === "ignored") ignored += 1;
+        else if (status === "invalid") invalidStatuses += 1;
+        else statuses.push(status);
+      }
     }
   }
-  return { ok: true, messages, ignored, invalid };
+  return { ok: true, messages, statuses, ignored, invalid, invalidStatuses };
 }

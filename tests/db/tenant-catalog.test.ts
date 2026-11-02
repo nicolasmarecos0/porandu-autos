@@ -19,7 +19,8 @@ import {
  * 0008_opportunity_stages, 0009_opportunity_notes_vehicle_link,
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
  * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
- * 0015_test_drives, 0016_quotes y 0018_conversation_reads,
+ * 0015_test_drives, 0016_quotes, 0018_conversation_reads y
+ * 0019_whatsapp_delivery_status,
  * leídos del catálogo de
  * PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2,
  * C3 y C9). El acceso a datos se prueba en tenant-isolation.test.ts,
@@ -29,14 +30,15 @@ import {
 
 /**
  * Tablas que leen los miembros: todas, también whatsapp_lines desde el Hito 8
- * (DEC-040 §4) y conversation_reads (solo las filas propias) desde el Hito
- * 12B (DEC-044 §2.9).
+ * (DEC-040 §4), conversation_reads (solo las filas propias) desde el Hito
+ * 12B (DEC-044 §2.9) y message_statuses desde el Hito 12C (DEC-044 §3.3).
  */
 const TABLES = [
   "contacts",
   "conversation_reads",
   "conversations",
   "memberships",
+  "message_statuses",
   "messages",
   "opportunities",
   "opportunity_demand_facts",
@@ -258,6 +260,17 @@ describe("policies (ADR-001 §4)", () => {
           "(organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
         withCheck:
           "(organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids))",
+      },
+      {
+        // Hito 12C (DEC-044 §3.3): lectura de los miembros.
+        table: "message_statuses",
+        name: "message_statuses_select_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
       },
       {
         table: "messages",
@@ -964,6 +977,69 @@ describe("grants (ADR-001 §3.6)", () => {
       "conversations.conversations_select_member SELECT",
       "whatsapp_lines.whatsapp_lines_select_member SELECT",
     ]);
+  });
+
+  it("message_statuses (Hito 12C, DEC-044 §3.3): append-only. Los miembros solo leen los estados de su organización; nadie de la app los escribe directo, y service_role no los edita ni borra", async () => {
+    expect(
+      (
+        await tablePrivileges(db.admin, [
+          "anon",
+          "authenticated",
+          "app_runtime",
+          "service_role",
+        ])
+      ).filter((grant) => grant.endsWith(" message_statuses")),
+    ).toEqual([
+      "authenticated SELECT message_statuses",
+      "service_role INSERT message_statuses",
+      "service_role MAINTAIN message_statuses",
+      "service_role REFERENCES message_statuses",
+      "service_role SELECT message_statuses",
+      "service_role TRIGGER message_statuses",
+    ]);
+    expect(
+      (await policies(db.admin))
+        .filter((policy) => policy.table === "message_statuses")
+        .map((policy) => `${policy.table}.${policy.name} ${policy.command}`),
+    ).toEqual(["message_statuses.message_statuses_select_member SELECT"]);
+  });
+
+  it("estados de entrega (Hito 12C, DEC-044 §3.3): private.ingest_whatsapp_status() es SECURITY DEFINER de postgres, de search_path vacío, con EXECUTE solo para authenticated, la regla que rechaza las claims y la búsqueda solo entre los salientes", async () => {
+    const signature =
+      "private.ingest_whatsapp_status(text,text,text,timestamp with time zone)";
+    const [fn] = await db.admin<
+      {
+        securityDefiner: boolean;
+        volatility: string;
+        config: string[] | null;
+        owner: string;
+        acl: string[] | null;
+        guards: boolean;
+      }[]
+    >`
+      SELECT p.prosecdef AS "securityDefiner", p.provolatile::text AS volatility,
+        p.proconfig AS config, p.proowner::regrole::text AS owner,
+        p.proacl::text[] AS acl,
+        position('ingestion_without_user' in p.prosrc) > 0
+          AND position('m.direction = ''outbound''' in p.prosrc) > 0 AS guards
+      FROM pg_proc p
+      WHERE p.oid = to_regprocedure(${signature})
+    `;
+    expect(fn).toEqual({
+      securityDefiner: true,
+      volatility: "v",
+      config: ['search_path=""'],
+      owner: "postgres",
+      acl: ["postgres=X/postgres", "authenticated=X/postgres"],
+      guards: true,
+    });
+    const executors = await db.admin<{ role: string }[]>`
+      SELECT rolname AS role FROM pg_roles
+      WHERE has_function_privilege(oid, to_regprocedure(${signature}), 'EXECUTE')
+        AND NOT rolsuper
+      ORDER BY 1
+    `;
+    expect(executors.map((r) => r.role)).toEqual(["authenticated", "postgres"]);
   });
 
   it("conversation_reads (Hito 12B, DEC-044 §2.9): cada miembro solo lee sus cursores; nadie de la app los escribe directo", async () => {

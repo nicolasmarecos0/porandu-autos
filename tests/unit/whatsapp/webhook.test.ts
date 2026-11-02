@@ -5,6 +5,10 @@ import type {
   InboundMessageOutcome,
   InboundMessageWrite,
 } from "@/db/queries/ingest-whatsapp-message";
+import type {
+  DeliveryStatusOutcome,
+  DeliveryStatusWrite,
+} from "@/db/queries/ingest-whatsapp-status";
 import {
   handleWhatsAppWebhook,
   MAX_WEBHOOK_BODY_BYTES,
@@ -12,8 +16,11 @@ import {
 
 import {
   messagesValue,
+  rawStatus,
+  rawText,
   signature,
   signedRequest,
+  statusWebhook,
   TEST_APP_SECRET,
   TEST_LINE_ID,
   textMessage,
@@ -22,20 +29,25 @@ import {
 } from "../support/whatsapp-payload";
 
 /*
- * Webhook de WhatsApp (Hito 7, DEC-039) sin base de datos: secreto, cota del
- * cuerpo, firma, validación y lo que se le pide a la ingesta, con la
- * escritura simulada. La ingesta real contra PostgreSQL 17 está en
- * tests/db/whatsapp-ingestion.test.ts.
+ * Webhook de WhatsApp (Hito 7, DEC-039; Hito 12C, DEC-044 §3.3) sin base de
+ * datos: secreto, cota del cuerpo, firma, validación y lo que se le pide a
+ * la ingesta de mensajes y de estados de entrega, con las escrituras
+ * simuladas. Las ingestas reales contra PostgreSQL 17 están en
+ * tests/db/whatsapp-ingestion.test.ts y tests/db/whatsapp-statuses.test.ts.
  */
 
 vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
   ingest: vi.fn<(message: unknown) => Promise<unknown>>(),
+  ingestStatus: vi.fn<(status: unknown) => Promise<unknown>>(),
 }));
 
 vi.mock("@/db/queries/ingest-whatsapp-message", () => ({
   ingestInboundMessage: mocks.ingest,
+}));
+vi.mock("@/db/queries/ingest-whatsapp-status", () => ({
+  ingestDeliveryStatus: mocks.ingestStatus,
 }));
 
 const ORG = "00000000-0000-4000-8000-000000000001";
@@ -59,6 +71,33 @@ function calls(): InboundMessageWrite[] {
   );
 }
 
+function statusRecorded(): Extract<
+  DeliveryStatusOutcome,
+  { messageId: string }
+> {
+  return {
+    outcome: "recorded",
+    organizationId: ORG,
+    messageId: "00000000-0000-4000-8000-0000000000d1",
+  };
+}
+
+function statusCalls(): DeliveryStatusWrite[] {
+  return mocks.ingestStatus.mock.calls.map(
+    ([status]) => status as DeliveryStatusWrite,
+  );
+}
+
+/** Los conteos de los estados cuando el webhook no trae ninguno. */
+const NO_STATUSES = {
+  received: 0,
+  recorded: 0,
+  duplicate: 0,
+  unknown_line: 0,
+  unknown_message: 0,
+  invalid: 0,
+};
+
 let errors: ReturnType<typeof vi.spyOn>;
 let infos: ReturnType<typeof vi.spyOn>;
 
@@ -66,6 +105,8 @@ beforeEach(() => {
   vi.stubEnv("WHATSAPP_APP_SECRET", TEST_APP_SECRET);
   mocks.ingest.mockReset();
   mocks.ingest.mockImplementation(async () => recorded());
+  mocks.ingestStatus.mockReset();
+  mocks.ingestStatus.mockImplementation(async () => statusRecorded());
   errors = vi.spyOn(console, "error").mockImplementation(() => {});
   infos = vi.spyOn(console, "info").mockImplementation(() => {});
 });
@@ -220,7 +261,10 @@ describe("ingesta", () => {
           text: { body: m.body },
           type: "text",
         })),
-        statuses: [{ id: "wamid.OUT", status: "read" }],
+        statuses: [
+          rawStatus({ id: "wamid.OUT", status: "read", timestamp: 1 }),
+          rawStatus({ id: "wamid.OUT", status: "deleted", timestamp: 1 }),
+        ],
       }),
     );
 
@@ -234,8 +278,12 @@ describe("ingesta", () => {
       unknown_line: 1,
       invalid_sender: 0,
       invalid: 0,
+      // El estado que no es del contrato.
       ignored: 1,
+      // El estado con un instante inválido.
+      statuses: { ...NO_STATUSES, invalid: 1 },
     });
+    expect(mocks.ingestStatus).not.toHaveBeenCalled();
   });
 
   it("sin perfil, el contacto nuevo se llama 'Contacto de WhatsApp'", async () => {
@@ -317,6 +365,204 @@ describe("ingesta", () => {
       message.id,
       TEST_LINE_ID,
       TEST_APP_SECRET,
+      ORG,
+    ]) {
+      expect(text).not.toContain(secret);
+    }
+  });
+});
+
+describe("estados de entrega (Hito 12C, DEC-044 §3.3)", () => {
+  it("pide la ingesta de cada estado con lo ya validado, sin organización", async () => {
+    const response = await handleWhatsAppWebhook(
+      signedRequest(
+        statusWebhook([
+          { id: "wamid.OUT1", status: "sent", timestamp: 1_792_600_000 },
+          { id: "wamid.OUT1", status: "delivered", timestamp: 1_792_600_004 },
+          { id: "wamid.OUT2", status: "failed", timestamp: 1_792_600_009 },
+        ]),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(statusCalls()).toEqual([
+      {
+        lineId: TEST_LINE_ID,
+        externalId: "wamid.OUT1",
+        status: "sent",
+        occurredAt: new Date(1_792_600_000 * 1000),
+      },
+      {
+        lineId: TEST_LINE_ID,
+        externalId: "wamid.OUT1",
+        status: "delivered",
+        occurredAt: new Date(1_792_600_004 * 1000),
+      },
+      {
+        lineId: TEST_LINE_ID,
+        externalId: "wamid.OUT2",
+        status: "failed",
+        occurredAt: new Date(1_792_600_009 * 1000),
+      },
+    ]);
+    // La organización nunca sale del webhook: no hay campo para elegirla.
+    expect(Object.keys(statusCalls()[0]!)).not.toContain("organizationId");
+    expect(mocks.ingest).not.toHaveBeenCalled();
+  });
+
+  it("responde 200 con los conteos de cada resultado: un id desconocido no se reintenta", async () => {
+    const outcomes: DeliveryStatusOutcome[] = [
+      statusRecorded(),
+      { ...statusRecorded(), outcome: "duplicate" },
+      { outcome: "unknown_line" },
+      { outcome: "unknown_message" },
+    ];
+    mocks.ingestStatus.mockImplementation(async () => outcomes.shift());
+    const response = await handleWhatsAppWebhook(
+      signedRequest(
+        webhook({
+          messaging_product: "whatsapp",
+          metadata: { phone_number_id: TEST_LINE_ID },
+          statuses: [
+            rawStatus({
+              id: "wamid.A",
+              status: "read",
+              timestamp: 1_792_600_000,
+            }),
+            rawStatus({
+              id: "wamid.A",
+              status: "read",
+              timestamp: 1_792_600_000,
+            }),
+            rawStatus({
+              id: "wamid.B",
+              status: "sent",
+              timestamp: 1_792_600_000,
+            }),
+            rawStatus({
+              id: "wamid.C",
+              status: "failed",
+              timestamp: 1_792_600_000,
+            }),
+            { id: "wamid.D", status: "delivered" },
+            rawStatus({
+              id: "wamid.E",
+              status: "warning",
+              timestamp: 1_792_600_000,
+            }),
+          ],
+        }),
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      received: 0,
+      recorded: 0,
+      duplicate: 0,
+      unknown_line: 0,
+      invalid_sender: 0,
+      invalid: 0,
+      ignored: 1,
+      statuses: {
+        received: 4,
+        recorded: 1,
+        duplicate: 1,
+        unknown_line: 1,
+        unknown_message: 1,
+        invalid: 1,
+      },
+    });
+  });
+
+  it("en un lote con mensajes y estados, ingiere primero los mensajes y después los estados", async () => {
+    const order: string[] = [];
+    mocks.ingest.mockImplementation(async () => {
+      order.push("message");
+      return recorded();
+    });
+    mocks.ingestStatus.mockImplementation(async () => {
+      order.push("status");
+      return statusRecorded();
+    });
+    const response = await handleWhatsAppWebhook(
+      signedRequest(
+        webhook(
+          messagesValue({
+            messages: [rawText(textMessage())],
+            statuses: [
+              rawStatus({
+                id: "wamid.OUT",
+                status: "read",
+                timestamp: 1_792_600_000,
+              }),
+            ],
+          }),
+        ),
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(order).toEqual(["message", "status"]);
+    expect(await response.json()).toMatchObject({
+      recorded: 1,
+      statuses: { received: 1, recorded: 1 },
+    });
+  });
+
+  it("si la ingesta de un estado falla responde 500 y no sigue: el proveedor reintenta", async () => {
+    const cause = Object.assign(new Error("connection terminated"), {
+      code: "57P01",
+    });
+    mocks.ingestStatus
+      .mockImplementationOnce(async () => statusRecorded())
+      .mockImplementationOnce(async () => {
+        throw Object.assign(new Error("Failed query: wamid.OUT2"), { cause });
+      });
+    const response = await handleWhatsAppWebhook(
+      signedRequest(
+        statusWebhook([
+          { id: "wamid.OUT1", status: "read", timestamp: 1_792_600_000 },
+          { id: "wamid.OUT2", status: "read", timestamp: 1_792_600_000 },
+          { id: "wamid.OUT3", status: "read", timestamp: 1_792_600_000 },
+        ]),
+      ),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "ingest_failed" });
+    expect(mocks.ingestStatus).toHaveBeenCalledTimes(2);
+    expect(errors).toHaveBeenCalledWith("[whatsapp] ingest failed", {
+      name: "Error",
+      code: "57P01",
+      constraint_name: undefined,
+    });
+    expect(logged()).not.toContain("wamid.OUT2");
+  });
+
+  it("un webhook de solo estados no toca la ingesta de mensajes, y sus logs no registran ids", async () => {
+    await handleWhatsAppWebhook(
+      signedRequest(
+        statusWebhook([
+          {
+            id: "wamid.SECRET01",
+            status: "delivered",
+            timestamp: 1_792_600_000,
+          },
+        ]),
+      ),
+    );
+    expect(mocks.ingest).not.toHaveBeenCalled();
+    expect(infos).toHaveBeenCalledWith(
+      "[whatsapp] webhook processed",
+      expect.objectContaining({
+        statuses: expect.objectContaining({ recorded: 1 }),
+      }),
+    );
+    const text = logged();
+    for (const secret of [
+      "wamid.SECRET01",
+      "595981555214",
+      TEST_LINE_ID,
       ORG,
     ]) {
       expect(text).not.toContain(secret);

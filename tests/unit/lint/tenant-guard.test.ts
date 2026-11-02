@@ -10,7 +10,8 @@ import { describe, expect, it } from "vitest";
  * - resolveTenant(), el único que emite un TenantContext, solo lo importa
  *   requireTenant() (lib/tenant/session.ts);
  * - withIngestion() (Hito 7, DEC-039 §4), la puerta del sistema sin
- *   usuario, solo lo importa db/queries/ingest-whatsapp-message.ts.
+ *   usuario, solo lo importan db/queries/ingest-whatsapp-message.ts y
+ *   db/queries/ingest-whatsapp-status.ts (Hito 12C, DEC-044 §3.3).
  * Los tests pueden usar ambos para armar escenarios. db/client sigue
  * restringido en todos estos módulos (db-client-guard.test.ts).
  */
@@ -165,6 +166,14 @@ describe("guarda de withIngestion() (Hito 7)", { timeout: 30_000 }, () => {
       `import { withIngestion } from "../tenant";${useIngestion}`,
     ],
     [
+      "db/queries/conversations.ts",
+      `import { withIngestion } from "../tenant";${useIngestion}`,
+    ],
+    [
+      "db/queries/conversation-reads.ts",
+      `import { withIngestion } from "../tenant";${useIngestion}`,
+    ],
+    [
       "lib/opportunities/actions.ts",
       `import { withIngestion } from "@/db/tenant";${useIngestion}`,
     ],
@@ -181,6 +190,10 @@ describe("guarda de withIngestion() (Hito 7)", { timeout: 30_000 }, () => {
       `import { withIngestion } from "../tenant";${useIngestion}`,
     ],
     [
+      "db/queries/ingest-whatsapp-status.ts",
+      `import { withIngestion } from "../tenant";${useIngestion}`,
+    ],
+    [
       "tests/db/whatsapp-ingestion.test.ts",
       `import { withIngestion } from "@/db/tenant";${useIngestion}`,
     ],
@@ -188,15 +201,18 @@ describe("guarda de withIngestion() (Hito 7)", { timeout: 30_000 }, () => {
     expect(await restrictedBy(filePath, code)).toEqual([]);
   });
 
-  it("el módulo de ingesta no importa withUser() ni db/client", async () => {
+  it.each([
+    "db/queries/ingest-whatsapp-message.ts",
+    "db/queries/ingest-whatsapp-status.ts",
+  ])("%s no importa withUser() ni db/client", async (filePath) => {
     for (const code of [
       `import { withUser } from "../tenant";${useWithUser}`,
       `import { getDb } from "../client";\nexport const use = getDb;\n`,
       `import { getDb } from "@/db/client";\nexport const use = getDb;\n`,
     ]) {
-      expect(
-        await restrictedBy("db/queries/ingest-whatsapp-message.ts", code),
-      ).toContain("no-restricted-imports");
+      expect(await restrictedBy(filePath, code)).toContain(
+        "no-restricted-imports",
+      );
     }
   });
 });
