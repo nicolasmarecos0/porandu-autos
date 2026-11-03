@@ -122,6 +122,30 @@ function text(html: string): string {
 }
 
 describe("CockpitView", () => {
+  it("el encabezado lleva el selector Cockpit · Métricas, con el feed como página actual (propuesta DEC-050)", () => {
+    const html = render();
+    const header = html.slice(0, html.indexOf("</header>"));
+    expect(html.match(/<h1\b/g)).toHaveLength(1);
+    expect(header).toContain(">Cockpit</h1>");
+    const views = header.slice(
+      header.indexOf('<nav aria-label="Vista del Cockpit"'),
+      header.indexOf("</nav>"),
+    );
+    const links = [...views.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map(
+      ([, attributes = "", inner = ""]) => ({
+        href: /href="([^"]*)"/.exec(attributes)?.[1],
+        current: attributes.includes('aria-current="page"'),
+        label: text(inner),
+      }),
+    );
+    expect(links).toEqual([
+      { href: "/cockpit", current: true, label: "Cockpit" },
+      { href: "/cockpit/metrics", current: false, label: "Métricas" },
+    ]);
+    // El feed no repite las métricas de la gerencia.
+    expect(html).not.toContain("Tasa de conversión");
+  });
+
   it("muestra la franja con los cuatro totales y su alcance", () => {
     const html = render();
     expect(html).toContain('aria-label="Resumen del día"');

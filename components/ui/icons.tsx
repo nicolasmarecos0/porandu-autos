@@ -323,6 +323,16 @@ export function BoardIcon(props: IconProps) {
   );
 }
 
+/** Columnas sobre una línea base: las Métricas del salón. */
+export function ChartIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 19.5h16" />
+      <path d="M7 16v-5M12 16V6.5M17 16v-3" />
+    </Icon>
+  );
+}
+
 /** Cuadrícula de tarjetas: el catálogo visual del stock. */
 export function GridIcon(props: IconProps) {
   return (
