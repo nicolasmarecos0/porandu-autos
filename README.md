@@ -954,6 +954,31 @@ días y franja) → CockpitView (CockpitSummary + ActivityTimeline)
 - **Fuera de este bloque:** tiempo real o refresco automático, paginación o historial más allá de 7 días, filtros por tipo o "Mis pruebas", acciones que escriben desde el feed, marcar leído desde el Cockpit, notificaciones y el resto del Cockpit de B1 (Prioridad Hoy, Match Feed).
 - **Base:** sin migración. `pnpm test:db` suma `tests/db/cockpit.test.ts` (cada fuente solo de la organización activa, también con varias memberships; ventanas y estados cerrados afuera; el leído por miembro; las notas propias afuera; el tope con su total; y que leer no escribe nada).
 
+## Embudo de ventas (Hito 16)
+
+`/opportunities/pipeline` es el tablero Kanban de oportunidades por etapa (propuesta DEC-048): una vista de Opportunities (DEC-001), con el selector "Cola · Embudo" en las dos vistas. Mover una tarjeta usa las mismas Server Actions del panel "Etapa": sin migración, sin tablas y sin puertas de escritura nuevas.
+
+```text
+getOpportunityPipeline() → requireTenant() → withTenant() → ocho lecturas acotadas en una transacción:
+  abiertas · ganadas y perdidas de los últimos 30 días (tope 30, con total) · demanda · stock disponible ·
+  última nota · cotizaciones por aprobar y aceptada · pruebas vencidas (ventana del Cockpit)
+→ RLS → domains/opportunities/pipeline.ts (motor de DEC-035, orden, topes y alertas) → PipelineView
+
+soltar o "Cambiar etapa" → planBoardMove() (máquina de DEC-032)
+  avance → useOptimistic (Guardando…) → changeOpportunityStage() → página revalidada
+  cierre → confirmación con ClosureForm (DEC-034) → useOptimistic → closeOpportunity()
+  bloqueado → nada se pide; el aviso dice por qué
+```
+
+- **Reglas** (`domains/opportunities/pipeline-moves.ts`, puro, el único módulo del tablero que viaja al navegador): avanzar a la etapa siguiente es soltar; cerrar (Ganada o Perdida) siempre abre la confirmación con los datos del cierre, el mismo formulario del panel "Etapa" (`components/opportunities/closure-form.tsx`); sin saltos, sin vuelta atrás y sin salir de una etapa terminal. Mientras se arrastra, cada columna y la tarjeta dicen qué pasaría al soltar.
+- **Optimista:** la tarjeta cambia de columna al instante, con "Guardando…", mientras la Server Action guarda; la página revalidada la reemplaza. Si el servidor falla, vuelve sola; si otra persona ya la movió, el tablero se vuelve a leer. Un cierre con un error por campo reabre la confirmación con lo cargado.
+- **Arrastre** (`@dnd-kit/core` 6.3.1, solo en `components/pipeline/`, con guard de ESLint): mouse después de 6 px, dedo después de mantener 220 ms, desplazamiento automático del tablero y anuncios en es-PY. "Cambiar etapa" (menú de Radix) ofrece los mismos pases para el teclado, los lectores de pantalla y el teléfono.
+- **Tarjetas:** nombre (enlace al workspace), la unidad vinculada o lo que busca, Porandú Score y dos señales sutiles: la inactividad de DEC-035 ("Inactiva · 6 d") y la acción pendiente más importante, con "+N" si hay más: cotización por aprobar (vista previa), prueba sin resultado (agenda en su día) o vincular unidad (la oportunidad). Las cerradas muestran su cierre, con el motivo y la fecha, y no se mueven.
+- **Columnas:** abiertas por Porandú Score (a lo sumo 100 por columna, con "Se muestran 100 de N"); cerradas de los últimos 30 días de Asunción, de la más reciente a la más vieja (a lo sumo 30, con el total).
+- **Móvil:** desde `xl` entran las cinco columnas. Debajo, scroll horizontal con snap (cada columna ~85 % del ancho en el teléfono, con la siguiente asomando), scroll vertical por columna y una tira de etapas con cantidades que sigue a la columna visible.
+- **Fuera de este bloque:** reordenar a mano, filtros y búsqueda, tiempo real, mover varias a la vez, deshacer un pase, reabrir cerradas, montos del pipeline, historial de etapas y notificaciones.
+- **Base:** sin migración. `pnpm test:db` suma `tests/db/pipeline.test.ts` (cada columna solo de la organización activa, también con varias memberships y con una membership inactiva; la ventana y el tope de cerradas; cotizaciones por aprobar vigentes, la aceptada y las pruebas vencidas; la unidad vinculada; y que leer no escribe nada).
+
 ## Convenciones
 
 - Código, rutas, DB e identificadores en inglés. Copy de UI en español es-PY (DEC-011).
