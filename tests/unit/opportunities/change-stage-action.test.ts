@@ -70,7 +70,7 @@ function form(fields: Record<string, string>): FormData {
 }
 
 describe("changeOpportunityStage()", () => {
-  it("requireTenant() → transición con ese contexto → revalidar la cola y el detalle", async () => {
+  it("requireTenant() → transición con ese contexto → revalidar la cola, el detalle y el embudo", async () => {
     const state = await changeOpportunityStage(
       null,
       form({ opportunityId: ID, stage: "qualifying" }),
@@ -81,6 +81,7 @@ describe("changeOpportunityStage()", () => {
       "transition",
       "revalidatePath",
       "revalidatePath",
+      "revalidatePath",
     ]);
     expect(mocks.transition).toHaveBeenCalledWith(CTX, {
       opportunityId: ID,
@@ -89,6 +90,8 @@ describe("changeOpportunityStage()", () => {
     expect(mocks.revalidatePath.mock.calls).toEqual([
       ["/opportunities"],
       [`/opportunities/${ID}`],
+      // El embudo de ventas (DEC-048) también pide pases y cierres.
+      ["/opportunities/pipeline"],
     ]);
     expect(state).toEqual({
       status: "changed",

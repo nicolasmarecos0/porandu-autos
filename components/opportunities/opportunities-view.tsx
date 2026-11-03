@@ -17,6 +17,7 @@ import {
   NewOpportunityDrawer,
   type OpportunityCreated,
 } from "./new-opportunity-drawer";
+import { OpportunitiesViewSwitch } from "./opportunities-view-switch";
 import { OpportunityQueue } from "./opportunity-queue";
 import { DemandCard } from "./demand-card";
 import { ProspectCard } from "./prospect-card";
@@ -54,6 +55,10 @@ const ID_PREFIX = "opportunity";
  * "Nueva oportunidad" (H1.2) abre el alta manual en un drawer. Al crear, la
  * Server Action revalida la página, la cola trae la oportunidad nueva y la
  * vista la selecciona.
+ *
+ * Arriba de la cola, el selector de vista lleva al embudo de ventas por
+ * etapa (/opportunities/pipeline, propuesta DEC-048): Pipeline es una vista
+ * de Opportunities, no un ítem de la navegación (DEC-001).
  */
 export function OpportunitiesView({
   title,
@@ -84,6 +89,7 @@ export function OpportunitiesView({
           aria-label="Prospecto y cola"
           className="flex min-h-0 w-75 shrink-0 flex-col gap-3"
         >
+          <OpportunitiesViewSwitch current="queue" />
           <NewOpportunityDrawer
             onCreated={(result) => {
               queue.setTab("all");

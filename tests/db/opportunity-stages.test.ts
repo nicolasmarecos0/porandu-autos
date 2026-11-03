@@ -287,6 +287,7 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
     expect(mocks.revalidated).toEqual([
       "/opportunities",
       `/opportunities/${id}`,
+      "/opportunities/pipeline",
     ]);
 
     const after = await row(id);
@@ -385,6 +386,7 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
       expect(mocks.revalidated).toEqual([
         "/opportunities",
         `/opportunities/${id}`,
+        "/opportunities/pipeline",
       ]);
     },
   );

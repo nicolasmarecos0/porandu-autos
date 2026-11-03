@@ -36,6 +36,7 @@ import {
   type CreateOpportunityState,
 } from "./new-opportunity";
 import { parseNoteRequest, type AddNoteState } from "./note";
+import { PIPELINE_PATH } from "./paths";
 import type { RecordDemandState } from "./record-demand";
 import { parseStageChange, type ChangeStageState } from "./stage-change";
 import { parseVehicleLink, type LinkVehicleState } from "./vehicle-link";
@@ -259,6 +260,8 @@ export async function changeOpportunityStage(
   const revalidate = (opportunityId: string) => {
     revalidatePath(OPPORTUNITIES_PATH);
     revalidatePath(`${OPPORTUNITIES_PATH}/${opportunityId}`);
+    // El embudo (DEC-048) también pide el pase: vuelve con la etapa real.
+    revalidatePath(PIPELINE_PATH);
   };
   switch (outcome.outcome) {
     case "changed":
@@ -356,6 +359,8 @@ export async function closeOpportunity(
   const revalidate = () => {
     revalidatePath(OPPORTUNITIES_PATH);
     revalidatePath(`${OPPORTUNITIES_PATH}/${opportunityId}`);
+    // El embudo (DEC-048) también cierra: vuelve con el cierre real.
+    revalidatePath(PIPELINE_PATH);
   };
   switch (outcome.outcome) {
     case "closed":

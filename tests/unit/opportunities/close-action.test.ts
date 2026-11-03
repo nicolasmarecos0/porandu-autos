@@ -5,9 +5,10 @@ import { closeOpportunity } from "@/lib/opportunities/actions";
 /*
  * Server Action closeOpportunity() (DEC-034), sin base de datos. Prueba el
  * orden de la cadena (requireTenant() → leer y validar el pedido →
- * escritura con ese mismo contexto → revalidar la cola y el detalle), qué
- * le llega a la escritura (solo el cierre validado, nunca organización,
- * usuario, etapa ni reloj del pedido) y qué responde ante cada resultado.
+ * escritura con ese mismo contexto → revalidar la cola, el detalle y el
+ * embudo), qué le llega a la escritura (solo el cierre validado, nunca
+ * organización, usuario, etapa ni reloj del pedido) y qué responde ante
+ * cada resultado.
  * El planner sobre la fila bloqueada, RLS, los CHECKs de cierre, el trigger
  * y la concurrencia se prueban contra PostgreSQL en
  * tests/db/opportunity-closure.test.ts.
@@ -118,12 +119,13 @@ const EMPTY_VALUES = {
 };
 
 describe("closeOpportunity()", () => {
-  it("ganar: requireTenant() → escritura con ese contexto y el cierre validado → revalidar la cola y el detalle", async () => {
+  it("ganar: requireTenant() → escritura con ese contexto y el cierre validado → revalidar la cola, el detalle y el embudo", async () => {
     const state = await closeOpportunity(null, form(WON_FIELDS));
 
     expect(mocks.calls).toEqual([
       "requireTenant",
       "close",
+      "revalidatePath",
       "revalidatePath",
       "revalidatePath",
     ]);
@@ -140,6 +142,8 @@ describe("closeOpportunity()", () => {
     expect(mocks.revalidatePath.mock.calls).toEqual([
       ["/opportunities"],
       [`/opportunities/${ID}`],
+      // El embudo de ventas (DEC-048) también pide pases y cierres.
+      ["/opportunities/pipeline"],
     ]);
     expect(state).toEqual({
       status: "closed",
