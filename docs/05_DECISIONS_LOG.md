@@ -63,6 +63,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-047 | Cockpit: feed de actividad del día (Hito 15) | Aceptada en principio | 2026-11-02 |
 | DEC-048 | Embudo de ventas: tablero Kanban de oportunidades por etapa (Hito 16) | Aceptada en principio | 2026-11-03 |
 | DEC-049 | Catálogo visual del stock: galería para mostrar en el salón (Hito 17) | Aceptada en principio | 2026-11-03 |
+| DEC-050 | Métricas del salón: vista ejecutiva de la sección Cockpit (Hito 18) | Aceptada en principio | 2026-11-03 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1503,6 +1504,82 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Cuando exista `vehicle_media`, la foto real ocupa el mismo marco de la tarjeta y de la ficha, sin cambiar la grilla.
   - Cuando se habilite reservar o vender una unidad, el catálogo lo refleja sin cambios, porque lee `vehicles.status`.
   - En un teléfono de 360 px, el rail de 4rem del shell (DEC-048, Consecuencias) deja poco ancho: el valor del select de estado puede cortarse con "…". La lista nativa y la línea de resultados lo muestran completo.
+
+---
+
+## DEC-050 — Métricas del salón: vista ejecutiva de la sección Cockpit (Hito 18)
+- **Estado:** Aceptada en principio · 2026-11-03. Formaliza el pedido del fundador del 3 nov 2026 ("Vista Ejecutiva / Métricas de Gerencia (Analytics del Salón - Hito 18)"): que dueños y gerentes auditen de un vistazo la salud comercial del salón (velocidad del embudo, plata en juego, efectividad de cierre, rotación del stock y desempeño operativo). El pedido fija un único loader `withTenant()` con consultas agregadas filtradas por `organization_id` además de RLS, sin migraciones ni escrituras; un selector de período sincronizado con la URL; cuatro bloques en Tailwind puro, sin librerías de gráficos; la ubicación dentro de la sección de inicio sin alterar el rail (DEC-001); y estilo ejecutivo con Tailwind y Radix, 100 % responsivo y mobile-first. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** `/intelligence` ya es el Dashboard Directivo (DEC-037, DEC-043): rangos de calendario, una fila de KPIs (ventas, conversión, cotizaciones pendientes y test drives de la semana), el inventario por vínculos y la lista en riesgo. DEC-043 §11 dejó fuera los montos de las cotizaciones y la tasa de asistencia a pruebas, y nada muestra los motivos de pérdida, la valorización ni la antigüedad del stock. El pedido sugiere un selector "Cockpit · Métricas" o una pestaña en `/dashboard/metrics`, pero DEC-037 §1 y DEC-043 §1 (decisión del fundador) excluyen `/dashboard`. El "`closure_reason`" del pedido es `loss_reason` (DEC-034 §2). El Master Context pide que el home no sea un dashboard de gráficos (MC §7) y advierte sobre los salones que ven métricas sin saber qué hacer (MC §2, problema 8).
+- **Decisión:**
+  1. **Ruta y navegación.** Las métricas viven en `/cockpit/metrics` ("Métricas del salón"), una vista de la sección Cockpit. Un selector "Cockpit · Métricas" (enlaces con `aria-current="page"` y sin prefetch, como DEC-048 §1 y DEC-049 §1) une las dos vistas, en un encabezado común. El rail no cambia y "Cockpit" queda activo. `/cockpit` sigue siendo el home con el feed del día, y el login sigue aterrizando ahí (DEC-020, DEC-037 §1). `/intelligence` no cambia. *Propuesta de implementación:* de las dos opciones del pedido se eligió el selector, porque `/dashboard` lo excluye una decisión del fundador.
+  2. **Arquitectura de lectura.** `getCockpitMetrics()` (`db/queries/cockpit-metrics.ts`) sigue la cadena `requireTenant()` → `withTenant()`. Corre cinco lecturas agregadas en una transacción, cada una con filtro explícito por `organization_id` sobre RLS:
+     - las oportunidades abiertas por etapa y por recencia, en una fila de `count(*) FILTER`;
+     - los cierres del período agrupados por etapa y motivo (a lo sumo 7 grupos), con la suma del ciclo;
+     - las cotizaciones en juego, `SUM(total_price)` por moneda y estado (a lo sumo 4 grupos), unidas a su oportunidad por organización e id;
+     - las pruebas de manejo del período por resultado, en una fila;
+     - las unidades por estado y moneda (a lo sumo 12 grupos), con `SUM(price)` y la suma de la antigüedad.
+     - El dominio puro (`domains/cockpit/metrics-period.ts`, `metrics.ts` y `metrics-presentation.ts`) arma la vista con `now` explícito. Las sumas de dinero son `numeric` exacto en la base y centavos `BigInt` en el dominio. No hay migración, índices, tablas, policies, grants, Server Actions ni escrituras, ni caché compartida (DEC-043 §6).
+     - `messages` no se lee directo: la atención usa `last_activity_at`, que mueven los mensajes y las notas (trigger de DEC-036).
+  3. **Período** (`?period=`, identificador en inglés, DEC-011): `7d`, `30d`, `90d` y `all`.
+     - Sin parámetro rigen los últimos 30 días (*propuesta de implementación*).
+     - Las ventanas usan días de calendario de Asunción: hoy y los N − 1 días anteriores, desde el primer instante del primer día hasta el primer instante de mañana, exclusivo. Los últimos 30 días son la misma ventana que "Últimos 30 días" de DEC-043 §2. "Todo" no tiene piso.
+     - Un valor desconocido cae a los últimos 30 días con un aviso visible; uno repetido se trata como ausente, como DEC-043 §2.
+     - **A qué aplica (DEC-037 §4):** el período aplica a los flujos (conversión, motivos de pérdida, ciclo de venta y pruebas de manejo por `scheduled_at`). Las existencias son el estado de hoy: el embudo abierto, las cotizaciones en juego, la atención y el stock. Cada número dice cuál de los dos es ("Hoy" o el período).
+  4. **Embudo y conversión.**
+     - *Embudo abierto:* las oportunidades abiertas hoy por etapa (Nueva, En calificación, En negociación), cada una con su parte de las abiertas. Cada etapa lleva a su columna del embudo.
+     - *Tasa de conversión:* la regla de DEC-043 §3.2 sobre el período: ganadas / (ganadas + perdidas) con cierre en el período, con un decimal. Sin cierres es "Sin dato", nunca 0 %. La fecha de cierre es `updated_at` (DEC-037 §5).
+     - *Motivos de pérdida:* el `loss_reason` de las perdidas del período, del más frecuente al menos y, a igual cantidad, en el orden de DEC-034 §2. Cada motivo lleva su parte de las perdidas; solo aparecen los que tienen pérdidas.
+     - *Ciclo de venta* (*propuesta de implementación*, la "velocidad del embudo" del pedido): días promedio desde el alta (`created_at`) hasta el cierre de las ganadas del período, redondeados al día (la mitad hacia arriba). Sin ventas es "Sin dato".
+  5. **Valor comercial: plata en juego hoy.**
+     - *Propuesta de implementación:* "en negociación/aprobado" son las cotizaciones `approved` (por enviar) y `sent` (esperando respuesta), vigentes (`valid_until` no anterior al día de Asunción, DEC-042 §4) y de oportunidades cotizables (DEC-043 §4).
+     - Los borradores no cuentan, porque todavía no pasaron la aprobación humana (DEC-042 §2). Tampoco las vencidas ni las terminales.
+     - Una tarjeta por moneda (Gs. y USD, siempre las dos): un total exacto con su partición entre aprobadas y enviadas. Las monedas nunca se suman, comparan ni convierten (DEC-025 §5).
+     - Una oportunidad con dos cotizaciones en juego suma las dos; la tarjeta dice cuántas cotizaciones forman el monto.
+  6. **Pulso operativo.**
+     - *Tasa de realización de pruebas de manejo:* entre las pruebas con `scheduled_at` en el período, realizadas / (realizadas + no asistió + canceladas + vencidas), con un decimal.
+       - Vencida es una prueba abierta con su franja de 60 minutos terminada: el estado derivado de DEC-047 §3.3, sin jobs.
+       - Las abiertas todavía en horario no cuentan y se dicen aparte.
+       - Sin pruebas que ya se debían es "Sin dato".
+       - *Propuesta de implementación:* las canceladas cuentan como no realizadas, como pide el pedido. El período termina hoy, así que las agendadas para después no entran.
+     - *Requieren intervención:* las abiertas Enfriándose + Inactivas, con la regla de DEC-035 §2 y los cortes de `recencyCutoffs()` (DEC-037 §8), junto con las Activas, sobre las abiertas de hoy.
+  7. **Salud del stock.**
+     - *Distribución:* las unidades por `vehicles.status` (En preparación, Disponibles, Reservadas, Vendidas), como la Stock List y el Catálogo. *Propuesta de implementación:* no se usa la clasificación por vínculos de DEC-037 §7, para que el drill-down al catálogo filtrado (`?status=`) muestre las mismas unidades que cuenta la métrica. Las unidades en preparación llevan al Inventario, porque el catálogo no las muestra (DEC-049 §2).
+     - *Valor del stock publicado:* la suma exacta del precio de las disponibles y reservadas, por moneda. Una publicada sin precio no suma y se cuenta aparte (DEC-005). Las vendidas y las que están en preparación no entran.
+     - *Antigüedad promedio:* días desde `created_at` de las disponibles y reservadas, redondeados al día. Es el ingreso a Porandú y no la antigüedad física, que no se registra (DEC-025 §7). Una fecha futura cuenta 0.
+  8. **UI.** Server Components con los tokens de DEC-013, sin JavaScript de cliente, sin librerías de gráficos y sin dependencias nuevas.
+     - El encabezado lleva el título, el selector de vista y el del período (enlaces GET con `aria-current`, `prefetch={false}` y `scroll={false}`), y debajo el período elegido con la hora de la lectura.
+     - Cuatro bloques: Embudo y conversión, Valor comercial, Pulso operativo y Salud del stock. Cada tarjeta muestra su número protagonista y su alcance ("Hoy" o el período).
+     - Las barras son de Tailwind puro: una proporción sobre una pista de la misma rampa y barras segmentadas finas con un hueco de 2 px, siempre con los números escritos al lado (las barras son `aria-hidden`). La rampa de marca codifica datos; los colores de estado solo aparecen como estados (los de la agenda, DEC-045 §5; la recencia, DEC-035; el stock, DEC-026) y siempre junto a su rótulo.
+     - Mobile-first: una columna en el teléfono, con el selector de período a todo el ancho (40 px de alto); de dos a cuatro tarjetas por bloque según el ancho; columna centrada y acotada en pantallas anchas. Las leyendas se acomodan al ancho de su tarjeta (container queries).
+  9. **Drill-down** (enlaces sin prefetch: las métricas no escriben ni ejecutan nada):
+
+     | Número | Lleva a |
+     |---|---|
+     | Etapa del embudo abierto · "Ver embudo" | `/opportunities/pipeline#pipeline-column-<etapa>` · `/opportunities/pipeline` |
+     | "Ver negociaciones" (valor comercial) | `/opportunities/pipeline#pipeline-column-negotiating` |
+     | "Ver agenda" (pruebas de manejo) | `/calendar` |
+     | "Ver cola" (requieren intervención) | `/opportunities` |
+     | Estado del stock · "Ver catálogo" | `/stock/catalog?status=…` (o `/stock` para En preparación) · `/stock/catalog` |
+  10. **Autorización.** Cualquier membership activa, como el Dashboard (DEC-037 §11, DEC-043 §10). El pedido apunta a dueños y gerentes, pero no pide restringirla. Restringirla a `admin` requiere una decisión nueva.
+  11. **Fuera de este bloque:** comparación con el período anterior y tendencias, gráficos o series históricas, metas, filtros por vendedor, rango personalizado, exportación, refresco automático, valor vendido (`sale_price`) y comisiones, tiempos de respuesta o volumen de mensajes, distribución del stock por tramos de antigüedad, contar una sola vez a una oportunidad con varias cotizaciones, la restricción por rol, unificar esta vista con `/intelligence`, `closed_at` y todo lo listado como futuro (CLAUDE.md §2), incluido el Morning Brief (DEC-007).
+- **Aclara / supersede:**
+  - DEC-001 y DEC-047: la sección Cockpit suma una segunda vista. La navegación global no cambia y `/cockpit` sigue siendo el home con su feed, ahora con el selector en el encabezado.
+  - DEC-037 §1 y DEC-043 §1: no se agrega `/dashboard`, y `/intelligence` sigue siendo el Dashboard Directivo, sin cambios.
+  - DEC-017 y DEC-037 (que pedía no duplicar en el Cockpit la vista agregada de atención): por pedido explícito del fundador, la sección Cockpit suma una vista agregada para la gerencia que incluye la atención. El feed de `/cockpit` sigue sin métricas.
+  - MC §7: el home sigue sin ser un dashboard de gráficos. Las métricas son una vista secundaria, sin librerías de gráficos, y cada número lleva a donde se actúa (MC §2, problema 8).
+  - DEC-043 §11: los montos de cotizaciones por moneda y la tasa de realización de pruebas, que quedaron fuera de ese bloque, entran acá.
+  - DEC-043 §2: esta vista tiene sus propias ventanas móviles; `/intelligence` conserva sus rangos.
+  - DEC-037 §7: la clasificación del inventario por vínculos sigue rigiendo en `/intelligence`; esta vista usa `vehicles.status`.
+  - DEC-034 §2: el `closure_reason` del pedido es `loss_reason`.
+  - B1 §4 ("analytics de producto" fuera de B1): no es telemetría de uso de la aplicación, sino métricas de negocio sobre las tablas transaccionales, como DEC-037.
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: el acceso sigue `requireTenant()` → `withTenant()` → RLS (ADR-001), y no hay datos ni privilegios nuevos.
+- **Consecuencias:**
+  - Sin migración: no hay nada que aplicar a staging.
+  - Costo por request: cinco lecturas agregadas en una transacción, cada una una pasada por las filas de su tabla en la organización, sin traer filas a la aplicación. "Todo" recorre el historial completo de cierres y pruebas. Si el volumen del piloto lo exige, se revisa con una decisión nueva (índices o materialización, con su análisis de aislamiento).
+  - Hay dos superficies para la gerencia: `/intelligence` (rangos de calendario, KPIs de la semana y lista en riesgo) y `/cockpit/metrics` (ventanas móviles, montos, pulso operativo y stock). La tasa de conversión usa la misma regla en las dos. Reservadas y Vendidas difieren: hoy ninguna puerta escribe `reserved` ni `sold` (DEC-028 §1, DEC-034 §12), así que en esta vista suelen estar en 0, mientras `/intelligence` las deriva de los vínculos. Unificar las dos superficies o elegir una es decisión del fundador.
+  - La antigüedad mide el ingreso a Porandú: una unidad cargada tarde se ve más nueva. Medir la antigüedad física exige un dato nuevo (la fecha de ingreso al stock) con su decisión.
+  - Habilitar la edición de una oportunidad cerrada sigue exigiendo `closed_at` (DEC-037 §5). Si no, los cierres y el ciclo de venta se moverían de período.
 
 ---
 

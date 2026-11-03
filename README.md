@@ -1007,6 +1007,44 @@ tocar una tarjeta → Sheet (abajo en el teléfono, panel desde md) → atajos:
 - **Fuera de este bloque:** fotos reales (`vehicle_media`) y su carga, datos técnicos no persistidos, interesados o matches por unidad, comparar unidades, compartir la ficha con el cliente, modo kiosco, orden a elección, paginación en el servidor y reservar o vender desde el catálogo.
 - **Base:** sin migración. `pnpm test:db` suma `tests/db/stock-catalog.test.ts` (solo la organización activa, también con varias memberships; en preparación contadas y no mostradas; stock primero y vendidas al final; el tope que solo corta vendidas; clientes cotizables solo En calificación o En negociación; y un contexto falsificado que no ve nada).
 
+## Métricas del salón (Hito 18)
+
+`/cockpit/metrics` es la vista ejecutiva para dueños y gerentes (propuesta DEC-050): una vista de la sección Cockpit (DEC-001), con el selector "Cockpit · Métricas" en las dos vistas. `/cockpit` sigue siendo el home con su feed y `/intelligence` sigue siendo el Dashboard directivo. Solo lee: sin migración, sin tablas, sin Server Actions y sin librerías de gráficos.
+
+```text
+getCockpitMetrics(searchParams, now) → resolveMetricsPeriod() → requireTenant() → withTenant() →
+cinco lecturas agregadas en una transacción, cada una con filtro explícito por organización:
+  1. oportunidades abiertas por etapa y recencia     count(*) FILTER, una fila           (hoy)
+  2. cierres por etapa y motivo de pérdida           GROUP BY ≤ 7, suma del ciclo        (período)
+  3. cotizaciones aprobadas y enviadas vigentes      SUM(total_price) GROUP BY ≤ 4       (hoy)
+  4. pruebas de manejo por resultado                 count(*) FILTER, una fila           (período)
+  5. unidades por estado y moneda                    SUM(price) y antigüedad, GROUP BY ≤ 12 (hoy)
+→ RLS → domains/cockpit/metrics.ts (proporciones exactas, centavos BigInt, promedios al día) →
+CockpitMetricsView (encabezado con período · Embudo · Valor · Pulso · Stock)
+```
+
+| Bloque | Indicador | Regla |
+|---|---|---|
+| Embudo y conversión | Embudo abierto | Abiertas hoy por etapa, con su parte de las abiertas |
+| | Tasa de conversión | Ganadas / (ganadas + perdidas) con cierre (`updated_at`) en el período, la regla de DEC-043 · sin cierres, "Sin dato" |
+| | Ciclo de venta | Días promedio del alta al cierre de las ganadas del período, al día |
+| | Motivos de pérdida | `loss_reason` de las perdidas del período, del más frecuente al menos |
+| Valor comercial | En juego (Gs. y USD) | Cotizaciones `approved` y `sent`, vigentes, de oportunidades En calificación o En negociación, sumadas por moneda, sin conversión |
+| Pulso operativo | Realización de pruebas | Realizadas / (realizadas + no asistió + canceladas + vencidas) agendadas en el período · las que siguen en horario no cuentan |
+| | Requieren intervención | Abiertas Enfriándose + Inactivas (DEC-035 §2), con las Activas |
+| Salud del stock | Distribución | Unidades por `vehicles.status`, como la Stock List y el Catálogo |
+| | Valor del stock publicado | Precio de disponibles y reservadas, por moneda · sin precio no suma y se dice aparte |
+| | Antigüedad promedio | Días desde el ingreso a Porandú (`created_at`) de disponibles y reservadas |
+
+- **Período** (`domains/cockpit/metrics-period.ts`): `?period=7d`, `30d` (por defecto, sin parámetro), `90d` o `all`. Son días de calendario de Asunción: hoy y los anteriores, del primer instante del primer día al de mañana (exclusivo); "Todo" no tiene piso. Un valor desconocido cae a 30 días con un aviso. El período aplica a los flujos y el resto es el estado de hoy: cada tarjeta lo dice ("Hoy" o "30 días").
+- **Dinero exacto:** la base suma `numeric` por moneda y el dominio opera en centavos (`BigInt`): ni float ni conversión. Guaraníes y dólares son siempre dos tarjetas.
+- **Reglas compartidas:** la tasa de conversión es la del Dashboard (`buildConversion()`), la recencia usa los cortes de `recencyCutoffs()` y una prueba vencida es la del Cockpit (abierta con su franja de 60 minutos terminada). Un test cruza la frontera de vencidas con `testDrivePhase()`.
+- **UI** (`components/cockpit/metrics/`, Server Components, tokens de DEC-013): barras de proporción y barras segmentadas finas en Tailwind puro, con los números escritos al lado (las barras son decorativas). Los colores de estado solo aparecen como estados, junto a su rótulo. Mobile-first: una columna en el teléfono, de dos a cuatro tarjetas por bloque según el ancho y leyendas con container queries.
+- **Drill-down** (enlaces sin prefetch): cada etapa a su columna del embudo, "Ver negociaciones" a la columna En negociación, "Ver agenda" a `/calendar`, "Ver cola" a `/opportunities` y cada estado del stock al catálogo filtrado (`?status=`) o al Inventario (en preparación).
+- **Diferencias con `/intelligence`:** allá los rangos son de calendario y el inventario se clasifica por vínculos (DEC-037 §7). Acá las ventanas son móviles y el stock usa `vehicles.status`, que hoy ninguna puerta lleva a `reserved` ni `sold`.
+- **Fuera de este bloque:** comparación con el período anterior, gráficos o series, metas, filtros por vendedor, rango personalizado, exportación, refresco automático, valor vendido, tiempos de respuesta, tramos de antigüedad del stock y restringir la vista por rol.
+- **Base:** sin migración. `pnpm test:db` suma `tests/db/cockpit-metrics.test.ts` (cuatro organizaciones sin cruces, un usuario con varias memberships, un contexto falsificado, bordes del período al milisegundo, la frontera de vencidas, sumas exactas más allá de la precisión de un float, la vigencia de una cotización hasta su último día, que leer no escribe nada y los mutantes sin filtro explícito y sin RLS).
+
 ## Convenciones
 
 - Código, rutas, DB e identificadores en inglés. Copy de UI en español es-PY (DEC-011).
