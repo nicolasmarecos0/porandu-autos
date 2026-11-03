@@ -301,3 +301,24 @@ export function MoreIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Lista de filas: la cola de oportunidades. */
+export function QueueIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8.5 6.5h11M8.5 12h11M8.5 17.5h11" />
+      <path d="M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01" />
+    </Icon>
+  );
+}
+
+/** Columnas de un tablero: el embudo de ventas por etapa. */
+export function BoardIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.5" y="4.5" width="4.5" height="15" rx="1.5" />
+      <rect x="9.75" y="4.5" width="4.5" height="11" rx="1.5" />
+      <rect x="16" y="4.5" width="4.5" height="7" rx="1.5" />
+    </Icon>
+  );
+}

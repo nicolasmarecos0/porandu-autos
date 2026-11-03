@@ -61,6 +61,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-045 | Agenda ejecutiva: grilla horaria semanal, día en foco y lenguaje de estados (Hito 13) | Aceptada en principio | 2026-11-02 |
 | DEC-046 | Presupuesto formal en PDF: vista previa, reglas de exportación y descarga (Hito 14) | Aceptada en principio | 2026-11-02 |
 | DEC-047 | Cockpit: feed de actividad del día (Hito 15) | Aceptada en principio | 2026-11-02 |
+| DEC-048 | Embudo de ventas: tablero Kanban de oportunidades por etapa (Hito 16) | Aceptada en principio | 2026-11-03 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1408,6 +1409,59 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Costo por request: cinco lecturas en una transacción. Las de chats y pruebas usan índices existentes (el parcial de `messages (organization_id, conversation_id, created_at)` con la PK de `conversation_reads`, y `test_drives (organization_id, scheduled_at)`). Las de cotizaciones y notas filtran por organización y recorren sus filas de la organización (cientos en el piloto). *Propuesta para cuando el volumen lo pida:* `0020_cockpit_indexes` con `quotes (organization_id, updated_at)` y `opportunity_notes (organization_id, recorded_at)`, solo índices, como `0017`.
   - Una prueba abierta de más de siete días no aparece en el feed ni en la franja (sigue en `/calendar`). Mostrarlas, o cerrarlas solas, requiere una decisión nueva.
   - El primer día después del despliegue, todo entrante sin leer de cada miembro aparece en su feed (DEC-044 §2.6), hasta que abra la conversación.
+
+---
+
+## DEC-048 — Embudo de ventas: tablero Kanban de oportunidades por etapa (Hito 16)
+- **Estado:** Aceptada en principio · 2026-11-03. Formaliza el pedido del fundador del 2 nov 2026 ("Tablero Kanban de Oportunidades (Embudo de Ventas)": la vista principal de ventas para ver y mover oportunidades entre etapas con Drag & Drop liviano y robusto, actualizaciones optimistas mientras la Server Action guarda, una UX móvil definida y alertas sutiles de inactividad y de acciones pendientes; estilo ejecutivo, Tailwind y Radix, 100 % responsivo). El pedido no le pone número: este bloque es el Hito 16, después del Cockpit. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** B1 §4 difirió el "Pipeline kanban, que irá como vista de Opportunities" y DEC-001 fija que Pipeline es una vista dentro de Opportunities, no un ítem de la navegación. Las etapas y su máquina existen desde H1.6 (DEC-032) y el cierre con sus metadatos desde DEC-034, cada uno con su puerta única (`changeOpportunityStage()` y `closeOpportunity()`), pero solo se usan desde el panel "Etapa" de `/opportunities/[id]`. La cola de `/opportunities` (DEC-015, DEC-017) prioriza por urgencia y score; no muestra el embudo por etapa. El pedido nombra las etapas "Lead, Calificación, Negociación, Ganada, Perdida": son las de DEC-032 con otro nombre (Lead es Nueva), como los estados de la agenda en DEC-045 §5.
+- **Decisión:**
+  1. **Ruta y navegación.** El embudo vive en `/opportunities/pipeline` ("Embudo de ventas"). La navegación global no cambia y "Oportunidades" queda activa. Un selector "Cola · Embudo" (enlaces con `aria-current="page"`, sin prefetch, como DEC-043 §6) une las dos vistas. El copy de las etapas no cambia (DEC-032 §1): Nueva, En calificación, En negociación, Ganada y Perdida. *Propuesta de implementación:* una ruta propia y no `?view=`, con su loader, una URL que se comparte y el botón atrás.
+  2. **Reglas de movimiento: la máquina de DEC-032, sin reglas nuevas.** Puro en `domains/opportunities/pipeline-moves.ts` (`planBoardMove()`), el único módulo del dominio del tablero que viaja al navegador:
+     - **Avanzar** (`new → qualifying`, `qualifying → negotiating`) es soltar la tarjeta en la columna siguiente: un gesto, como el click de DEC-032 §8, por `changeOpportunityStage()`.
+     - **Cerrar** (`negotiating → won`, cualquier abierta `→ lost`) nunca ocurre al soltar: abre la confirmación con los datos del cierre, el mismo formulario del panel "Etapa" (`ClosureForm`, DEC-034 §11), y va por `closeOpportunity()`. Ganar sin unidad vinculada no se ofrece: la confirmación lleva a la oportunidad para vincularla.
+     - **Sin saltos, sin vuelta atrás y sin salir de una etapa terminal:** soltar ahí no le pide nada al servidor y el aviso dice por qué ("Sin saltos: de Nueva se pasa a En calificación.", "Una oportunidad no vuelve a una etapa anterior.").
+     - Mientras se arrastra, cada columna dice qué pasaría al soltar ahí (avanza, cierra o nada) y la tarjeta arrastrada lleva esa pista. Las tarjetas Ganada y Perdida no se arrastran ni ofrecen pases.
+  3. **Sin escrituras nuevas.** Las mismas Server Actions de DEC-032 §5 y DEC-034 §6: el cliente envía solo la oportunidad, el destino y, al cerrar, sus datos; la etapa de origen, la organización, el usuario y el reloj los resuelve el servidor sobre la fila bloqueada, y la base vuelve a exigir el pase con su trigger. Sin migración, tablas, policies, grants ni puertas nuevas. Las dos acciones suman `revalidatePath("/opportunities/pipeline")`.
+  4. **Optimistic UI** (`useOptimistic` de React 19 sobre el tablero que trae el loader):
+     - Un avance mueve la tarjeta al instante a su columna, en su lugar por prioridad, con "Guardando…" y sin poder moverla otra vez. La página revalidada por la Server Action reemplaza el estado optimista.
+     - Al confirmar un cierre, el diálogo se cierra y la tarjeta pasa a Ganada o Perdida con su cierre ("Perdida · Precio · hoy"). Un error por campo, una falla o una unidad que ya no está vinculada devuelven la tarjeta y reabren el diálogo con lo cargado y el aviso.
+     - Una falla devuelve la tarjeta sola, al terminar el pedido, y lo avisa. `unchanged` (otra persona ya la movió) y `not_found` vuelven a leer el tablero.
+     - Los avisos van en una región viva (`role="status"`), abajo al centro, durante 6 segundos.
+  5. **Drag & Drop con `@dnd-kit/core` 6.3.1** (*propuesta de implementación*, dependencia nueva, DEC-009): MIT, unos 11 KB gzip, sin CSS, con sensores de mouse y táctiles con umbral, desplazamiento automático del tablero, copia flotante (`DragOverlay`) y anuncios para lectores de pantalla.
+     - El mouse arrastra después de moverse 6 px (un click en el nombre sigue abriendo la oportunidad). El dedo arrastra después de mantener presionado 220 ms (deslizar sigue desplazando el tablero).
+     - La columna de destino es la que está bajo el puntero o, si no hay ninguna, la de mayor superposición.
+     - Las columnas no se reordenan a mano (el orden es del servidor, §7), así que no hace falta `@dnd-kit/sortable`.
+     - *Descartados:* la API nativa de HTML5 (sin soporte táctil confiable, sin teclado ni desplazamiento automático) y un arrastre propio con Pointer Events (reimplementaría lo mismo con más riesgo).
+     - Un guard de ESLint limita `@dnd-kit/*` a `components/pipeline/`.
+  6. **Accesibilidad.** Cada tarjeta abierta tiene "Cambiar etapa": un menú de Radix no modal (como DEC-038 §8) con exactamente los pases de la máquina. Es la vía del teclado y de los lectores de pantalla, y la más cómoda en el teléfono. El arrastre se anuncia en es-PY. El color siempre acompaña a un texto (DEC-013).
+  7. **Columnas y tarjetas** (`domains/opportunities/pipeline.ts`, puro, en el servidor):
+     - Cinco columnas en el orden del flujo, con su cantidad y sus inactivas.
+     - Abiertas: todas, por Porandú Score (DEC-035 §7, como la cola); sin dato al final y, a igual score, la de actividad más reciente. *Propuesta de implementación:* a lo sumo 100 por columna, con "Se muestran 100 de N".
+     - Cerradas, *propuesta de implementación:* las cerradas en los últimos 30 días de Asunción (hoy y los 29 anteriores, como "Últimos 30 días" en DEC-043 §2), de la más reciente a la más vieja, a lo sumo 30, con su total. La fecha de cierre es `updated_at` (DEC-037 §5). El historial completo sigue en la cola y en Inteligencia.
+     - Tarjeta: el nombre (enlace a `/opportunities/[id]`), la unidad vinculada o lo que busca (DEC-030; el interés legado mientras la demanda nunca se cargó), el Porandú Score y, en una abierta, la inactividad y su acción pendiente. Una cerrada muestra su cierre, con el motivo y la fecha.
+  8. **Alertas sutiles.**
+     - Inactividad: el estado de recencia de DEC-035 §2, sin umbrales nuevos. Activa muestra el tiempo ("hace 2 h"); Enfriándose e Inactiva, su color y los días ("Inactiva · 6 d").
+     - Acciones pendientes, en este orden: la primera se ve y el resto suma "+N".
+       1. Cotizaciones en borrador vigentes: esperan la aprobación humana (DEC-042 §2). Llevan a la vista previa, o a la oportunidad si hay más de una.
+       2. Pruebas de manejo vencidas, en la ventana del Cockpit (DEC-047 §3.3). Llevan a la agenda en su día.
+       3. En negociación sin unidad vinculada (la condición de la NBA `link_vehicle`, DEC-035 §5). Lleva a la oportunidad.
+     - Cada acción es un enlace (`prefetch={false}`) adonde se resuelve: el tablero no aprueba ni registra nada. Las demás NBA ya las dice la inactividad o son la rutina de la cola, y no recargan la tarjeta.
+  9. **UX móvil.** Desde `xl` entran las cinco columnas. Debajo, el tablero se recorre con scroll horizontal y snap: en el teléfono cada columna ocupa cerca del 85 % del ancho y asoma la siguiente. Cada columna tiene scroll vertical propio. Una tira de etapas con sus cantidades sigue a la columna visible y lleva a cualquiera (respeta "reducir movimiento"). Para mover, se mantiene presionada la tarjeta y se arrastra (el tablero se desplaza solo cerca del borde, y el snap se suspende mientras tanto) o se usa "Cambiar etapa".
+  10. **Capa de datos.** `getOpportunityPipeline()` (`db/queries/pipeline.ts`): `requireTenant()` → `withTenant()` → ocho lecturas en una transacción, todas con filtro explícito por `organization_id` sobre RLS y cada join por las dos columnas de su FK compuesta: las abiertas, las ganadas y las perdidas de la ventana (`count(*) over ()` y el índice parcial de `0017`), la demanda, el stock disponible (una vez), la última nota, las cotizaciones agregadas por oportunidad (por aprobar y la aceptada) y las pruebas vencidas agregadas. El motor de DEC-035 corre en memoria, como en la cola. Solo lee, sin caché compartida (DEC-043 §6).
+  11. **Autorización.** Sin cambios: cualquier membership activa mueve cualquier oportunidad de su organización (DEC-023: sin responsable asignado; DEC-032 §6, DEC-034 §8).
+  12. **Fuera de este bloque:** reordenar dentro de una columna, filtros (vendedor, origen, "Mis oportunidades"), búsqueda, tiempo real o refresco automático, mover varias a la vez, deshacer un pase (no hay vuelta atrás, DEC-032 §2), reabrir cerradas, editar desde la tarjeta, montos o valor del pipeline por etapa, historial de etapas, notificaciones, un ítem de navegación nuevo y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - B1 §4 y DEC-001: el Pipeline kanban entra como vista de Opportunities. La navegación no cambia.
+  - DEC-032 §8 y DEC-034 §11: los pases y los cierres también se piden desde el embudo, con las mismas puertas y la misma confirmación de cierre (`ClosureForm`, que ahora comparten el panel "Etapa" y el embudo).
+  - DEC-017: el embudo es una vista de `/opportunities`. La cola sigue respondiendo "¿A quién atiendo ahora?" y el embudo no replica el detalle de `/opportunities/[id]`.
+  - DEC-009: se agrega `@dnd-kit/core` 6.3.1 (§5).
+  - Prevalece según DEC-002. No requiere un ADR nuevo: el acceso sigue `requireTenant()` → `withTenant()` → RLS (ADR-001) y no hay datos ni privilegios nuevos.
+- **Consecuencias:**
+  - Sin migración: no hay nada que aplicar a staging.
+  - Costo por request: ocho lecturas en una transacción y Match v0 en memoria por abierta (O(abiertas × unidades)), como la cola (DEC-035). El tope de 100 por columna acota lo que se dibuja, no lo que se lee.
+  - Un pase es irreversible (DEC-032 §2): soltar en la columna siguiente avanza sin confirmación, como el click del panel. Si el piloto muestra pases accidentales, se evalúa una confirmación o un "deshacer" con su propia decisión (deshacer exige reabrir DEC-032 §2).
+  - El shell sigue siendo desktop-first (rail de 4rem): en el teléfono el tablero usa el ancho que queda.
 
 ---
 

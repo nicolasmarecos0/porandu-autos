@@ -375,6 +375,17 @@ const pdfLibraryImport = {
   message: PDF_LIBRARY_MESSAGE,
 };
 
+// Embudo de ventas (propuesta DEC-048): @dnd-kit (el arrastre del tablero)
+// solo vive en components/pipeline/. El resto de la UI no arrastra nada, y
+// el dominio y el servidor no conocen la librería: las reglas de movimiento
+// son la máquina de DEC-032 (domains/opportunities/pipeline-moves.ts).
+const DND_LIBRARY_MESSAGE =
+  "Drag and drop lives only in the pipeline board (components/pipeline/). Moves follow the stage machine in domains/opportunities/pipeline-moves.ts.";
+const dndLibraryImport = {
+  regex: "^@dnd-kit(/|$)",
+  message: DND_LIBRARY_MESSAGE,
+};
+
 const basePatterns = [
   dbClientImport,
   withUserImport,
@@ -399,6 +410,7 @@ const basePatterns = [
   quotesWriteImport,
   conversationReadImport,
   pdfLibraryImport,
+  dndLibraryImport,
 ];
 
 const eslintConfig = defineConfig([
@@ -430,6 +442,22 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         { patterns: [...basePatterns, domainImport] },
+      ],
+    },
+  },
+  // Únicos módulos que arrastran: el tablero del embudo (propuesta DEC-048).
+  // Siguen sin conocer Drizzle ni el boundary, como el resto de la UI.
+  {
+    files: ["components/pipeline/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            ...basePatterns.filter((pattern) => pattern !== dndLibraryImport),
+            dataLayerImport,
+          ],
+        },
       ],
     },
   },
