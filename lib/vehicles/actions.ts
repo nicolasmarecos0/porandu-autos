@@ -15,6 +15,7 @@ import { requireTenant } from "@/lib/tenant/session";
 
 import { readVehicleId, type MarkVehicleAvailableState } from "./availability";
 import { parseNewVehicleForm, type CreateVehicleState } from "./new-vehicle";
+import { STOCK_PATH } from "./paths";
 
 /*
  * Escrituras de unidades desde Stock. Cada Server Action es un endpoint
@@ -41,8 +42,6 @@ import { parseNewVehicleForm, type CreateVehicleState } from "./new-vehicle";
  *
  * El estado previo (`_previous`) lo envía el cliente: no se usa.
  */
-
-const STOCK_PATH = "/stock";
 
 /*
  * Para diagnosticar sin exponer lo cargado: solo el tipo de error y el

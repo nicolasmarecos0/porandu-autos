@@ -108,3 +108,58 @@ describe("QuotesPanel", () => {
     expect(withdrawn).not.toContain("Más acciones");
   });
 });
+
+describe("atajo Cotizar del catálogo (propuesta DEC-049)", () => {
+  const UNIT = "20000000-0000-4000-8000-000000000001";
+  const vehicles = [
+    {
+      id: UNIT,
+      brand: "Toyota",
+      model: "Hilux",
+      year: 2024,
+      price: "49900.00",
+      currency: "USD" as const,
+    },
+  ];
+
+  /** El botón "Nueva cotización" (disparador del drawer), si existe. */
+  function newQuoteTrigger(
+    initialVehicleId: string | undefined,
+    stage: "new" | "qualifying" | "negotiating" | "won" = "qualifying",
+  ): string | undefined {
+    const data = quotesPanelData([], vehicles, {
+      viewerUserId: VIEWER,
+      viewerIsAdmin: false,
+      opportunityStage: stage,
+      linkedVehicleId: null,
+      today: "2026-11-01",
+    });
+    const html = renderToStaticMarkup(
+      createElement(QuotesPanel, {
+        opportunityId: OPPORTUNITY,
+        data,
+        initialVehicleId,
+      }),
+    );
+    return [...html.matchAll(/<button\b[^>]*>/g)]
+      .map((match) => match[0])
+      .find((tag) => tag.includes('aria-haspopup="dialog"'));
+  }
+
+  it("una unidad cotizable llega con el alta abierta", () => {
+    expect(newQuoteTrigger(UNIT)).toContain('data-state="open"');
+    expect(newQuoteTrigger(UNIT, "negotiating")).toContain('data-state="open"');
+  });
+
+  it("sin atajo o con una unidad que no se puede cotizar, el alta arranca cerrada", () => {
+    expect(newQuoteTrigger(undefined)).toContain('data-state="closed"');
+    expect(newQuoteTrigger("20000000-0000-4000-8000-000000000099")).toContain(
+      'data-state="closed"',
+    );
+  });
+
+  it("si la etapa no admite cotizar, no hay alta que abrir", () => {
+    expect(newQuoteTrigger(UNIT, "new")).toBeUndefined();
+    expect(newQuoteTrigger(UNIT, "won")).toBeUndefined();
+  });
+});

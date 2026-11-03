@@ -38,6 +38,7 @@ import type {
   ScheduleTestDriveState,
 } from "@/lib/calendar/requests";
 
+import { SCHEDULE_VEHICLE_PARAM } from "./links";
 import { TestDriveStatusChip } from "./test-drive-status";
 
 /*
@@ -52,6 +53,11 @@ import { TestDriveStatusChip } from "./test-drive-status";
  * reenviar. Un error deja lo cargado para corregir o reintentar; al
  * agendar, el drawer se cierra y la agenda salta a la semana de la prueba.
  * Agendar no le envía nada al cliente.
+ *
+ * Atajo del catálogo (propuesta DEC-049): con `initialVehicleId` (una de las
+ * opciones, `?schedule=`), el drawer llega abierto con esa unidad elegida y
+ * el foco en el cliente. Es solo una preselección: se puede cambiar, y al
+ * cerrarlo el parámetro sale de la URL para que recargar no lo reabra.
  */
 
 type ScheduleTestDriveDrawerProps = {
@@ -59,15 +65,27 @@ type ScheduleTestDriveDrawerProps = {
   vehicles: readonly ScheduleVehicleOption[];
   /** `now` del request (ISO), para el mínimo y el máximo del campo de hora. */
   nowIso: string;
+  /** Unidad que llega elegida (atajo del catálogo); abre el drawer. */
+  initialVehicleId?: string;
 };
+
+/** El atajo ya se usó: recargar la agenda no vuelve a abrir el alta. */
+function forgetScheduleHandoff(): void {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has(SCHEDULE_VEHICLE_PARAM)) return;
+  url.searchParams.delete(SCHEDULE_VEHICLE_PARAM);
+  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+}
 
 export function ScheduleTestDriveDrawer({
   opportunities,
   vehicles,
   nowIso,
+  initialVehicleId,
 }: ScheduleTestDriveDrawerProps) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [preselected, setPreselected] = useState(initialVehicleId);
+  const [open, setOpen] = useState(initialVehicleId !== undefined);
   const [saving, setSaving] = useState(false);
   const firstFieldRef = useRef<HTMLSelectElement>(null);
 
@@ -81,6 +99,10 @@ export function ScheduleTestDriveDrawer({
       open={open}
       onOpenChange={(next) => {
         if (!next && saving) return;
+        if (!next && preselected !== undefined) {
+          setPreselected(undefined);
+          forgetScheduleHandoff();
+        }
         setOpen(next);
       }}
     >
@@ -107,11 +129,14 @@ export function ScheduleTestDriveDrawer({
           opportunities={opportunities}
           vehicles={vehicles}
           nowIso={nowIso}
+          initialVehicleId={preselected}
           firstFieldRef={firstFieldRef}
           onSavingChange={setSaving}
           onScheduled={(scheduledAt) => {
             setSaving(false);
             setOpen(false);
+            // La URL nueva ya no lleva el atajo: la unidad no se repropone.
+            setPreselected(undefined);
             const week = isoDate(
               zonedDate(new Date(scheduledAt), CALENDAR_TIME_ZONE),
             );
@@ -165,6 +190,7 @@ function ScheduleForm({
   opportunities,
   vehicles,
   nowIso,
+  initialVehicleId,
   firstFieldRef,
   onSavingChange,
   onScheduled,
@@ -193,8 +219,11 @@ function ScheduleForm({
   const echoedOpportunity =
     opportunities.find((option) => option.id === values?.opportunityId)?.id ??
     "";
+  // Lo que volvió del servidor manda; si no, la unidad del atajo.
   const echoedVehicle =
-    vehicles.find((option) => option.id === values?.vehicleId)?.id ?? "";
+    vehicles.find(
+      (option) => option.id === (values?.vehicleId ?? initialVehicleId),
+    )?.id ?? "";
   const message =
     !pending && (state?.status === "invalid" || state?.status === "failed")
       ? FORM_MESSAGES[state.status]

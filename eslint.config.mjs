@@ -525,8 +525,9 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // Stock (H1.3A, H1.3B, H1.3C): una sola fuente, PostgreSQL. Ni la lista,
-  // ni el alta rápida, ni la disponibilidad tienen fixtures.
+  // Stock (H1.3A, H1.3B, H1.3C y el catálogo, propuesta DEC-049): una sola
+  // fuente, PostgreSQL. Ni la lista, ni el catálogo, ni el alta rápida, ni
+  // la disponibilidad tienen fixtures.
   {
     files: ["app/(app)/stock/**", "components/stock/**"],
     rules: {
@@ -541,6 +542,7 @@ const eslintConfig = defineConfig([
       "db/queries/vehicles.ts",
       "db/queries/create-vehicle.ts",
       "db/queries/mark-vehicle-available.ts",
+      "db/queries/stock-catalog.ts",
     ],
     rules: {
       "no-restricted-imports": [

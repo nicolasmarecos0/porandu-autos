@@ -4,10 +4,12 @@ import { ESLint } from "eslint";
 import { describe, expect, it } from "vitest";
 
 /*
- * Guardas de ESLint de Stock (H1.3A, H1.3B, H1.3C):
- * - una sola fuente: ni la página /stock, ni sus componentes, ni su loader
- *   (db/queries/vehicles.ts), ni el alta rápida ni la disponibilidad
- *   (lib/vehicles/, db/queries/create-vehicle.ts,
+ * Guardas de ESLint de Stock (H1.3A, H1.3B, H1.3C y el catálogo visual,
+ * propuesta DEC-049):
+ * - una sola fuente: ni la página /stock, ni el catálogo (/stock/catalog,
+ *   components/stock/catalog/, db/queries/stock-catalog.ts), ni sus
+ *   componentes, ni su loader (db/queries/vehicles.ts), ni el alta rápida
+ *   ni la disponibilidad (lib/vehicles/, db/queries/create-vehicle.ts,
  *   db/queries/mark-vehicle-available.ts) importan mocks/;
  * - la página y los componentes no conocen Drizzle, db/schema ni el
  *   boundary: leen con getStockList();
@@ -32,6 +34,9 @@ async function restrictedBy(filePath: string, code: string) {
 const PAGE = "app/(app)/stock/page.tsx";
 const COMPONENT = "components/stock/stock-view.tsx";
 const LOADER = "db/queries/vehicles.ts";
+const CATALOG_PAGE = "app/(app)/stock/catalog/page.tsx";
+const CATALOG_COMPONENT = "components/stock/catalog/catalog-view.tsx";
+const CATALOG_LOADER = "db/queries/stock-catalog.ts";
 
 const use = (name: string) => `\nexport const use = ${name};\n`;
 
@@ -77,6 +82,18 @@ describe("una sola fuente para la Stock List", { timeout: 30_000 }, () => {
       "components/stock/mark-available-dialog.tsx",
       `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
     ],
+    [
+      CATALOG_PAGE,
+      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
+      CATALOG_COMPONENT,
+      `import * as stock from "../../../mocks/stock";${use("stock")}`,
+    ],
+    [
+      CATALOG_LOADER,
+      `import { VEHICLES } from "../../mocks/vehicles";${use("VEHICLES")}`,
+    ],
   ])("falla en %s: %s", async (filePath, code) => {
     expect(await restrictedBy(filePath, code)).toContain(
       "no-restricted-imports",
@@ -97,6 +114,14 @@ describe(
         `import { vehicles } from "../../db/schema/vehicles";${use("vehicles")}`,
       ],
       [COMPONENT, `import { getDb } from "@/db/client";${use("getDb")}`],
+      [
+        CATALOG_PAGE,
+        `import { vehicles } from "@/db/schema";${use("vehicles")}`,
+      ],
+      [
+        CATALOG_COMPONENT,
+        `import { withTenant } from "@/db/tenant";${use("withTenant")}`,
+      ],
     ])("falla en %s: %s", async (filePath, code) => {
       expect(await restrictedBy(filePath, code)).toContain(
         "no-restricted-imports",
@@ -111,6 +136,14 @@ describe(
       [
         COMPONENT,
         `import { formatPrice, type StockVehicle } from "@/domains/vehicles/stock";\nexport type S = StockVehicle;${use("formatPrice")}`,
+      ],
+      [
+        CATALOG_PAGE,
+        `import { getStockCatalog } from "@/db/queries/stock-catalog";${use("getStockCatalog")}`,
+      ],
+      [
+        CATALOG_COMPONENT,
+        `import { queryCatalog } from "@/domains/vehicles/catalog";${use("queryCatalog")}`,
       ],
     ])("se permite en %s: %s", async (filePath, code) => {
       expect(await restrictedBy(filePath, code)).toEqual([]);
@@ -127,6 +160,11 @@ describe(
       [LOADER, `import { getDb } from "@/db/client";${use("getDb")}`],
       [LOADER, `export const db = () => import("../client");`],
       [LOADER, `import { withUser } from "../tenant";${use("withUser")}`],
+      [CATALOG_LOADER, `import { getDb } from "../client";${use("getDb")}`],
+      [
+        CATALOG_LOADER,
+        `import { withUser } from "../tenant";${use("withUser")}`,
+      ],
       [
         LOADER,
         `import { resolveTenant } from "@/lib/tenant/resolution";${use("resolveTenant")}`,

@@ -331,3 +331,37 @@ describe("agenda ejecutiva", () => {
     expect(html).not.toContain('<li class="absolute"');
   });
 });
+
+describe("atajo del catálogo: Agendar prueba con una unidad (propuesta DEC-049)", () => {
+  const withOptions: CalendarAgenda = {
+    ...agenda(undefined),
+    opportunities: [{ id: id(201), contactName: "Ana Ríos" }],
+    vehicles: [{ id: id(301), label: "Toyota Hilux 2025" }],
+  };
+
+  /** El botón "Agendar prueba" (disparador del drawer). */
+  function scheduleTrigger(scheduleVehicleId?: string): string {
+    const html = renderToStaticMarkup(
+      createElement(CalendarView, {
+        title: "Agenda",
+        agenda: withOptions,
+        scheduleVehicleId,
+      }),
+    );
+    const tag = [...html.matchAll(/<button\b[^>]*>/g)]
+      .map((match) => match[0])
+      .find((candidate) => candidate.includes('aria-haspopup="dialog"'));
+    if (!tag) throw new Error("missing schedule trigger");
+    return tag;
+  }
+
+  it("una unidad que se puede probar llega con el alta abierta", () => {
+    expect(scheduleTrigger(id(301))).toContain('data-state="open"');
+  });
+
+  it("sin atajo, o con una unidad que no es opción, el alta arranca cerrada", () => {
+    expect(scheduleTrigger()).toContain('data-state="closed"');
+    expect(scheduleTrigger(id(999))).toContain('data-state="closed"');
+    expect(scheduleTrigger("no-es-un-id")).toContain('data-state="closed"');
+  });
+});

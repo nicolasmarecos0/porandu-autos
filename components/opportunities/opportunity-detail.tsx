@@ -155,6 +155,8 @@ type OpportunityDetailViewProps = Readonly<{
   activity: readonly ActivityEntry[];
   /** Panel "Cotizaciones" (Hito 10, DEC-042 §9). */
   quotes: QuotesPanelData;
+  /** Unidad del atajo "Cotizar" del catálogo (`?quote=`, propuesta DEC-049). */
+  quoteVehicleId?: string;
 }>;
 
 /** Copy de la marca de la tarjeta de match que ya es la unidad vinculada. */
@@ -216,6 +218,7 @@ export function OpportunityDetailView({
   vehicleLink,
   activity,
   quotes,
+  quoteVehicleId,
 }: OpportunityDetailViewProps) {
   const { linked } = vehicleLink;
   return (
@@ -257,7 +260,11 @@ export function OpportunityDetailView({
           vehicleName={linked?.name ?? null}
         />
       ) : null}
-      <QuotesPanel opportunityId={id} data={quotes} />
+      <QuotesPanel
+        opportunityId={id}
+        data={quotes}
+        initialVehicleId={quoteVehicleId}
+      />
       <OpportunityActivity opportunityId={id} activity={activity} />
       <section aria-labelledby="demand-heading" className="max-w-3xl">
         <Panel>

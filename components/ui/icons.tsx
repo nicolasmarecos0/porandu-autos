@@ -322,3 +322,34 @@ export function BoardIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Cuadrícula de tarjetas: el catálogo visual del stock. */
+export function GridIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="4" y="4" width="7" height="7" rx="1.5" />
+      <rect x="13" y="4" width="7" height="7" rx="1.5" />
+      <rect x="4" y="13" width="7" height="7" rx="1.5" />
+      <rect x="13" y="13" width="7" height="7" rx="1.5" />
+    </Icon>
+  );
+}
+
+export function SearchIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4 4" />
+    </Icon>
+  );
+}
+
+/** Cámara: el lugar de las fotos reales de una unidad (vehicle_media). */
+export function CameraIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.5-2h5.6l1.5 2h2.2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" />
+      <circle cx="12" cy="13" r="3.25" />
+    </Icon>
+  );
+}

@@ -62,6 +62,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-046 | Presupuesto formal en PDF: vista previa, reglas de exportación y descarga (Hito 14) | Aceptada en principio | 2026-11-02 |
 | DEC-047 | Cockpit: feed de actividad del día (Hito 15) | Aceptada en principio | 2026-11-02 |
 | DEC-048 | Embudo de ventas: tablero Kanban de oportunidades por etapa (Hito 16) | Aceptada en principio | 2026-11-03 |
+| DEC-049 | Catálogo visual del stock: galería para mostrar en el salón (Hito 17) | Aceptada en principio | 2026-11-03 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1462,6 +1463,46 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Costo por request: ocho lecturas en una transacción y Match v0 en memoria por abierta (O(abiertas × unidades)), como la cola (DEC-035). El tope de 100 por columna acota lo que se dibuja, no lo que se lee.
   - Un pase es irreversible (DEC-032 §2): soltar en la columna siguiente avanza sin confirmación, como el click del panel. Si el piloto muestra pases accidentales, se evalúa una confirmación o un "deshacer" con su propia decisión (deshacer exige reabrir DEC-032 §2).
   - El shell sigue siendo desktop-first (rail de 4rem): en el teléfono el tablero usa el ancho que queda.
+
+---
+
+## DEC-049 — Catálogo visual del stock: galería para mostrar en el salón (Hito 17)
+- **Estado:** Aceptada en principio · 2026-11-03. Formaliza el pedido del fundador del 3 nov 2026 ("Catálogo Visual de Inventario (Galería de Vehículos)": una grilla de tarjetas para que el vendedor le muestre al cliente el stock en el salón, sin tablas densas, con foto placeholder, marca, modelo, precio, año, kilometraje y estado Disponible/Reservado/Vendido; filtros rápidos fijos de marca, estado y búsqueda libre que actualicen la grilla al instante, preferentemente con URL Search Params; una vista de detalle tipo Sheet con la ficha completa y un botón rápido para cotizar o agendar si aplica; estilo ejecutivo, Tailwind y Radix, 100 % responsivo y mobile-first). El pedido no le pone número: este bloque es el Hito 17, después del embudo. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:** `/stock` es la Stock List agrupada por estado, con master-detail (DEC-026), pensada para operar el inventario: alta rápida (DEC-027) y disponibilidad (DEC-028). No sirve para mostrarle el stock a un cliente: es densa y no filtra. Las unidades ya tienen lo que pide la tarjeta (DEC-025), salvo las fotos reales, que llegan con `vehicle_media` (DEC-025 §9, DEC-026 §6). Agendar una prueba (DEC-041) y cotizar (DEC-042) ya existen, cada uno con su puerta única.
+- **Decisión:**
+  1. **Ruta y navegación.** El catálogo vive en `/stock/catalog` ("Catálogo"), una vista de Stock: la navegación global no cambia y "Stock" queda activa. Un selector "Inventario · Catálogo" (enlaces con `aria-current="page"`, sin prefetch, como DEC-048 §1) une las dos vistas. *Propuesta de implementación:* una ruta propia, sin reemplazar la Stock List, que sigue siendo la superficie del alta y de la disponibilidad.
+  2. **Qué unidades.** Disponibles, reservadas y vendidas, con el estado de `vehicles.status`, como la Stock List (DEC-037 §7: la clasificación por vínculos del dashboard no se usa acá). *Propuesta de implementación:* las unidades en preparación no entran, porque todavía no se le muestran a un cliente; el catálogo dice cuántas son y enlaza a Inventario, así no se esconden en silencio (DEC-025 §8). Hoy ninguna puerta escribe `reserved` ni `sold` (DEC-028 §1, DEC-034 §12): esos filtros muestran lo que haya.
+  3. **Filtros y búsqueda** (puros, `domains/vehicles/catalog.ts`):
+     - Estado: Disponibles (por defecto: lo que se puede vender hoy), Reservadas, Vendidas y Todas.
+     - Marca: agrupada con la normalización de Match v0 (sin bordes ni mayúsculas, DEC-031 §3) y nombrada con la escritura más frecuente entre sus unidades.
+     - Búsqueda libre sobre marca, modelo, versión y año, sin tildes ni mayúsculas: cada palabra tiene que aparecer. A lo sumo 80 caracteres y 8 palabras.
+     - Facetas: cada estado cuenta con la marca y la búsqueda elegidas; cada marca, con el estado y la búsqueda.
+     - Orden: disponibles, reservadas y vendidas, cada grupo por ingreso a Porandú (DEC-025 §7). Las vendidas quedan visualmente subordinadas (DEC-026 §5).
+  4. **Al instante y en la URL.** *Propuesta de implementación:* los filtros corren en el navegador sobre las unidades que trae el loader, con la misma función que el primer render del servidor, así la grilla cambia sin esperar a la red. La URL (`?status=&brand=&q=&unit=`, identificadores en inglés, DEC-011) es su espejo por la History API, que Next integra con su router: la entrada actual se reemplaza después de 250 ms, sin una entrada por tecla. Abrir una unidad suma una entrada (`unit=`), así "atrás" cierra la hoja. Un parámetro inválido vuelve al valor por defecto, y una navegación al catálogo rearma el estado desde su URL.
+  5. **Tarjeta y foto.** El lugar de la foto real, con la marca como tipografía y "Sin fotos cargadas"; el estado; marca, modelo y versión; año y kilometraje; el precio publicado. No hay silueta ni imagen genérica de un vehículo, así que no corresponde la etiqueta "Representación" y nada pasa por foto real (CLAUDE.md §2, DEC-026 §6). Lo que falta se dice: "Precio a confirmar" y "Km sin dato" en la tarjeta, "Sin dato" en la ficha. *Propuesta de implementación:* "Precio a confirmar" en lugar de "Sin dato" para el precio, porque esa pantalla la mira el cliente.
+  6. **Layout mobile-first.** La grilla elige sus columnas por el ancho disponible (mínimo 16rem: una en el teléfono, dos en la tablet vertical, tres o más en escritorio) y dibuja de a 24 tarjetas, con "Mostrar más". La barra de filtros queda fija arriba: en el teléfono, la búsqueda y dos selects nativos con rótulo visible (44 px de alto y 16 px de texto, sin zoom de iOS); desde sm, el estado son segmentos con sus cantidades; desde lg, todo en una fila.
+  7. **Vista de detalle.** Tocar una tarjeta abre una hoja (`Sheet`, `components/ui/sheet.tsx`): la misma primitiva de Radix Dialog que el Drawer (DEC-024 §10), que sube desde abajo en el teléfono (hasta el 92 % del alto) y es un panel lateral desde md. Muestra la ficha completa con lo persistido y, al pie, las acciones que aplican.
+  8. **Acciones rápidas: enlaces a la puerta de cada módulo, sin escrituras nuevas.**
+     - "Agendar prueba" (unidad disponible o reservada, DEC-041 §3) lleva a `/calendar?schedule=<unidad>`: la agenda abre "Agendar prueba" con la unidad elegida, y el vendedor elige el cliente y la hora. `scheduleTestDrive()` valida todo como siempre.
+     - "Cotizar" (disponible o reservada con precio publicado, DEC-042 §1 y §3) pide el cliente —oportunidades En calificación o En negociación, a lo sumo 200, de la más activa a la menos— y lleva a `/opportunities/<id>?quote=<unidad>`: el panel "Cotizaciones" abre "Nueva cotización" con la unidad elegida. Descuento, validez, aprobación humana y entrega siguen en la oportunidad, con sus reglas (DEC-042 §2, CLAUDE.md §2).
+     - Una vendida no ofrece acciones y lo dice.
+     - Los dos parámetros son solo una preselección: se aplican si la unidad es una opción del alta (y, para cotizar, si la etapa lo admite) y salen de la URL al cerrar o guardar. *Propuesta de implementación:* la lista de clientes aparece solo al tocar "Cotizar": el catálogo se le muestra al cliente y no exhibe a los demás.
+  9. **Capa de datos.** `getStockCatalog()` (`db/queries/stock-catalog.ts`): `requireTenant()` → `withTenant()` → tres lecturas en una transacción, con filtro explícito por `organization_id` sobre RLS: el conteo por estado (total del catálogo y en preparación); las unidades del catálogo (`status IN ('available', 'reserved', 'sold')`, vendidas al final, por ingreso), a lo sumo 1000 (*propuesta de implementación*: si se supera, quedan afuera las vendidas más antiguas y se avisa); y las oportunidades cotizables con su contacto, unido por las dos columnas de la FK compuesta. Sin caché compartida (DEC-043 §6). Leer no escribe nada. El guard de ESLint de Stock (sin fixtures, DEC-025 §12) cubre la página, sus componentes y el loader.
+  10. **Autorización.** Cualquier membership activa, como la Stock List (DEC-023: sin responsable asignado). Agendar y cotizar conservan la suya.
+  11. **Fuera de este bloque:** fotos reales (`vehicle_media`) y su carga, datos técnicos que no se persisten (color, combustible, transmisión), interesados o matches por unidad, comparar unidades, compartir o enviar la ficha al cliente, modo kiosco o pantalla completa, orden a elección, paginación en el servidor, reservar o vender desde el catálogo y todo lo listado como futuro (CLAUDE.md §2).
+- **Aclara / supersede:**
+  - DEC-001 y DEC-026: Stock suma una segunda vista, el catálogo. La Stock List no cambia y sigue siendo la baseline de `/stock`; la navegación global tampoco.
+  - DEC-025 §9 y DEC-026 §6: el catálogo muestra el lugar de las fotos reales, vacío, sin representación genérica.
+  - DEC-041 §3 y DEC-042 §8 y §9: el alta de una prueba y la de una cotización también se abren desde el catálogo, con la unidad preseleccionada por la URL. Sus puertas, validaciones y confirmaciones no cambian.
+  - DEC-024 §10: Radix Dialog también da forma a la hoja de detalle, que es un drawer inferior en el teléfono.
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: el acceso sigue `requireTenant()` → `withTenant()` → RLS (ADR-001) y no hay datos ni privilegios nuevos.
+- **Consecuencias:**
+  - Sin migración: no hay nada que aplicar a staging.
+  - Costo por request: tres lecturas en una transacción; el filtrado corre en el navegador. El tope de 1000 unidades acota lo que viaja. Si el piloto lo supera con stock vigente, se revisa con una decisión nueva (paginación o filtros en el servidor).
+  - Cuando exista `vehicle_media`, la foto real ocupa el mismo marco de la tarjeta y de la ficha, sin cambiar la grilla.
+  - Cuando se habilite reservar o vender una unidad, el catálogo lo refleja sin cambios, porque lee `vehicles.status`.
+  - En un teléfono de 360 px, el rail de 4rem del shell (DEC-048, Consecuencias) deja poco ancho: el valor del select de estado puede cortarse con "…". La lista nativa y la línea de resultados lo muestran completo.
 
 ---
 

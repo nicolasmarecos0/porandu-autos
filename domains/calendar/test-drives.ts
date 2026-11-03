@@ -30,6 +30,13 @@ export type TestDriveStatus = (typeof TEST_DRIVE_STATUSES)[number];
 export const INITIAL_TEST_DRIVE_STATUS =
   "scheduled" as const satisfies TestDriveStatus;
 
+/**
+ * Estados de una unidad que se puede probar (DEC-041 §3): disponible o
+ * reservada. Lo exigen la Server Action, la policy de INSERT de 0015 y el
+ * loader de la agenda; el catálogo lo usa para ofrecer "Agendar prueba".
+ */
+export const TESTABLE_VEHICLE_STATUSES = ["available", "reserved"] as const;
+
 /** Estados abiertos: la prueba todavía puede cambiar. */
 export const OPEN_TEST_DRIVE_STATUSES = [
   "scheduled",

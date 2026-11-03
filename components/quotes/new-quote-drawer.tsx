@@ -47,6 +47,7 @@ import {
   QUOTE_NOTES_MAX_LENGTH,
 } from "@/domains/quotes/request";
 import { createQuote } from "@/lib/quotes/actions";
+import { NEW_QUOTE_VEHICLE_PARAM } from "@/lib/quotes/paths";
 import type {
   CreateQuoteState,
   QuoteFormError,
@@ -74,6 +75,12 @@ import { QuoteStatusChip } from "./quote-status";
  * para corregir o reintentar; al crearla, el drawer se cierra y la
  * cotización aparece arriba del panel, en Borrador. Crear no le envía nada
  * al cliente.
+ *
+ * Atajo "Cotizar" del catálogo (propuesta DEC-049): con `initialVehicleId`
+ * (una de las opciones, `?quote=`), el drawer llega abierto con esa unidad
+ * elegida. Es solo una preselección: el resto se completa acá, con las
+ * mismas reglas, y al cerrarlo o crearla el parámetro sale de la URL para
+ * que recargar no lo reabra.
  */
 
 type NewQuoteDrawerProps = Readonly<{
@@ -84,8 +91,23 @@ type NewQuoteDrawerProps = Readonly<{
   today: string;
 }>;
 
-export function NewQuoteDrawer(props: NewQuoteDrawerProps) {
-  const [open, setOpen] = useState(false);
+/** El atajo ya se usó: recargar la oportunidad no vuelve a abrir el alta. */
+function forgetQuoteHandoff(): void {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has(NEW_QUOTE_VEHICLE_PARAM)) return;
+  url.searchParams.delete(NEW_QUOTE_VEHICLE_PARAM);
+  window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+}
+
+export function NewQuoteDrawer({
+  initialVehicleId,
+  ...props
+}: NewQuoteDrawerProps & {
+  /** Unidad que llega elegida (atajo "Cotizar" del catálogo); abre el drawer. */
+  initialVehicleId?: string;
+}) {
+  const [preselected, setPreselected] = useState(initialVehicleId);
+  const [open, setOpen] = useState(initialVehicleId !== undefined);
   const [saving, setSaving] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const firstFieldRef = useRef<HTMLSelectElement>(null);
@@ -102,6 +124,10 @@ export function NewQuoteDrawer(props: NewQuoteDrawerProps) {
         onOpenChange={(next) => {
           if (!next && saving) return;
           if (next) setAnnouncement("");
+          if (!next && preselected !== undefined) {
+            setPreselected(undefined);
+            forgetQuoteHandoff();
+          }
           setOpen(next);
         }}
       >
@@ -126,11 +152,16 @@ export function NewQuoteDrawer(props: NewQuoteDrawerProps) {
         >
           <QuoteForm
             {...props}
+            suggestedVehicleId={preselected ?? props.suggestedVehicleId}
             firstFieldRef={firstFieldRef}
             onSavingChange={setSaving}
             onCreated={(number) => {
               setSaving(false);
               setOpen(false);
+              if (preselected !== undefined) {
+                setPreselected(undefined);
+                forgetQuoteHandoff();
+              }
               setAnnouncement(
                 `Cotización N.º ${String(number).padStart(4, "0")} creada en Borrador.`,
               );
