@@ -43,12 +43,21 @@ const navLinkClassName =
 export function CalendarView({
   title,
   agenda,
+  scheduleVehicleId,
 }: {
   title: string;
   agenda: CalendarAgenda;
+  /**
+   * Unidad pedida por el atajo del catálogo (`?schedule=`, propuesta
+   * DEC-049), sin validar: abre el alta solo si es una de las opciones.
+   */
+  scheduleVehicleId?: string;
 }) {
   const { week, days, counts, total } = agenda;
   const focus = focusedDay(days);
+  const initialVehicleId = agenda.vehicles.find(
+    (vehicle) => vehicle.id === scheduleVehicleId,
+  )?.id;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -64,6 +73,7 @@ export function CalendarView({
             opportunities={agenda.opportunities}
             vehicles={agenda.vehicles}
             nowIso={agenda.nowIso}
+            initialVehicleId={initialVehicleId}
           />
         </div>
 

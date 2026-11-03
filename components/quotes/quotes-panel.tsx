@@ -19,7 +19,8 @@ import { QuoteCard } from "./quote-card";
  * acciones que el que mira puede pedir hoy. Solo las tarjetas (acciones y
  * confirmaciones) y el drawer de alta son de cliente. Fuera de
  * `qualifying` y `negotiating` no se crean cotizaciones: el panel dice
- * por qué.
+ * por qué. `initialVehicleId` (atajo "Cotizar" del catálogo, propuesta
+ * DEC-049) abre el alta con esa unidad solo si se puede cotizar acá.
  */
 
 function countLabel(count: number): string {
@@ -29,11 +30,17 @@ function countLabel(count: number): string {
 export function QuotesPanel({
   opportunityId,
   data,
+  initialVehicleId,
 }: {
   opportunityId: string;
   data: QuotesPanelData;
+  /** Unidad pedida por el atajo del catálogo (`?quote=`), sin validar. */
+  initialVehicleId?: string;
 }) {
   const { quotes, canCreate, createHint } = data;
+  const preselected = canCreate
+    ? data.vehicleOptions.find((option) => option.id === initialVehicleId)?.id
+    : undefined;
   return (
     <section aria-labelledby="quotes-heading" className="max-w-3xl">
       <Panel>
@@ -51,6 +58,7 @@ export function QuotesPanel({
                 vehicleOptions={data.vehicleOptions}
                 suggestedVehicleId={data.suggestedVehicleId}
                 today={data.today}
+                initialVehicleId={preselected}
               />
             </span>
           ) : null}
