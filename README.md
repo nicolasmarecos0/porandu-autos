@@ -979,6 +979,34 @@ soltar o "Cambiar etapa" → planBoardMove() (máquina de DEC-032)
 - **Fuera de este bloque:** reordenar a mano, filtros y búsqueda, tiempo real, mover varias a la vez, deshacer un pase, reabrir cerradas, montos del pipeline, historial de etapas y notificaciones.
 - **Base:** sin migración. `pnpm test:db` suma `tests/db/pipeline.test.ts` (cada columna solo de la organización activa, también con varias memberships y con una membership inactiva; la ventana y el tope de cerradas; cotizaciones por aprobar vigentes, la aceptada y las pruebas vencidas; la unidad vinculada; y que leer no escribe nada).
 
+## Catálogo visual del stock (Hito 17)
+
+`/stock/catalog` es la galería que el vendedor le muestra al cliente en el salón (propuesta DEC-049): una vista de Stock (DEC-001), con el selector "Inventario · Catálogo" en las dos vistas. Solo lee: sin migración, sin tablas y sin puertas de escritura nuevas.
+
+```text
+getStockCatalog() → requireTenant() → withTenant() → tres lecturas acotadas en una transacción:
+  conteo por estado (total del catálogo y en preparación) · unidades del catálogo (stock primero,
+  vendidas al final, por ingreso; tope 1000) · oportunidades cotizables con su contacto (tope 200)
+→ RLS → CatalogView
+
+estado · marca · búsqueda → queryCatalog() (domains/vehicles/catalog.ts): en el servidor (primer
+  render, desde la URL) y en el navegador (cada cambio, al instante) → URL espejo (History API)
+tocar una tarjeta → Sheet (abajo en el teléfono, panel desde md) → atajos:
+  Agendar prueba → /calendar?schedule=<unidad>            ("Agendar prueba" abierto, unidad elegida)
+  Cotizar → elegir cliente → /opportunities/<id>?quote=<unidad>  ("Nueva cotización" abierta)
+```
+
+- **Qué muestra:** disponibles, reservadas y vendidas, con `vehicles.status` (como la Stock List). Las unidades en preparación no entran porque todavía no se entregan, pero el catálogo dice cuántas son y enlaza a Inventario. Si una organización supera el tope, quedan afuera las vendidas más antiguas y se avisa.
+- **Filtros** (`domains/vehicles/catalog.ts`, puro): estado (Disponibles por defecto · Reservadas · Vendidas · Todas), marca (agrupada como Match v0, sin bordes ni mayúsculas, con la escritura más frecuente como nombre) y búsqueda libre sobre marca, modelo, versión y año (sin tildes ni mayúsculas; cada palabra tiene que aparecer). Cada faceta cuenta con los otros dos filtros.
+- **URL:** `?status=&brand=&q=&unit=`, sin escribir el estado por defecto. Los filtros corren en el navegador sobre las unidades del loader y la URL se reemplaza después de 250 ms (sin una entrada por tecla). Abrir una unidad suma una entrada del historial: "atrás" cierra la hoja. Un valor desconocido vuelve al de por defecto, y una navegación al catálogo rearma el estado desde su URL (`components/stock/catalog/use-catalog-state.ts`).
+- **Tarjeta:** el lugar de la foto real (la marca como tipografía y "Sin fotos cargadas": sin silueta ni "Representación", porque no hay imagen de un vehículo), el estado, marca, modelo, versión, año, kilometraje y precio publicado. Lo que falta se dice ("Precio a confirmar", "Km sin dato"). Las vendidas se ven subordinadas.
+- **Grilla:** columnas según el ancho disponible (`auto-fill`, mínimo 16rem): una en el teléfono, dos en la tablet vertical y tres o más en escritorio. Dibuja de a 24 tarjetas, con "Mostrar más".
+- **Barra fija:** en el teléfono, la búsqueda y dos selects nativos con rótulo visible (Estado y Marca), de 44 px de alto y 16 px de texto (sin zoom de iOS). Desde `sm`, el estado son segmentos con sus cantidades; desde `lg`, todo en una fila.
+- **Ficha** (`components/ui/sheet.tsx`, Radix Dialog): hoja inferior en el teléfono (hasta el 92 % del alto, con el área segura en el pie) y panel lateral desde `md`, con marca, modelo, versión, año, kilometraje, precio publicado y estado.
+- **Atajos** (enlaces: el catálogo no escribe nada): "Agendar prueba" (disponible o reservada) abre el alta de la agenda con la unidad elegida; "Cotizar" (disponible o reservada con precio publicado) pide el cliente y abre "Nueva cotización" en su oportunidad. La lista de clientes (oportunidades En calificación o En negociación) aparece solo al tocar "Cotizar". La agenda y la cotización validan todo de nuevo, y la aprobación humana de la cotización no cambia. Cada parámetro sale de la URL al cerrar o guardar.
+- **Fuera de este bloque:** fotos reales (`vehicle_media`) y su carga, datos técnicos no persistidos, interesados o matches por unidad, comparar unidades, compartir la ficha con el cliente, modo kiosco, orden a elección, paginación en el servidor y reservar o vender desde el catálogo.
+- **Base:** sin migración. `pnpm test:db` suma `tests/db/stock-catalog.test.ts` (solo la organización activa, también con varias memberships; en preparación contadas y no mostradas; stock primero y vendidas al final; el tope que solo corta vendidas; clientes cotizables solo En calificación o En negociación; y un contexto falsificado que no ve nada).
+
 ## Convenciones
 
 - Código, rutas, DB e identificadores en inglés. Copy de UI en español es-PY (DEC-011).
