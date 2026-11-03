@@ -11,7 +11,10 @@ import {
   type ScheduleOpportunityOption,
   type ScheduleVehicleOption,
 } from "@/domains/calendar/agenda";
-import { CALENDAR_TIME_ZONE } from "@/domains/calendar/test-drives";
+import {
+  CALENDAR_TIME_ZONE,
+  TESTABLE_VEHICLE_STATUSES,
+} from "@/domains/calendar/test-drives";
 import { calendarWeek, type CalendarWeek } from "@/domains/calendar/week";
 import { requireTenant } from "@/lib/tenant/session";
 
@@ -45,8 +48,8 @@ export const SCHEDULE_OPTION_LIMIT = 200;
 /** Etapas de una oportunidad abierta: se le puede agendar una prueba. */
 export const SCHEDULABLE_STAGES = ["new", "qualifying", "negotiating"] as const;
 
-/** Estados de una unidad que se puede probar. */
-export const TESTABLE_VEHICLE_STATUSES = ["available", "reserved"] as const;
+/** Estados de una unidad que se puede probar (la regla vive en el dominio). */
+export { TESTABLE_VEHICLE_STATUSES };
 
 export type CalendarAgenda = Readonly<{
   week: CalendarWeek;
