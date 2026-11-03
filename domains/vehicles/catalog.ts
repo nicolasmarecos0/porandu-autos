@@ -490,3 +490,21 @@ export function inPreparationNote(count: number): string | null {
     ? "1 unidad en preparación no se muestra en el catálogo: está en Inventario."
     : `${count} unidades en preparación no se muestran en el catálogo: están en Inventario.`;
 }
+
+const RESULT_NOUNS: Readonly<
+  Record<CatalogStatusFilter, readonly [string, string]>
+> = {
+  available: ["unidad disponible", "unidades disponibles"],
+  reserved: ["unidad reservada", "unidades reservadas"],
+  sold: ["unidad vendida", "unidades vendidas"],
+  all: ["unidad", "unidades"],
+};
+
+/** Resultado de la consulta: "1 unidad disponible", "12 unidades vendidas". */
+export function catalogResultLabel(
+  count: number,
+  status: CatalogStatusFilter,
+): string {
+  const [one, many] = RESULT_NOUNS[status];
+  return count === 1 ? `1 ${one}` : `${count} ${many}`;
+}

@@ -13,8 +13,25 @@ const variantClasses = {
 
 // ComponentProps incluye `ref` (React 19): lo usan los triggers `asChild` de Radix.
 type ButtonProps = ComponentProps<"button"> & {
-  variant?: keyof typeof variantClasses;
+  variant?: ButtonVariant;
 };
+
+export type ButtonVariant = keyof typeof variantClasses;
+
+/**
+ * Clases del botón base, para un enlace que se ve y responde como botón
+ * (p. ej. una acción que lleva a otro módulo).
+ */
+export function buttonClassName(
+  variant: ButtonVariant = "secondary",
+  className?: string,
+): string {
+  return cn(
+    "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-label font-semibold transition-[transform,background-color,border-color,color] duration-150 ease-out-strong focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.97] motion-reduce:active:scale-100",
+    variantClasses[variant],
+    className,
+  );
+}
 
 /**
  * Botón base. Responde al presionar con una escala sutil (0.97) y ease-out
@@ -29,11 +46,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={cn(
-        "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-label font-semibold transition-[transform,background-color,border-color,color] duration-150 ease-out-strong focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.97] motion-reduce:active:scale-100",
-        variantClasses[variant],
-        className,
-      )}
+      className={buttonClassName(variant, className)}
       {...props}
     />
   );

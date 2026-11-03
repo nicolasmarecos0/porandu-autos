@@ -6,6 +6,7 @@ import {
   CATALOG_STATUS_FILTER_LABELS,
   CATALOG_STATUS_FILTERS,
   catalogActions,
+  catalogResultLabel,
   catalogSearch,
   DEFAULT_CATALOG_FILTERS,
   foldSearchText,
@@ -342,6 +343,14 @@ describe("unidades y acciones rápidas", () => {
 });
 
 describe("copy", () => {
+  it("el resultado dice cuántas y de qué estado", () => {
+    expect(catalogResultLabel(1, "available")).toBe("1 unidad disponible");
+    expect(catalogResultLabel(12, "available")).toBe("12 unidades disponibles");
+    expect(catalogResultLabel(0, "reserved")).toBe("0 unidades reservadas");
+    expect(catalogResultLabel(1, "sold")).toBe("1 unidad vendida");
+    expect(catalogResultLabel(44, "all")).toBe("44 unidades");
+  });
+
   it("las unidades en preparación se nombran, nunca se esconden en silencio", () => {
     expect(inPreparationNote(0)).toBeNull();
     expect(inPreparationNote(1)).toBe(

@@ -70,6 +70,13 @@ export function StatusChip({ status }: { status: VehicleStatus }) {
   );
 }
 
+const PRICE_SIZE: Readonly<Record<"md" | "lg" | "xl", string>> = {
+  md: "text-body",
+  lg: "text-heading",
+  // Vista de detalle del catálogo (propuesta DEC-049): el precio manda.
+  xl: "text-metric",
+};
+
 /**
  * Precio partido: la moneda chica, el monto protagonista. `label` es el
  * precio ya formateado ("USD 49.900"); sin precio, "Sin dato".
@@ -81,7 +88,7 @@ export function PriceParts({
 }: {
   label: string | undefined;
   muted?: boolean;
-  size?: "md" | "lg";
+  size?: keyof typeof PRICE_SIZE;
 }) {
   if (!label) {
     return <span className="text-label text-text-muted">Sin dato</span>;
@@ -97,12 +104,7 @@ export function PriceParts({
       <span className="text-caption font-semibold text-text-muted">
         {currency}
       </span>
-      <span
-        className={cn(
-          "font-semibold tracking-tight",
-          size === "lg" ? "text-heading" : "text-body",
-        )}
-      >
+      <span className={cn("font-semibold tracking-tight", PRICE_SIZE[size])}>
         {amount.join(" ")}
       </span>
     </span>

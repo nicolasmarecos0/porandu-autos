@@ -8,13 +8,15 @@ import {
 } from "@/domains/vehicles/stock";
 
 import { STATUS_DOT, STATUS_EDGE, STATUS_TEXT } from "./stock-status";
+import { StockViewSwitch } from "./stock-view-switch";
 
 /**
  * Encabezado de Stock: total de unidades y, si hay alguna, la distribución
  * real por estado (medidor segmentado y conteos derivados de la lista). Con
  * 0 unidades no hay medidor ni conteos en cero. `action` es la acción
  * principal de la superficie (H1.3B: "Nueva unidad"), a la derecha del
- * título.
+ * título. Junto al título, el selector Inventario · Catálogo (propuesta
+ * DEC-049).
  */
 export function StockSummary({
   title,
@@ -28,12 +30,15 @@ export function StockSummary({
   const counts = countByStatus(vehicles);
   return (
     <header className="shrink-0 border-b border-border-subtle bg-surface-1 px-gutter pt-3 pb-4">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-baseline gap-2">
-          <h1 className="text-title text-text-primary">{title}</h1>
-          <span className="text-label text-text-muted tabular-nums">
-            · {unitsLabel(vehicles.length)}
-          </span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-title text-text-primary">{title}</h1>
+            <span className="text-label text-text-muted tabular-nums">
+              · {unitsLabel(vehicles.length)}
+            </span>
+          </div>
+          <StockViewSwitch current="inventory" />
         </div>
         {action}
       </div>

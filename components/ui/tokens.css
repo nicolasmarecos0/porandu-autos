@@ -187,6 +187,18 @@
     }
   }
 
+  /*
+   * Hoja inferior (teléfono): sube desde abajo en 240 ms; sale sin animación.
+   * Desde md, la misma hoja es un panel lateral y usa drawer-in.
+   */
+  --animate-sheet-in: sheet-in 240ms var(--ease-out-strong);
+
+  @keyframes sheet-in {
+    from {
+      transform: translateY(100%);
+    }
+  }
+
   /* Confirmación centrada: aparece desde casi su tamaño; sale sin animación. */
   --animate-dialog-in: dialog-in 160ms var(--ease-out-strong);
 
