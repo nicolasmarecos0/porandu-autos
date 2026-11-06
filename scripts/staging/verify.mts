@@ -71,8 +71,8 @@ type Policy = {
  * H1.3A (vehicles), y de alta de H1.2 (contacts, opportunities) y de H1.3B
  * (vehicles), con WITH CHECK: la de opportunities exige además la etapa
  * `new`, y la de vehicles, el estado `in_preparation`. La edición de
- * vehicles (H1.3C, y desde el Hito 19 todo su ciclo de vida, propuesta
- * DEC-051) exige solo la organización, antes y después: qué pase de estado
+ * vehicles (H1.3C, y desde el Hito 19 todo su ciclo de vida, DEC-051)
+ * exige solo la organización, antes y después: qué pase de estado
  * es válido lo decide su trigger (EXPECTED_VEHICLE_LIFECYCLE). La demanda de
  * H1.4
  * (opportunity_demand_facts) tiene lectura y un alta append-only: miembro
@@ -447,7 +447,7 @@ export const EXPECTED_DEMAND_CHAIN = {
  * anterior → etapa nueva, el cambio de unidad, la inmutabilidad del cierre y
  * el toque de actividad, habilitado, con una función invoker, de search_path
  * vacío, sin EXECUTE para nadie (DEC-028 §6, DEC-032 §4, DEC-033 §3, DEC-034
- * §5, DEC-036 §3). Desde 0020 (propuesta DEC-051 §4), también el constraint
+ * §5, DEC-036 §3). Desde 0020 (DEC-051 §4), también el constraint
  * trigger diferido que exige la unidad vendida al ganar
  * (EXPECTED_VEHICLE_LIFECYCLE verifica su función).
  */
@@ -635,7 +635,7 @@ export const EXPECTED_TEST_DRIVES = {
 };
 
 /**
- * Ciclo de vida de las unidades (Hito 19, 0020, propuesta DEC-051 §3 y §4):
+ * Ciclo de vida de las unidades (Hito 19, 0020, DEC-051 §3 y §4):
  * el trigger BEFORE UPDATE de vehicles que valida el par estado anterior →
  * estado nuevo, deja inmutable el resto de la fila y solo vende una unidad
  * vinculada a una oportunidad ganada, y la función del constraint trigger

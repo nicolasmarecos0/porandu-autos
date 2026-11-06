@@ -170,7 +170,7 @@ describe(
 const importStatusWrite = `import { transitionVehicleStatus } from "@/db/queries/change-vehicle-status";\nexport const use = transitionVehicleStatus;\n`;
 
 describe(
-  "una sola puerta para el ciclo de vida de las unidades (Hito 19, propuesta DEC-051)",
+  "una sola puerta para el ciclo de vida de las unidades (Hito 19, DEC-051)",
   { timeout: 30_000 },
   () => {
     it.each([

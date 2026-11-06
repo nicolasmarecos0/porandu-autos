@@ -53,7 +53,7 @@ import { QuoteLauncher } from "./quote-launcher";
  * puerta de su módulo, con su validación, su confirmación y la aprobación
  * humana de la cotización (CLAUDE.md §2).
  *
- * Reservar o liberar la unidad (Hito 19, propuesta DEC-051) es la única
+ * Reservar o liberar la unidad (Hito 19, DEC-051) es la única
  * escritura de la ficha: una acción discreta debajo de las rápidas, para
  * que la pantalla siga limpia cuando la mira el cliente. Pide confirmación
  * (alertdialog) y la vista la guarda de forma optimista

@@ -159,7 +159,7 @@ const createVehicleImport = {
   message: CREATE_VEHICLE_MESSAGE,
 };
 
-// Hito 19 (propuesta DEC-051): el ciclo de vida de una unidad desde Stock
+// Hito 19 (DEC-051): el ciclo de vida de una unidad desde Stock
 // (poner en el salón, reservar, liberar) tiene una sola puerta, la Server
 // Action changeVehicleStatus() (lib/vehicles/actions.ts), que obtiene el
 // contexto con requireTenant() y valida el pedido antes de escribir. Vender
@@ -528,7 +528,7 @@ const eslintConfig = defineConfig([
     },
   },
   // Stock (H1.3A, H1.3B, el catálogo de la propuesta DEC-049 y el ciclo de
-  // vida de la propuesta DEC-051): una sola fuente, PostgreSQL. Ni la lista,
+  // vida de la DEC-051): una sola fuente, PostgreSQL. Ni la lista,
   // ni el catálogo, ni el alta rápida, ni los cambios de estado tienen
   // fixtures.
   {

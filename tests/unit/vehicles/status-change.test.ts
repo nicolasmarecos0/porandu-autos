@@ -4,7 +4,7 @@ import { changeVehicleStatus } from "@/lib/vehicles/actions";
 import { parseVehicleStatusChange } from "@/lib/vehicles/status-change";
 
 /*
- * changeVehicleStatus() (Hito 19, propuesta DEC-051) sin base de datos: el
+ * changeVehicleStatus() (Hito 19, DEC-051) sin base de datos: el
  * orden de la cadena (requireTenant() → leer el pedido → escribir con ese
  * mismo contexto → revalidar), qué llega a la escritura y qué vuelve al
  * navegador. La escritura real, RLS, el trigger, la concurrencia y el

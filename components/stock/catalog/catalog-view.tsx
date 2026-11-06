@@ -52,7 +52,7 @@ import { VehicleSheet } from "./vehicle-sheet";
  * del servidor. La búsqueda se difiere un render para que escribir nunca
  * espere a la grilla.
  *
- * Reservar o liberar (Hito 19, propuesta DEC-051) se pide desde la ficha:
+ * Reservar o liberar (Hito 19, DEC-051) se pide desde la ficha:
  * la unidad cambia de estado al instante (optimista) en la ficha y en la
  * grilla, y el aviso queda en el pie de la ficha, donde mira el vendedor.
  */

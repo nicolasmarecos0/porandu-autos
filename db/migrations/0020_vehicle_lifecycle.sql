@@ -1,4 +1,4 @@
--- Custom SQL (no lo genera drizzle-kit) · Hito 19, propuesta DEC-051: el
+-- Custom SQL (no lo genera drizzle-kit) · Hito 19, DEC-051: el
 -- ciclo de vida completo de las unidades. Precondición: antes de 0020
 -- ninguna puerta de la aplicación sacaba una unidad de `available` después
 -- de vincularla (DEC-033 §2 exige vincularla disponible y la única
@@ -26,7 +26,7 @@ $$;--> statement-breakpoint
 DROP POLICY "vehicles_update_mark_available" ON "vehicles" CASCADE;--> statement-breakpoint
 CREATE POLICY "vehicles_update_status" ON "vehicles" AS PERMISSIVE FOR UPDATE TO "authenticated" USING ("vehicles"."organization_id" IN (SELECT private.user_org_ids())) WITH CHECK ("vehicles"."organization_id" IN (SELECT private.user_org_ids()));
 --> statement-breakpoint
--- Custom SQL · propuesta DEC-051 §3 (resuelve DEC-028 §6 para vehicles): el
+-- Custom SQL · DEC-051 §3 (resuelve DEC-028 §6 para vehicles): el
 -- par estado anterior → estado nuevo se valida a nivel de base de datos con
 -- un trigger, no con policies por transición. Espeja la máquina de
 -- domains/vehicles/lifecycle.ts (un test cruza los 16 pares):
@@ -99,7 +99,7 @@ REVOKE ALL ON FUNCTION "private"."enforce_vehicle_status_transition"() FROM PUBL
 CREATE TRIGGER "vehicles_status_transition"
   BEFORE UPDATE ON "public"."vehicles"
   FOR EACH ROW EXECUTE FUNCTION "private"."enforce_vehicle_status_transition"();--> statement-breakpoint
--- Custom SQL · propuesta DEC-051 §4: ganar una oportunidad y vender su
+-- Custom SQL · DEC-051 §4: ganar una oportunidad y vender su
 -- unidad son un solo acto. closeOpportunity() escribe las dos cosas en la
 -- misma transacción (la oportunidad primero: el trigger de arriba exige la
 -- oportunidad ganada para vender); este constraint trigger, diferido al
@@ -138,7 +138,7 @@ CREATE CONSTRAINT TRIGGER "opportunities_won_vehicle_sold"
   FOR EACH ROW
   WHEN (NEW.stage = 'won' AND OLD.stage IS DISTINCT FROM 'won')
   EXECUTE FUNCTION "private"."enforce_won_vehicle_sold"();--> statement-breakpoint
--- Custom SQL · propuesta DEC-051 §5: las ventas que ya existen. Antes de
+-- Custom SQL · DEC-051 §5: las ventas que ya existen. Antes de
 -- 0020, cerrar Ganada no tocaba el stock (DEC-034 §12): la unidad vinculada
 -- de una oportunidad ganada es la que se vendió (DEC-034 §3, y DEC-037 §7
 -- ya la cuenta Vendida), pero sigue `available`. Pasa a `sold` por el
@@ -158,7 +158,7 @@ WHERE v."status" IN ('available', 'reserved')
 -- Custom SQL · postcondiciones de ADR-001 §3.6 sobre la base real, para toda
 -- tabla de public: las de 0019, con el comentario de las ediciones
 -- aprobadas al día (la edición de vehicles es la misma columna, ahora con
--- todo el ciclo de vida), y las de la propuesta DEC-051: vehicles con una
+-- todo el ciclo de vida), y las de la DEC-051: vehicles con una
 -- sola policy de UPDATE tenant-scoped, el trigger de transiciones habilitado
 -- y con sus reglas, el constraint trigger diferido que vende la unidad de
 -- una ganada, y ninguna unidad de una oportunidad ganada sin vender. Si
@@ -1168,7 +1168,7 @@ BEGIN
     RAISE EXCEPTION 'DEC-044: private.ingest_whatsapp_status() must be SECURITY DEFINER owned by postgres, with an empty search_path, EXECUTE only for authenticated, the rule that rejects calls with claims and the lookup among outbound messages only';
   END IF;
 
-  -- DEC-028 §5 y §6 (propuesta DEC-051 §3): vehicles tiene una sola policy
+  -- DEC-028 §5 y §6 (DEC-051 §3): vehicles tiene una sola policy
   -- de UPDATE (ninguna ALL), permisiva, de authenticated y tenant-scoped en
   -- USING y WITH CHECK. Una segunda policy permisiva se combinaría con OR y
   -- cruzaría orígenes y destinos: los pares viven en el trigger.
@@ -1191,7 +1191,7 @@ BEGIN
     RAISE EXCEPTION 'DEC-051: vehicles needs exactly one UPDATE policy, vehicles_update_status, tenant-scoped in USING and WITH CHECK';
   END IF;
 
-  -- Propuesta DEC-051 §3: el estado de una unidad se valida a nivel de base
+  -- DEC-051 §3: el estado de una unidad se valida a nivel de base
   -- de datos. El UPDATE solo es seguro con el trigger BEFORE UPDATE FOR EACH
   -- ROW (tgtype 19) habilitado, y con la función que exige la matriz, la
   -- inmutabilidad del resto de la fila y la venta solo con una oportunidad
@@ -1223,7 +1223,7 @@ BEGIN
     RAISE EXCEPTION 'DEC-051: vehicles needs the enabled BEFORE UPDATE status transition trigger with its rules';
   END IF;
 
-  -- Propuesta DEC-051 §4: ganar una oportunidad y vender su unidad son un
+  -- DEC-051 §4: ganar una oportunidad y vender su unidad son un
   -- solo acto. El constraint trigger AFTER UPDATE FOR EACH ROW (tgtype 17),
   -- diferido al COMMIT, existe, está habilitado y su función (SECURITY
   -- INVOKER, search_path vacío, sin EXECUTE para nadie) exige la unidad
@@ -1256,7 +1256,7 @@ BEGIN
     RAISE EXCEPTION 'DEC-051: opportunities need the enabled deferred constraint trigger that sells the linked vehicle of a won opportunity';
   END IF;
 
-  -- Propuesta DEC-051 §5: después del backfill, toda unidad vinculada a una
+  -- DEC-051 §5: después del backfill, toda unidad vinculada a una
   -- oportunidad ganada está vendida (DEC-034 §3: es la unidad que se
   -- vendió).
   IF EXISTS (

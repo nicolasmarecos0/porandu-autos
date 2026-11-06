@@ -7,7 +7,7 @@ import type { VehicleStatus } from "@/domains/vehicles/stock";
 
 /*
  * Pedido y respuesta de la Server Action changeVehicleStatus() (Hito 19,
- * propuesta DEC-051). El pedido solo identifica la unidad y la transición
+ * DEC-051). El pedido solo identifica la unidad y la transición
  * (poner en el salón, reservar o liberar): cualquier otro campo
  * (organización, estado de destino escrito a mano, datos de la unidad,
  * usuario, reloj) se ignora porque no tiene adónde ir. Nada de esto expone

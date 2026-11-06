@@ -100,7 +100,7 @@ export async function createVehicle(
 }
 
 /*
- * Ciclo de vida de una unidad (Hito 19, propuesta DEC-051),
+ * Ciclo de vida de una unidad (Hito 19, DEC-051),
  * changeVehicleStatus(): la puerta de las transiciones de Stock (poner en el
  * salón, reservar y liberar la reserva).
  *

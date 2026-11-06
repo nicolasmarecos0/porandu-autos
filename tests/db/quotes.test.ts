@@ -543,8 +543,8 @@ describe("estados", () => {
     const sold = await freshQuote();
     await setStatus(ctxA(), sold.id, "approved");
     await setStatus(ctxA(), sold.id, "sent");
-    // Otra oportunidad se ganó con la unidad cotizada: la venta (propuesta
-    // DEC-051) la deja vendida. El superusuario arma el cierre con un INSERT
+    // Otra oportunidad se ganó con la unidad cotizada: la venta (DEC-051)
+    // la deja vendida. El superusuario arma el cierre con un INSERT
     // y la unidad pasa a `sold` por el trigger, que exige esa ganada.
     sequence += 1;
     const buyer = randomUUID();

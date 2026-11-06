@@ -46,7 +46,7 @@ import { statusFromDb, statusToDb } from "./vehicles";
  * - Escribe la etapa y los metadatos en una sola UPDATE: los del otro
  *   resultado quedan NULL. `updated_at` lo fija el trigger con el reloj de la
  *   base; `last_activity_at` no cambia (DEC-034 §9), ni la unidad vinculada.
- * - Ganada vende la unidad (Hito 19, propuesta DEC-051 §4): en la misma
+ * - Ganada vende la unidad (Hito 19, DEC-051 §4): en la misma
  *   transacción, la unidad vinculada (la vendida, DEC-034 §3) se bloquea,
  *   el dominio confirma que está disponible o reservada y pasa a `sold`
  *   después de la oportunidad (el trigger de vehicles exige la oportunidad

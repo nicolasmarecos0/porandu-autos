@@ -53,7 +53,7 @@ export const CLOSURE_DIALOG_COPY = {
 
 /**
  * Respuestas que se corrigen o reintentan con el formulario abierto. Una
- * unidad que ya no se puede vender (`vehicle_conflict`, propuesta DEC-051)
+ * unidad que ya no se puede vender (`vehicle_conflict`, DEC-051)
  * también deja el diálogo abierto, con el aviso de qué pasó en el stock.
  */
 export type RetryableClosure = Extract<
@@ -137,7 +137,7 @@ export function ClosureForm({
     saleVehicle && !pending && state?.status === "vehicle_conflict"
       ? { ...saleVehicle, status: state.current }
       : saleVehicle;
-  // Ganar exige una unidad vinculada que se pueda vender (propuesta DEC-051).
+  // Ganar exige una unidad vinculada que se pueda vender (DEC-051).
   const blocked =
     to === "won" &&
     (unit === null || saleNoticeFor(unit.status).kind === "conflict");

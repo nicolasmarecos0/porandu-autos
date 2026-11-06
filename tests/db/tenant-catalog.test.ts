@@ -646,7 +646,7 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
   });
 
-  it("vehicles (Hito 19, propuesta DEC-051 §3): el par estado anterior → estado nuevo lo valida un trigger BEFORE UPDATE de fila, habilitado, invoker y con search_path vacío", async () => {
+  it("vehicles (Hito 19, DEC-051 §3): el par estado anterior → estado nuevo lo valida un trigger BEFORE UPDATE de fila, habilitado, invoker y con search_path vacío", async () => {
     const triggers = await db.admin<
       { name: string; definition: string; enabled: string }[]
     >`
@@ -851,7 +851,7 @@ describe("grants (ADR-001 §3.6)", () => {
           "CREATE TRIGGER opportunities_stage_transition BEFORE UPDATE ON public.opportunities FOR EACH ROW EXECUTE FUNCTION private.enforce_opportunity_stage_transition()",
         enabled: "O",
       },
-      // Propuesta DEC-051 §4: ganar vende la unidad vinculada en la misma
+      // DEC-051 §4: ganar vende la unidad vinculada en la misma
       // transacción; el constraint trigger lo exige al COMMIT.
       {
         name: "opportunities_won_vehicle_sold",

@@ -7,8 +7,7 @@ import { formatMoney, groupThousands, type Currency } from "@/domains/money";
 
 /**
  * Estado comercial de la unidad (TB §10, "Estados de vehículo": el mínimo
- * de P1). Sus transiciones son la máquina de ./lifecycle (propuesta
- * DEC-051).
+ * de P1). Sus transiciones son la máquina de ./lifecycle (DEC-051).
  */
 export type VehicleStatus = "inPreparation" | "available" | "reserved" | "sold";
 

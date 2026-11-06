@@ -139,7 +139,7 @@ describe("closeOpportunity()", () => {
     });
     expect(mocks.revalidatePath.mock.calls).toEqual([
       [`/opportunities/${ID}`],
-      // Ganar vende la unidad (propuesta DEC-051): el Inventario, el
+      // Ganar vende la unidad (DEC-051): el Inventario, el
       // Catálogo, la cola, el embudo (DEC-048, que también cierra), el
       // Cockpit y sus Métricas.
       ["/stock"],
@@ -354,7 +354,7 @@ describe("closeOpportunity()", () => {
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/opportunities/${ID}`);
   });
 
-  it("vehicle_conflict revalida y devuelve el estado real de la unidad (propuesta DEC-051)", async () => {
+  it("vehicle_conflict revalida y devuelve el estado real de la unidad (DEC-051)", async () => {
     mocks.close.mockImplementation(async () => ({
       outcome: "vehicle_conflict",
       opportunityId: ID,

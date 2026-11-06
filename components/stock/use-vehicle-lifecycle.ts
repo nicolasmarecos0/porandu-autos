@@ -18,7 +18,7 @@ import { changeVehicleStatus } from "@/lib/vehicles/actions";
 import type { ChangeVehicleStatusState } from "@/lib/vehicles/status-change";
 
 /*
- * Ciclo de vida de las unidades en la UI (Hito 19, propuesta DEC-051): el
+ * Ciclo de vida de las unidades en la UI (Hito 19, DEC-051): el
  * estado optimista que comparten el Inventario (/stock) y el Catálogo
  * (/stock/catalog).
  *

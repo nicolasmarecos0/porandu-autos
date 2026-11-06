@@ -9,7 +9,7 @@ import type { CatalogVehicle } from "@/domains/vehicles/catalog";
 import type { StockVehicle } from "@/domains/vehicles/stock";
 
 /*
- * Ciclo de vida de las unidades en la UI (Hito 19, propuesta DEC-051),
+ * Ciclo de vida de las unidades en la UI (Hito 19, DEC-051),
  * renderizado en el servidor sin DOM: la acción rápida de cada unidad del
  * Inventario según su estado, la del contexto, la acción discreta de la
  * ficha del catálogo y qué dice cada respuesta de changeVehicleStatus(). La

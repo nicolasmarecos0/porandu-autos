@@ -946,7 +946,7 @@ describe("0005 sobre una base en H1.3A", () => {
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13aSnapshot(h13a.admin)).toEqual(before);
     // 0020 reemplaza la policy de disponibilidad por la única de UPDATE del
-    // ciclo de vida (propuesta DEC-051).
+    // ciclo de vida (DEC-051).
     expect(await vehiclePolicies(h13a.admin)).toEqual([
       "vehicles_insert_member",
       "vehicles_select_member",
@@ -1114,7 +1114,7 @@ describe("0006 sobre una base en H1.3B", () => {
     // Ninguna fila cambia: ni estados, ni precios, ni timestamps.
     expect(await h13bSnapshot(h13b.admin)).toEqual(before);
     // 0020 reemplaza la policy de disponibilidad por la única de UPDATE del
-    // ciclo de vida (propuesta DEC-051).
+    // ciclo de vida (DEC-051).
     expect(await vehiclePolicies(h13b.admin)).toEqual([
       "vehicles_insert_member",
       "vehicles_select_member",
@@ -5148,7 +5148,7 @@ describe("0019 sobre una base en el Hito 12B", () => {
       try {
         // La reversión corre con la credencial de migración, dueña de todo.
         await owner.begin(async (tx) => {
-          // 0020 se revierte antes: es posterior a 0019 (propuesta DEC-051).
+          // 0020 se revierte antes: es posterior a 0019 (DEC-051).
           await tx.unsafe(REVERT_0020);
           await tx.unsafe(REVERT_0019);
           await tx.unsafe(`
@@ -5173,7 +5173,7 @@ describe("0019 sobre una base en el Hito 12B", () => {
 });
 
 /*
- * Una base en el Hito 18 (0000 a 0019) recibe 0020 (propuesta DEC-051): la
+ * Una base en el Hito 18 (0000 a 0019) recibe 0020 (DEC-051): la
  * única policy de UPDATE de vehicles, el trigger de transiciones, el
  * constraint trigger diferido que vende la unidad al ganar y el backfill de
  * las ventas que ya existían: la unidad vinculada a una oportunidad ganada

@@ -340,7 +340,7 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
         "42501",
       );
     }
-    // Vender no es un pase de Stock (propuesta DEC-051): sin una oportunidad
+    // Vender no es un pase de Stock (DEC-051): sin una oportunidad
     // ganada que la tenga vinculada, el trigger de transiciones lo rechaza
     // (vehicle-lifecycle.test.ts cubre la matriz completa).
     expect(own.status).toBe("available");
@@ -455,7 +455,7 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
       expect(created).toBeDefined();
       // tenant-catalog.test.ts y verify.mts esperan exactamente la policy de
       // lectura, la de alta en preparación y la única de UPDATE del ciclo de
-      // vida (propuesta DEC-051).
+      // vida (DEC-051).
       expect(
         (await policies(db.admin))
           .filter((policy) => policy.table === "vehicles")

@@ -38,7 +38,7 @@ import type { VehicleStatus } from "@/domains/vehicles/stock";
  * los errores llegan por campo (del navegador, con la misma validación del
  * dominio, o del servidor) y se enlazan a cada control.
  *
- * Ganar vende la unidad vinculada (Hito 19, propuesta DEC-051): la
+ * Ganar vende la unidad vinculada (Hito 19, DEC-051): la
  * confirmación dice, junto a la unidad, que pasa de su estado actual a
  * «Vendida» en el stock. Si ya está vendida o en preparación, no ofrece los
  * campos: dice el conflicto y qué hacer (saleNoticeFor(), el mismo plan que

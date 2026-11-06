@@ -183,7 +183,7 @@ describe("Ganada", () => {
   });
 });
 
-describe("Ganada vende la unidad (Hito 19, propuesta DEC-051)", () => {
+describe("Ganada vende la unidad (Hito 19, DEC-051)", () => {
   it.each([
     ["available", "Disponible"],
     ["reserved", "Reservada"],

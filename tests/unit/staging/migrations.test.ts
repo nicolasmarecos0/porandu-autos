@@ -103,8 +103,7 @@ describe("compareHistory", () => {
       });
     }
     expect(REPO.slice(8)).toHaveLength(13);
-    // Staging con el Hito 18 (0019 aplicada): solo 0020 pendiente (propuesta
-    // DEC-051).
+    // Staging con el Hito 18 (0019 aplicada): solo 0020 pendiente (DEC-051).
     expect(compareHistory(REPO, applied(20))).toEqual({
       kind: "consistent",
       applied: REPO.slice(0, 20),
@@ -395,7 +394,7 @@ describe("expectedFootprint", () => {
       ].sort(),
     };
     expect(expectedFootprint(REPO.slice(0, 20))).toEqual(hito12c);
-    // 0020 (propuesta DEC-051) no crea tablas: reemplaza la policy de
+    // 0020 (DEC-051) no crea tablas: reemplaza la policy de
     // disponibilidad de vehicles por la única de UPDATE del ciclo de vida.
     // El trigger de transiciones y el constraint trigger de la venta son SQL
     // custom: no figuran.

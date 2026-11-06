@@ -47,7 +47,7 @@ export type CloseOpportunityState =
   /** Ganar exige la unidad vinculada. Nada cambió. */
   | Readonly<{ status: "vehicle_required"; opportunityId: string }>
   /**
-   * Ganar vende la unidad vinculada (propuesta DEC-051): una ya vendida o en
+   * Ganar vende la unidad vinculada (DEC-051): una ya vendida o en
    * preparación es un conflicto. `current` es su estado real. Nada cambió.
    */
   | Readonly<{

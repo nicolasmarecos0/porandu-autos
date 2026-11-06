@@ -31,7 +31,7 @@ import { newQuoteHref } from "@/lib/quotes/paths";
 
 const navigation = vi.hoisted(() => ({ search: "" }));
 
-// La ficha reserva y libera por la Server Action (propuesta DEC-051): acá
+// La ficha reserva y libera por la Server Action (DEC-051): acá
 // solo se dibuja, no se envía nada.
 vi.mock("@/lib/vehicles/actions", () => ({ changeVehicleStatus: vi.fn() }));
 

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 /*
  * Guardas de ESLint de Stock (H1.3A, H1.3B, el catálogo visual de la
- * propuesta DEC-049 y el ciclo de vida de la propuesta DEC-051):
+ * propuesta DEC-049 y el ciclo de vida de la DEC-051):
  * - una sola fuente: ni la página /stock, ni el catálogo (/stock/catalog,
  *   components/stock/catalog/, db/queries/stock-catalog.ts), ni sus
  *   componentes, ni su loader (db/queries/vehicles.ts), ni el alta rápida

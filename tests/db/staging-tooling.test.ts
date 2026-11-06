@@ -1110,7 +1110,7 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
-  it("la verificación detecta el trigger de transiciones de vehicles deshabilitado o sin sus reglas, y el de la venta al ganar (Hito 19, propuesta DEC-051)", async () => {
+  it("la verificación detecta el trigger de transiciones de vehicles deshabilitado o sin sus reglas, y el de la venta al ganar (Hito 19, DEC-051)", async () => {
     const vehicleFn = "private.enforce_vehicle_status_transition()";
     const wonFn = "private.enforce_won_vehicle_sold()";
     const [current] = await migrated.admin<{ vehicle: string; won: string }[]>`
@@ -1181,7 +1181,7 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (Hito 19, propuesta DEC-051): 0020 después del
+ * El próximo rollout real (Hito 19, DEC-051): 0020 después del
  * merge, con preflight → migrate → verify. Staging está en el Hito 18 (0000
  * a 0019, el último bloque con migración: DEC-044 §3.3) si 0019 ya se
  * aplicó; si no, en el Hito 12B (0000 a 0018), en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a

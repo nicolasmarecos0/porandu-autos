@@ -41,7 +41,7 @@ import {
 
 /*
  * Stock Surface v0.1 (H1.3A) con el ciclo de vida de las unidades (Hito 19,
- * propuesta DEC-051): inventario vivo de la organización activa, tal como
+ * DEC-051): inventario vivo de la organización activa, tal como
  * lo trae el loader de la página (PostgreSQL, tenant-scoped).
  *
  *   ┌ resumen: total · medidor por estado · conteos ─────────────────┐

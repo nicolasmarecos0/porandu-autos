@@ -303,7 +303,7 @@ export async function changeOpportunityStage(
 /*
  * Cierre comercial (DEC-034), closeOpportunity(): la única puerta para
  * marcar una oportunidad ganada o perdida, con sus metadatos. Ganada vende
- * la unidad vinculada en la misma transacción (Hito 19, propuesta DEC-051).
+ * la unidad vinculada en la misma transacción (Hito 19, DEC-051).
  *
  *   requireTenant() → leer y validar el pedido (Zod) →
  *   closeOpportunityWithMetadata() (withTenant(), filas bloqueadas,
@@ -371,7 +371,7 @@ export async function closeOpportunity(
   const revalidate = () => {
     revalidatePath(`${OPPORTUNITIES_PATH}/${opportunityId}`);
     // La cola, el embudo (DEC-048, que también cierra), el stock que la venta
-    // cambia y las métricas (propuesta DEC-051).
+    // cambia y las métricas (DEC-051).
     for (const path of VEHICLE_LIFECYCLE_PATHS) revalidatePath(path);
   };
   switch (outcome.outcome) {

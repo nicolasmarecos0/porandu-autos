@@ -53,7 +53,7 @@ import {
 } from "./support/tenants";
 
 /*
- * Ciclo de vida de las unidades (Hito 19, propuesta DEC-051) de punta a
+ * Ciclo de vida de las unidades (Hito 19, DEC-051) de punta a
  * punta contra PostgreSQL 17 con las migraciones aplicadas:
  *
  *   changeVehicleStatus() → requireTenant() → pedido → withTenant() →
@@ -1053,7 +1053,7 @@ describe("cierre Ganada → unidad Vendida, en la misma transacción", () => {
   });
 
   /*
-   * Defensa en profundidad (propuesta DEC-051 §4): la base exige la venta
+   * Defensa en profundidad (DEC-051 §4): la base exige la venta
    * aunque el código no pase por el dominio.
    */
   it("ganar sin vender la unidad falla al COMMIT (opportunities_won_vehicle_sold) y revierte todo", async () => {

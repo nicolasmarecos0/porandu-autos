@@ -13,7 +13,7 @@ import { withTenant, type TenantContext } from "../tenant";
 import { statusFromDb, statusToDb } from "./vehicles";
 
 /*
- * Ciclo de vida de una unidad desde Stock (Hito 19, propuesta DEC-051):
+ * Ciclo de vida de una unidad desde Stock (Hito 19, DEC-051):
  * poner en el salón, reservar y liberar la reserva. La única puerta es la
  * Server Action changeVehicleStatus() (lib/vehicles/actions.ts), que obtiene
  * el contexto con requireTenant() y valida el pedido antes de llegar acá;

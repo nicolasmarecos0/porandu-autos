@@ -87,7 +87,7 @@ const cardColumns = {
   vehicleModel: vehicles.model,
   vehicleVersion: vehicles.version,
   vehicleYear: vehicles.year,
-  // El cierre Ganada la vende (propuesta DEC-051): la confirmación dice qué
+  // El cierre Ganada la vende (DEC-051): la confirmación dice qué
   // pasa con su estado o por qué no se puede.
   vehicleStatus: vehicles.status,
 };

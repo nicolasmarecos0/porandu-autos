@@ -616,8 +616,8 @@ describe("el trigger de la base espeja la máquina del dominio (25 pares)", () =
       withVehicle: from === "negotiating" || from === "won",
     });
     const before = await row(id);
-    // Ganar vende la unidad vinculada en la misma transacción (propuesta
-    // DEC-051 §4): el constraint trigger diferido lo exige al COMMIT, así que
+    // Ganar vende la unidad vinculada en la misma transacción (DEC-051 §4):
+    // el constraint trigger diferido lo exige al COMMIT, así que
     // el pase a `won` lleva también la venta, como closeOpportunity().
     const [linked] = await db.admin<{ vehicleId: string | null }[]>`
       SELECT vehicle_id AS "vehicleId" FROM public.opportunities WHERE id = ${id}

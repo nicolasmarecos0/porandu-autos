@@ -29,7 +29,7 @@ import { opportunityPath } from "@/lib/quotes/paths";
  * devuelve un error por campo, una falla o la unidad ya no está vinculada,
  * la tarjeta vuelve y este diálogo reabre con lo cargado y el aviso
  * (`state`). Ganar sin unidad vinculada, o con una que ya no se puede
- * vender (vendida o en preparación, propuesta DEC-051), no se ofrece: lleva
+ * vender (vendida o en preparación, DEC-051), no se ofrece: lleva
  * a la oportunidad, donde se vincula otra desde los matches.
  */
 

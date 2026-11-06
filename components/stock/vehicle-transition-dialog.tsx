@@ -22,7 +22,7 @@ import {
 import { LITERAL, StatusChip } from "./stock-status";
 
 /*
- * Confirmación de una transición de Stock (Hito 19, propuesta DEC-051):
+ * Confirmación de una transición de Stock (Hito 19, DEC-051):
  * poner en el salón, reservar o liberar la reserva. Las tres tienen
  * significado comercial (DEC-028 §8), así que nunca se ejecutan con un solo
  * click: el alertdialog de Radix dice qué unidad, de qué estado a cuál y la

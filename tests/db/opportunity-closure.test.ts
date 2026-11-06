@@ -322,8 +322,7 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
       from: "negotiating",
       to: "won",
     });
-    // El detalle, y las vistas del stock: ganar vende la unidad (propuesta
-    // DEC-051).
+    // El detalle, y las vistas del stock: ganar vende la unidad (DEC-051).
     expect(mocks.revalidated).toEqual([
       `/opportunities/${id}`,
       "/stock",
@@ -349,7 +348,7 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
       before!.updatedAt.getTime(),
     );
     // DEC-034 §9: ni la recencia ni la unidad vinculada. La unidad pasa a
-    // vendida en la misma transacción (propuesta DEC-051, supersede DEC-034
+    // vendida en la misma transacción (DEC-051, supersede DEC-034
     // §12); vehicle-lifecycle.test.ts prueba la venta a fondo.
     expect(after!.lastActivityAt).toEqual(before!.lastActivityAt);
     expect(after!.vehicleId).toBe(vehicleId);

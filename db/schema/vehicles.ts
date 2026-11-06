@@ -23,7 +23,7 @@ import { userOrgIds } from "./policies";
  * opcional y necesita un caso real de piloto. No es un enum de Postgres: un
  * CHECK que una migración puede reemplazar. El alta rápida (H1.3B) nace
  * siempre en `in_preparation`; las transiciones son la máquina del Hito 19
- * (propuesta DEC-051, domains/vehicles/lifecycle.ts): `in_preparation →
+ * (DEC-051, domains/vehicles/lifecycle.ts): `in_preparation →
  * available`, `available ⇄ reserved` y `available | reserved → sold`, este
  * último solo al cerrar Ganada la oportunidad que tiene la unidad
  * vinculada. `sold` es terminal.
@@ -134,7 +134,7 @@ export const vehicles = pgTable(
       to: authenticatedRole,
       withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.status} = 'in_preparation'`,
     }),
-    // Ciclo de vida (Hito 19, propuesta DEC-051; reemplaza la policy de
+    // Ciclo de vida (Hito 19, DEC-051; reemplaza la policy de
     // H1.3C, vehicles_update_mark_available): organización con membership
     // activa, antes y después (misma regla de rol que el alta). Qué pase de
     // estado es válido lo decide el trigger vehicles_status_transition de

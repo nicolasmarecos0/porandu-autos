@@ -149,7 +149,7 @@ export type PipelineVehicle = Readonly<{
   model: string;
   version: string | null;
   year: number;
-  /** Estado de Stock: ganar la vende (propuesta DEC-051). */
+  /** Estado de Stock: ganar la vende (DEC-051). */
   status: VehicleStatus;
 }>;
 
@@ -257,7 +257,7 @@ export type CardClosure = Readonly<{
 /**
  * La unidad que se vende al marcarla ganada (la vinculada), con su estado de
  * Stock: la confirmación avisa que pasa a Vendida, o por qué no puede
- * (propuesta DEC-051).
+ * (DEC-051).
  */
 export type SaleVehicleSummary = Readonly<{
   name: string;

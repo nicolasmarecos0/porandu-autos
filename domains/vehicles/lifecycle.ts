@@ -1,7 +1,7 @@
 import { vehicleStatusLabel, type VehicleStatus } from "./stock";
 
 /*
- * Ciclo de vida de una unidad del stock (Hito 19, propuesta DEC-051): la
+ * Ciclo de vida de una unidad del stock (Hito 19, DEC-051): la
  * máquina de estados formal de `vehicles.status`.
  *
  *   inPreparation ──► available ◄──► reserved

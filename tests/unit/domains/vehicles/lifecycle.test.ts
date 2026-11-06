@@ -33,7 +33,7 @@ import {
 import { VEHICLE_STATUSES, type VehicleStatus } from "@/domains/vehicles/stock";
 
 /*
- * Ciclo de vida de una unidad (Hito 19, propuesta DEC-051): la máquina de
+ * Ciclo de vida de una unidad (Hito 19, DEC-051): la máquina de
  * estados de vehicles.status, las reglas de Stock y de la venta al cerrar
  * Ganada, las acciones de cada vista y el copy es-PY. La base exige la
  * misma matriz con el trigger vehicles_status_transition (el cruce de los
