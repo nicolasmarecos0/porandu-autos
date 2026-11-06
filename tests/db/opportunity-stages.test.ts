@@ -60,7 +60,7 @@ import {
  *
  * La acción, la escritura y los loaders son los reales, conectados como
  * app_runtime. Supabase Auth (claims ya verificados), la cookie, redirect()
- * y revalidatePath() de Next son simulados, como en vehicle-availability.test.ts.
+ * y revalidatePath() de Next son simulados, como en vehicle-lifecycle.test.ts.
  *
  * Tenants (support/tenants.ts): A: admin de ORG_1 · B: admin de ORG_2 · C:
  * seller de ORG_1 y admin de ORG_3, seller inactivo de ORG_2 · D: solo

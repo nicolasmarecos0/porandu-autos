@@ -18,7 +18,8 @@ import { LITERAL, PriceParts, StatusChip } from "./stock-status";
  * explícita, sin botones, hasta que existan vehicle_media y sus motores.
  *
  * `action` es la acción de estado de la unidad, al pie de su tarjeta: la
- * elige la vista (H1.3C: "Marcar disponible" solo en preparación).
+ * elige la vista según el ciclo de vida (Hito 19, propuesta DEC-051):
+ * "Poner en salón", "Reservar unidad" o "Liberar reserva".
  */
 
 const AVAILABILITY: Readonly<Record<VehicleStatus, string>> = {

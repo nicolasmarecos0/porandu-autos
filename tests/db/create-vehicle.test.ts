@@ -881,8 +881,8 @@ describe("sin withTenant() o sin privilegios, la escritura falla cerrado", () =>
   });
 
   it("el alta no abre la edición: los datos de la unidad no se editan y DELETE sigue prohibido, también en la organización propia y sobre una unidad recién creada", async () => {
-    // H1.3C solo habilita la transición in_preparation → available
-    // (tests/db/vehicle-availability.test.ts); el resto sigue sin UPDATE.
+    // El ciclo de vida (H1.3C, Hito 19) solo cambia el estado
+    // (tests/db/vehicle-lifecycle.test.ts); el resto sigue sin UPDATE.
     const ctx = tenantContext(USER_A, ORG_1);
     const { id: fresh } = await createVehicleInPreparation(
       ctx,

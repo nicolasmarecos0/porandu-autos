@@ -30,6 +30,7 @@ import { changeVehicleStatus } from "@/lib/vehicles/actions";
 import type { ChangeVehicleStatusState } from "@/lib/vehicles/status-change";
 
 import { cookieJar, type CookieJar } from "../unit/support/cookie-jar";
+import { policies } from "./support/catalog";
 import { closureColumns, WON_METADATA } from "./support/closures";
 import {
   runMigrations,
@@ -727,6 +728,129 @@ describe("la base exige la máquina del dominio (trigger vehicles_status_transit
     });
     expect([...updated]).toEqual([]);
     expect(await statusOf(id)).toBe("available");
+  });
+});
+
+/*
+ * Mutaciones: cada una rompe una barrera de la base y muestra que los tests
+ * de arriba la detectan. La barrera se restaura siempre.
+ */
+describe("mutaciones: los tests detectan cada barrera rota", () => {
+  const ORIGINAL_POLICY = "organization_id IN (SELECT private.user_org_ids())";
+
+  async function updatePolicy() {
+    return (await policies(db.admin)).find(
+      (policy) => policy.name === "vehicles_update_status",
+    );
+  }
+
+  async function withPolicy<T>(
+    using: string,
+    check: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const original = await updatePolicy();
+    await db.admin.unsafe(
+      `ALTER POLICY vehicles_update_status ON public.vehicles USING (${using}) WITH CHECK (${check})`,
+    );
+    try {
+      return await fn();
+    } finally {
+      await db.admin.unsafe(
+        `ALTER POLICY vehicles_update_status ON public.vehicles USING (${ORIGINAL_POLICY}) WITH CHECK (${ORIGINAL_POLICY})`,
+      );
+      expect(await updatePolicy()).toEqual(original);
+    }
+  }
+
+  it("sin el trigger de transiciones, una unidad en preparación pasaría a vendida sin venta", async () => {
+    const id = await unit(ORG_1, "in_preparation");
+    await db.admin.unsafe(
+      "ALTER TABLE public.vehicles DISABLE TRIGGER vehicles_status_transition",
+    );
+    try {
+      expect(await directUpdate(ctxA(), id, { status: "sold" })).toEqual([
+        { id, status: "sold" },
+      ]);
+    } finally {
+      await db.admin.unsafe(
+        "ALTER TABLE public.vehicles ENABLE TRIGGER vehicles_status_transition",
+      );
+    }
+    await expectSqlError(
+      directUpdate(ctxA(), await unit(ORG_1, "in_preparation"), {
+        status: "sold",
+      }),
+      "23514",
+      "vehicles_status_transition",
+    );
+  });
+
+  it("sin el constraint trigger diferido, una ganada quedaría con la unidad disponible", async () => {
+    const vehicleId = await unit(ORG_1, "available");
+    const id = await opportunity(ORG_1, "negotiating", vehicleId);
+    const winWithoutSale = (opportunityId: string) =>
+      withTenant(ctxA(), (tx) =>
+        tx
+          .update(opportunities)
+          .set({ stage: "won", ...WON_METADATA })
+          .where(eq(opportunities.id, opportunityId)),
+      );
+    await db.admin.unsafe(
+      "ALTER TABLE public.opportunities DISABLE TRIGGER opportunities_won_vehicle_sold",
+    );
+    try {
+      await winWithoutSale(id);
+    } finally {
+      await db.admin.unsafe(
+        "ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_won_vehicle_sold",
+      );
+    }
+    expect(await opportunityRow(id)).toMatchObject({ stage: "won" });
+    expect(await statusOf(vehicleId)).toBe("available");
+    // Restaurado, el mismo UPDATE falla al COMMIT.
+    const other = await opportunity(
+      ORG_1,
+      "negotiating",
+      await unit(ORG_1, "available"),
+    );
+    await expect(winWithoutSale(other)).rejects.toMatchObject({
+      constraint_name: "opportunities_won_vehicle_sold",
+    });
+  });
+
+  /*
+   * Un UPDATE sin WHERE ni RETURNING no necesita leer filas: la policy de
+   * lectura no aplica y la de UPDATE es la única barrera de organización.
+   */
+  it("un UPDATE sin WHERE de un usuario sin memberships no toca nada", async () => {
+    const id = await unit(ORG_2, "in_preparation");
+    await withTenant(tenantContext(USER_E, ORG_1), (tx) =>
+      tx.update(vehicles).set({ status: "available" }),
+    );
+    expect(await statusOf(id)).toBe("in_preparation");
+  });
+
+  it("sin la organización en la policy, ese UPDATE sin WHERE tocaría todas las organizaciones", async () => {
+    const id = await unit(ORG_2, "in_preparation");
+    const unbounded = () =>
+      withTenant(tenantContext(USER_E, ORG_1), (tx) =>
+        tx.update(vehicles).set({ status: "available" }),
+      );
+    // Sin la organización solo en USING, el WITH CHECK todavía la exige: el
+    // UPDATE falla en vez de pasar en silencio. (USING acota a las unidades
+    // en preparación para que el pase sea válido en todas.)
+    await withPolicy("status = 'in_preparation'", ORIGINAL_POLICY, async () => {
+      await expectSqlError(unbounded(), "42501");
+    });
+    expect(await statusOf(id)).toBe("in_preparation");
+    await withPolicy("status = 'in_preparation'", "true", async () => {
+      await unbounded();
+    });
+    expect(await statusOf(id)).toBe("available");
+    const other = await unit(ORG_2, "in_preparation");
+    await unbounded();
+    expect(await statusOf(other)).toBe("in_preparation");
   });
 });
 

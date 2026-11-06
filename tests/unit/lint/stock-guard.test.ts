@@ -4,13 +4,13 @@ import { ESLint } from "eslint";
 import { describe, expect, it } from "vitest";
 
 /*
- * Guardas de ESLint de Stock (H1.3A, H1.3B, H1.3C y el catálogo visual,
- * propuesta DEC-049):
+ * Guardas de ESLint de Stock (H1.3A, H1.3B, el catálogo visual de la
+ * propuesta DEC-049 y el ciclo de vida de la propuesta DEC-051):
  * - una sola fuente: ni la página /stock, ni el catálogo (/stock/catalog,
  *   components/stock/catalog/, db/queries/stock-catalog.ts), ni sus
  *   componentes, ni su loader (db/queries/vehicles.ts), ni el alta rápida
- *   ni la disponibilidad (lib/vehicles/, db/queries/create-vehicle.ts,
- *   db/queries/mark-vehicle-available.ts) importan mocks/;
+ *   ni los cambios de estado (lib/vehicles/, db/queries/create-vehicle.ts,
+ *   db/queries/change-vehicle-status.ts) importan mocks/;
  * - la página y los componentes no conocen Drizzle, db/schema ni el
  *   boundary: leen con getStockList();
  * - el loader no puede saltear withTenant(): no importa db/client ni
@@ -71,23 +71,11 @@ describe("una sola fuente para la Stock List", { timeout: 30_000 }, () => {
       `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
     ],
     [
-      "db/queries/mark-vehicle-available.ts",
-      `import { VEHICLES } from "../../mocks/vehicles";${use("VEHICLES")}`,
-    ],
-    [
       "db/queries/change-vehicle-status.ts",
       `import { VEHICLES } from "../../mocks/vehicles";${use("VEHICLES")}`,
     ],
     [
       "lib/vehicles/status-change.ts",
-      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
-    ],
-    [
-      "lib/vehicles/availability.ts",
-      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
-    ],
-    [
-      "components/stock/mark-available-dialog.tsx",
       `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
     ],
     [

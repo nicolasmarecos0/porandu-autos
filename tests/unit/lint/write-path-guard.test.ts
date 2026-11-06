@@ -10,8 +10,8 @@ import { describe, expect, it } from "vitest";
  *   (lib/opportunities/actions.ts);
  * - la de unidades (db/queries/create-vehicle), también: la Server Action
  *   createVehicle() (lib/vehicles/actions.ts);
- * - la disponibilidad de una unidad (db/queries/mark-vehicle-available),
- *   también: la Server Action markVehicleAvailable() (lib/vehicles/actions.ts);
+ * - el ciclo de vida de una unidad (db/queries/change-vehicle-status),
+ *   también: la Server Action changeVehicleStatus() (lib/vehicles/actions.ts);
  * - la bitácora (db/queries/record-opportunity-note) y la unidad vinculada
  *   (db/queries/link-opportunity-vehicle) de una oportunidad (Hito 2),
  *   también: las Server Actions addOpportunityNote() y
@@ -161,57 +161,6 @@ describe(
         await restrictedBy(
           "lib/vehicles/new-vehicle.ts",
           `import type { NewVehicle } from "@/db/queries/create-vehicle";\nexport type N = NewVehicle;\n`,
-        ),
-      ).toEqual([]);
-    });
-  },
-);
-
-const importAvailabilityWrite = `import { transitionVehicleToAvailable } from "@/db/queries/mark-vehicle-available";\nexport const use = transitionVehicleToAvailable;\n`;
-
-describe(
-  "una sola puerta para la disponibilidad de unidades (H1.3C)",
-  { timeout: 30_000 },
-  () => {
-    it.each([
-      "app/(app)/stock/page.tsx",
-      "components/stock/stock-view.tsx",
-      "components/stock/unit-context.tsx",
-      "components/stock/mark-available-dialog.tsx",
-      "lib/vehicles/availability.ts",
-      "lib/vehicles/new-vehicle.ts",
-      "lib/opportunities/actions.ts",
-      "lib/tenant/session.ts",
-      "db/queries/vehicles.ts",
-      "db/queries/create-vehicle.ts",
-      "db/queries/memberships.ts",
-      "db/tenant.ts",
-    ])("falla en %s", async (filePath) => {
-      expect(await restrictedBy(filePath, importAvailabilityWrite)).toContain(
-        "no-restricted-imports",
-      );
-    });
-
-    it("también por ruta relativa dentro de db/queries", async () => {
-      expect(
-        await restrictedBy(
-          "db/queries/vehicles.ts",
-          `import { transitionVehicleToAvailable } from "./mark-vehicle-available";\nexport const use = transitionVehicleToAvailable;\n`,
-        ),
-      ).toContain("no-restricted-imports");
-    });
-
-    it("se permite en la Server Action", async () => {
-      expect(
-        await restrictedBy("lib/vehicles/actions.ts", importAvailabilityWrite),
-      ).toEqual([]);
-    });
-
-    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
-      expect(
-        await restrictedBy(
-          "lib/vehicles/availability.ts",
-          `import type { AvailabilityTransition } from "@/db/queries/mark-vehicle-available";\nexport type T = AvailabilityTransition;\n`,
         ),
       ).toEqual([]);
     });
@@ -777,7 +726,6 @@ describe(
     it.each([
       ["db/queries/create-opportunity.ts"],
       ["db/queries/create-vehicle.ts"],
-      ["db/queries/mark-vehicle-available.ts"],
       ["db/queries/change-vehicle-status.ts"],
     ])("%s no importa db/client", async (filePath) => {
       for (const code of [
@@ -791,7 +739,6 @@ describe(
 
     it.each([
       ["db/queries/create-vehicle.ts"],
-      ["db/queries/mark-vehicle-available.ts"],
       ["db/queries/change-vehicle-status.ts"],
     ])("%s no importa withUser() ni resolveTenant()", async (filePath) => {
       for (const code of [
