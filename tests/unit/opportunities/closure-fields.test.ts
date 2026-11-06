@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   closureErrorMessage,
   ClosureFields,
+  type SaleVehicle,
 } from "@/components/opportunities/closure-fields";
 import {
   ClosureAlert,
@@ -32,7 +33,11 @@ vi.mock("@/lib/opportunities/actions", () => ({
 }));
 
 const TODAY = "2026-10-11";
-const SALE_VEHICLE = { name: "Toyota Hilux", detail: "SRV 2.8 4x4 AT · 2025" };
+const SALE_VEHICLE: SaleVehicle = {
+  name: "Toyota Hilux",
+  detail: "SRV 2.8 4x4 AT · 2025",
+  status: "available",
+};
 
 function render(
   outcome: ClosureOutcome,
@@ -43,7 +48,7 @@ function render(
   }: {
     errors?: ClosureErrors;
     values?: Partial<ClosureValues>;
-    saleVehicle?: typeof SALE_VEHICLE | null;
+    saleVehicle?: SaleVehicle | null;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -176,6 +181,54 @@ describe("Ganada", () => {
     );
     expect(names(html)).toEqual([]);
   });
+});
+
+describe("Ganada vende la unidad (Hito 19, DEC-051)", () => {
+  it.each([
+    ["available", "Disponible"],
+    ["reserved", "Reservada"],
+  ] as const)(
+    "con la unidad %s, avisa que pasa a «Vendida» en el stock al confirmar",
+    (status, label) => {
+      const html = render("won", {
+        saleVehicle: { ...SALE_VEHICLE, status },
+      });
+      expect(html).toContain("Unidad vendida");
+      expect(html).toContain(label);
+      expect(html).toContain("Vendida");
+      expect(html).toContain(
+        "Al confirmar, la unidad vinculada pasa a «Vendida» en el stock",
+      );
+      // El pase se anuncia en texto, no solo con los chips.
+      expect(html).toMatch(/En el stock:.*pasa a/);
+      expect(names(html)).toEqual([
+        "salePrice",
+        "saleCurrency",
+        "paymentMethod",
+        "deliveryStatus",
+        "deliveryDate",
+      ]);
+    },
+  );
+
+  it.each([
+    ["sold", /ya figura como Vendida en el stock.*Vinculá otra unidad/],
+    ["inPreparation", /todavía está En preparación.*ponela en el salón/],
+  ] as const)(
+    "con la unidad %s no pide nada: dice el conflicto y qué hacer",
+    (status, message) => {
+      const html = render("won", {
+        saleVehicle: { ...SALE_VEHICLE, status },
+      });
+      expect(html).toMatch(/role="alert"/);
+      expect(html).toMatch(message);
+      // No se vende: es la unidad vinculada, con su estado real.
+      expect(html).toContain("Unidad vinculada");
+      expect(html).not.toContain("Unidad vendida");
+      expect(html).not.toContain("Al confirmar, la unidad vinculada pasa");
+      expect(names(html)).toEqual([]);
+    },
+  );
 });
 
 describe("Perdida", () => {

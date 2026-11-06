@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useDeferredValue, useMemo } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
@@ -20,6 +20,10 @@ import { unitsLabel } from "@/domains/vehicles/stock";
 import { STOCK_PATH } from "@/lib/vehicles/paths";
 
 import { StockViewSwitch } from "../stock-view-switch";
+import {
+  useVehicleLifecycle,
+  type LifecycleNotice,
+} from "../use-vehicle-lifecycle";
 import { CatalogCard } from "./catalog-card";
 import { CatalogFilterBar } from "./catalog-filters";
 import { useCatalogState } from "./use-catalog-state";
@@ -47,6 +51,10 @@ import { VehicleSheet } from "./vehicle-sheet";
  * navegador sobre esas unidades, con la misma función que el primer render
  * del servidor. La búsqueda se difiere un render para que escribir nunca
  * espere a la grilla.
+ *
+ * Reservar o liberar (Hito 19, DEC-051) se pide desde la ficha:
+ * la unidad cambia de estado al instante (optimista) en la ficha y en la
+ * grilla, y el aviso queda en el pie de la ficha, donde mira el vendedor.
  */
 
 export function CatalogView({
@@ -56,11 +64,25 @@ export function CatalogView({
   title: string;
   catalog: StockCatalog;
 }) {
-  const index = useMemo(
+  const [notice, setNotice] = useState<LifecycleNotice | null>(null);
+  const lifecycle = useVehicleLifecycle(catalog.vehicles, setNotice);
+  // Los filtros, la unidad abierta y la URL siguen a los datos del servidor:
+  // useCatalogState() se rearma cuando cambia su índice, y el optimista
+  // cambia en cada render de la transición.
+  const serverIndex = useMemo(
     () => indexCatalog(catalog.vehicles),
     [catalog.vehicles],
   );
-  const state = useCatalogState(index);
+  // Lo que se dibuja: con una reserva o liberación en curso, el estado
+  // optimista de la unidad.
+  const index = useMemo(
+    () =>
+      lifecycle.vehicles === catalog.vehicles
+        ? serverIndex
+        : indexCatalog(lifecycle.vehicles),
+    [lifecycle.vehicles, catalog.vehicles, serverIndex],
+  );
+  const state = useCatalogState(serverIndex);
   const { filters } = state;
   const query = useDeferredValue(filters.query);
   const result = useMemo(
@@ -181,7 +203,18 @@ export function CatalogView({
       <VehicleSheet
         vehicle={selected}
         quoteCustomers={catalog.quoteCustomers}
-        onClose={state.closeUnit}
+        saving={selected !== null && lifecycle.saving.has(selected.id)}
+        notice={
+          selected !== null && notice?.vehicleId === selected.id ? notice : null
+        }
+        onTransition={(vehicle, transition) => {
+          setNotice(null);
+          lifecycle.run(vehicle, transition);
+        }}
+        onClose={() => {
+          setNotice(null);
+          state.closeUnit();
+        }}
       />
     </div>
   );

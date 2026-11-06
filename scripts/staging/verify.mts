@@ -70,9 +70,11 @@ type Policy = {
  * Policies de lectura de H0 (DEC-019), de H1.1 (contacts, opportunities) y de
  * H1.3A (vehicles), y de alta de H1.2 (contacts, opportunities) y de H1.3B
  * (vehicles), con WITH CHECK: la de opportunities exige además la etapa
- * `new`, y la de vehicles, el estado `in_preparation`. La de disponibilidad
- * de H1.3C (vehicles) exige la fila actual en `in_preparation` (USING) y la
- * nueva en `available` (WITH CHECK). La demanda de H1.4
+ * `new`, y la de vehicles, el estado `in_preparation`. La edición de
+ * vehicles (H1.3C, y desde el Hito 19 todo su ciclo de vida, DEC-051)
+ * exige solo la organización, antes y después: qué pase de estado
+ * es válido lo decide su trigger (EXPECTED_VEHICLE_LIFECYCLE). La demanda de
+ * H1.4
  * (opportunity_demand_facts) tiene lectura y un alta append-only: miembro
  * activo, fuente `member`, estado humano, autor de la request y reloj de la
  * base. El cambio de etapa de H1.6 y de unidad vinculada del Hito 2
@@ -384,14 +386,14 @@ export const EXPECTED_POLICIES: Policy[] = [
   },
   {
     table: "vehicles",
-    name: "vehicles_update_mark_available",
+    name: "vehicles_update_status",
     permissive: "PERMISSIVE",
     roles: ["authenticated"],
     command: "UPDATE",
     using:
-      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'in_preparation'::text))",
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
     withCheck:
-      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'available'::text))",
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
   },
   {
     table: "whatsapp_lines",
@@ -445,7 +447,9 @@ export const EXPECTED_DEMAND_CHAIN = {
  * anterior → etapa nueva, el cambio de unidad, la inmutabilidad del cierre y
  * el toque de actividad, habilitado, con una función invoker, de search_path
  * vacío, sin EXECUTE para nadie (DEC-028 §6, DEC-032 §4, DEC-033 §3, DEC-034
- * §5, DEC-036 §3).
+ * §5, DEC-036 §3). Desde 0020 (DEC-051 §4), también el constraint
+ * trigger diferido que exige la unidad vendida al ganar
+ * (EXPECTED_VEHICLE_LIFECYCLE verifica su función).
  */
 export const EXPECTED_OPPORTUNITY_STAGES = {
   checks: [
@@ -465,6 +469,7 @@ export const EXPECTED_OPPORTUNITY_STAGES = {
   ],
   triggers: [
     "O CREATE TRIGGER opportunities_stage_transition BEFORE UPDATE ON public.opportunities FOR EACH ROW EXECUTE FUNCTION private.enforce_opportunity_stage_transition()",
+    "O CREATE CONSTRAINT TRIGGER opportunities_won_vehicle_sold AFTER UPDATE ON public.opportunities DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (((new.stage = 'won'::text) AND (old.stage IS DISTINCT FROM 'won'::text))) EXECUTE FUNCTION private.enforce_won_vehicle_sold()",
   ],
   function: {
     securityDefiner: false,
@@ -627,6 +632,25 @@ export const EXPECTED_TEST_DRIVES = {
   ],
   function:
     'private.enforce_test_drive_status_transition() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+};
+
+/**
+ * Ciclo de vida de las unidades (Hito 19, 0020, DEC-051 §3 y §4):
+ * el trigger BEFORE UPDATE de vehicles que valida el par estado anterior →
+ * estado nuevo, deja inmutable el resto de la fila y solo vende una unidad
+ * vinculada a una oportunidad ganada, y la función del constraint trigger
+ * diferido de opportunities que exige la unidad vendida al ganar (el
+ * trigger mismo lo verifica schema.opportunity-stages). Las dos funciones
+ * son invoker, de search_path vacío y sin EXECUTE para nadie.
+ */
+export const EXPECTED_VEHICLE_LIFECYCLE = {
+  triggers: [
+    "O CREATE TRIGGER vehicles_status_transition BEFORE UPDATE ON public.vehicles FOR EACH ROW EXECUTE FUNCTION private.enforce_vehicle_status_transition()",
+  ],
+  functions: [
+    'private.enforce_vehicle_status_transition() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+    'private.enforce_won_vehicle_sold() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+  ],
 };
 
 /**
@@ -1339,6 +1363,58 @@ export async function verifyCatalog(
       "schema.test-drives",
       equal(testDrivesFound, EXPECTED_TEST_DRIVES),
       `test_drives: ${testDrivesFound.constraints.length} constraints (expected: ${EXPECTED_TEST_DRIVES.constraints.length}, exact definitions); triggers: ${list(testDrivesFound.triggers)}; status function: ${testDrivesFound.function ?? "missing"}`,
+    ),
+  );
+
+  // Ciclo de vida de las unidades (Hito 19): el trigger de vehicles y las
+  // funciones de los dos triggers.
+  const [lifecycle] = await tx<
+    { triggers: string[] | null; functions: string[] | null }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(t.tgenabled::text || ' ' || pg_get_triggerdef(t.oid) ORDER BY t.tgname)
+        FROM pg_trigger t
+        WHERE t.tgrelid = to_regclass('public.vehicles') AND NOT t.tgisinternal
+      ) AS triggers,
+      (
+        SELECT array_agg(
+          p.oid::regprocedure::text
+            || ' SECURITY DEFINER=' || p.prosecdef
+            || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+            || ' EXECUTE authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+            || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+            || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+            || ' guards=' || (
+              (
+                p.oid = to_regprocedure('private.enforce_vehicle_status_transition()')
+                AND position('vehicles_status_transition' in p.prosrc) > 0
+                AND position('vehicles_immutable' in p.prosrc) > 0
+                AND position('vehicles_sale_requires_won' in p.prosrc) > 0
+              )
+              OR (
+                p.oid = to_regprocedure('private.enforce_won_vehicle_sold()')
+                AND position('opportunities_won_vehicle_sold' in p.prosrc) > 0
+              )
+            )
+          ORDER BY p.proname
+        )
+        FROM pg_proc p
+        WHERE p.oid IN (
+          to_regprocedure('private.enforce_vehicle_status_transition()'),
+          to_regprocedure('private.enforce_won_vehicle_sold()')
+        )
+      ) AS functions
+  `;
+  const lifecycleFound = {
+    triggers: lifecycle?.triggers ?? [],
+    functions: lifecycle?.functions ?? [],
+  };
+  findings.push(
+    finding(
+      "schema.vehicle-lifecycle",
+      equal(lifecycleFound, EXPECTED_VEHICLE_LIFECYCLE),
+      `vehicles: triggers: ${list(lifecycleFound.triggers)}; functions: ${list(lifecycleFound.functions)}`,
     ),
   );
 

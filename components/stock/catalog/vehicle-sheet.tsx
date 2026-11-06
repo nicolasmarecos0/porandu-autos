@@ -18,9 +18,21 @@ import {
   type CatalogVehicle,
   type QuoteCustomerOption,
 } from "@/domains/vehicles/catalog";
+import {
+  catalogTransitionFor,
+  VEHICLE_TRANSITION_COPY,
+  VEHICLE_TRANSITION_PENDING,
+  type StockTransitionId,
+} from "@/domains/vehicles/lifecycle";
 import { formatKm, formatPrice, vehicleDetail } from "@/domains/vehicles/stock";
 
 import { LITERAL, PriceParts, StatusChip } from "../stock-status";
+import { TransitionIcon } from "../transition-icon";
+import type { LifecycleNotice } from "../use-vehicle-lifecycle";
+import {
+  VehicleTransitionDialog,
+  type TransitionRequest,
+} from "../vehicle-transition-dialog";
 import { CatalogPhoto } from "./catalog-photo";
 import { PRICE_PENDING } from "./catalog-card";
 import { QuoteLauncher } from "./quote-launcher";
@@ -37,18 +49,38 @@ import { QuoteLauncher } from "./quote-launcher";
  * - "Cotizar" (disponible o reservada con precio publicado, DEC-042 §1 y §3)
  *   pide el cliente y lleva a su oportunidad con "Nueva cotización" abierta.
  *
- * Son enlaces: el catálogo no agenda, no cotiza ni cambia nada. Cada
- * escritura pasa por la puerta de su módulo, con su validación, su
- * confirmación y la aprobación humana de la cotización (CLAUDE.md §2).
+ * Son enlaces: el catálogo no agenda ni cotiza. Cada escritura pasa por la
+ * puerta de su módulo, con su validación, su confirmación y la aprobación
+ * humana de la cotización (CLAUDE.md §2).
+ *
+ * Reservar o liberar la unidad (Hito 19, DEC-051) es la única
+ * escritura de la ficha: una acción discreta debajo de las rápidas, para
+ * que la pantalla siga limpia cuando la mira el cliente. Pide confirmación
+ * (alertdialog) y la vista la guarda de forma optimista
+ * (changeVehicleStatus()); el aviso queda al pie. Vender no se pide acá: la
+ * unidad se vende al cerrar Ganada su oportunidad.
  */
+
+type TransitionHandler = (
+  vehicle: CatalogVehicle,
+  transition: StockTransitionId,
+) => void;
 
 export function VehicleSheet({
   vehicle,
   quoteCustomers,
+  saving = false,
+  notice = null,
+  onTransition,
   onClose,
 }: {
   vehicle: CatalogVehicle | null;
   quoteCustomers: readonly QuoteCustomerOption[];
+  /** La reserva o liberación de esta unidad se está guardando. */
+  saving?: boolean;
+  /** El aviso de la última reserva o liberación de esta unidad. */
+  notice?: LifecycleNotice | null;
+  onTransition?: TransitionHandler;
   onClose: () => void;
 }) {
   return (
@@ -62,7 +94,13 @@ export function VehicleSheet({
         <SheetContent
           key={vehicle.id}
           footer={
-            <VehicleActions vehicle={vehicle} quoteCustomers={quoteCustomers} />
+            <VehicleActions
+              vehicle={vehicle}
+              quoteCustomers={quoteCustomers}
+              saving={saving}
+              notice={notice}
+              onTransition={onTransition}
+            />
           }
         >
           <VehicleDetail vehicle={vehicle} />
@@ -181,9 +219,15 @@ function Spec({
 export function VehicleActions({
   vehicle,
   quoteCustomers,
+  saving = false,
+  notice = null,
+  onTransition,
 }: {
   vehicle: CatalogVehicle;
   quoteCustomers: readonly QuoteCustomerOption[];
+  saving?: boolean;
+  notice?: LifecycleNotice | null;
+  onTransition?: TransitionHandler;
 }) {
   const actions = catalogActions(vehicle);
   const [quoting, setQuoting] = useState(false);
@@ -232,6 +276,77 @@ export function VehicleActions({
           ) : null}
         </div>
       ) : null}
+      {onTransition ? (
+        <ReservationAction
+          vehicle={vehicle}
+          saving={saving}
+          notice={notice}
+          onTransition={onTransition}
+        />
+      ) : null}
     </div>
+  );
+}
+
+const NOTICE_TEXT: Readonly<Record<LifecycleNotice["tone"], string>> = {
+  success: "text-success",
+  neutral: "text-text-secondary",
+  error: "text-danger",
+};
+
+/**
+ * Reservar o liberar la unidad: una acción discreta, debajo de las rápidas,
+ * con su confirmación y el aviso de cómo terminó. Una vendida no la ofrece.
+ */
+function ReservationAction({
+  vehicle,
+  saving,
+  notice,
+  onTransition,
+}: {
+  vehicle: CatalogVehicle;
+  saving: boolean;
+  notice: LifecycleNotice | null;
+  onTransition: TransitionHandler;
+}) {
+  const [confirming, setConfirming] = useState<TransitionRequest | null>(null);
+  const transition = catalogTransitionFor(vehicle.status);
+  return (
+    <>
+      {transition ? (
+        <div className="flex items-center justify-between gap-3 border-t border-border-subtle pt-2">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => setConfirming({ vehicle, transition })}
+            className="-ml-2 inline-flex h-9 items-center gap-1.5 rounded-md px-2 text-label font-semibold text-text-secondary transition-colors hover:bg-surface-3 hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring disabled:cursor-wait disabled:opacity-70"
+          >
+            {saving ? null : (
+              <TransitionIcon transition={transition} className="size-4" />
+            )}
+            {saving
+              ? VEHICLE_TRANSITION_PENDING
+              : VEHICLE_TRANSITION_COPY[transition].label}
+          </button>
+        </div>
+      ) : null}
+      <p
+        role="status"
+        className={cn(
+          "text-caption",
+          notice ? NOTICE_TEXT[notice.tone] : "sr-only",
+        )}
+      >
+        {notice?.message}
+      </p>
+      <VehicleTransitionDialog
+        request={confirming}
+        onCancel={() => setConfirming(null)}
+        onConfirm={(request) => {
+          setConfirming(null);
+          onTransition(vehicle, request.transition);
+        }}
+      />
+    </>
   );
 }

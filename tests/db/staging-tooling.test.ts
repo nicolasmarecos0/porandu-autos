@@ -141,6 +141,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ]);
   });
 
@@ -368,6 +369,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.team-settings",
         "schema.whatsapp-ingestion",
         "schema.test-drives",
+        "schema.vehicle-lifecycle",
         "schema.quotes",
         "schema.whatsapp-outbound",
         "schema.conversation-reads",
@@ -1108,6 +1110,67 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta el trigger de transiciones de vehicles deshabilitado o sin sus reglas, y el de la venta al ganar (Hito 19, DEC-051)", async () => {
+    const vehicleFn = "private.enforce_vehicle_status_transition()";
+    const wonFn = "private.enforce_won_vehicle_sold()";
+    const [current] = await migrated.admin<{ vehicle: string; won: string }[]>`
+      SELECT pg_get_functiondef(${vehicleFn}::regprocedure) AS vehicle,
+        pg_get_functiondef(${wonFn}::regprocedure) AS won
+    `;
+    for (const [broken, restore, checks] of [
+      [
+        "ALTER TABLE public.vehicles DISABLE TRIGGER vehicles_status_transition",
+        "ALTER TABLE public.vehicles ENABLE TRIGGER vehicles_status_transition",
+        ["schema.vehicle-lifecycle"],
+      ],
+      [
+        current!.vehicle.replace(/vehicles_sale_requires_won/g, "no guard"),
+        current!.vehicle,
+        ["schema.vehicle-lifecycle"],
+      ],
+      [
+        current!.vehicle.replace(/vehicles_immutable/g, "no guard"),
+        current!.vehicle,
+        ["schema.vehicle-lifecycle"],
+      ],
+      [
+        current!.won.replace(/opportunities_won_vehicle_sold/g, "no guard"),
+        current!.won,
+        ["schema.vehicle-lifecycle"],
+      ],
+      [
+        "ALTER TABLE public.opportunities DISABLE TRIGGER opportunities_won_vehicle_sold",
+        "ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_won_vehicle_sold",
+        ["schema.opportunity-stages"],
+      ],
+      [
+        "CREATE POLICY probe_update ON public.vehicles FOR UPDATE TO authenticated USING (true) WITH CHECK (true)",
+        "DROP POLICY probe_update ON public.vehicles",
+        ["rls.policies"],
+      ],
+    ] as const) {
+      await migrated.admin.unsafe(broken);
+      try {
+        const sql = connect(migrated.migrationUrl);
+        const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+        await sql.end({ timeout: 5 });
+        expect(
+          findings.filter((f) => !f.ok).map((f) => f.check),
+          broken.slice(0, 60),
+        ).toEqual(checks);
+      } finally {
+        await migrated.admin.unsafe(restore);
+      }
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -1118,9 +1181,10 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (DEC-044 §3.3): 0019 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 12B (0000 a 0018) si
- * 0018 ya se aplicó; si no, en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * El próximo rollout real (Hito 19, DEC-051): 0020 después del
+ * merge, con preflight → migrate → verify. Staging está en el Hito 18 (0000
+ * a 0019, el último bloque con migración: DEC-044 §3.3) si 0019 ya se
+ * aplicó; si no, en el Hito 12B (0000 a 0018), en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
@@ -1146,6 +1210,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1165,6 +1230,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1183,6 +1249,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1200,6 +1267,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1216,6 +1284,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1231,6 +1300,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1245,6 +1315,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1258,6 +1329,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1270,6 +1342,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1281,6 +1354,7 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
@@ -1291,22 +1365,33 @@ describe.each([
       "0017_dashboard_indexes",
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
     ],
   },
   {
     stagingAt: "0017_dashboard_indexes",
     label: "Hito 11",
     applied: 18,
-    expected: ["0018_conversation_reads", "0019_whatsapp_delivery_status"],
+    expected: [
+      "0018_conversation_reads",
+      "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
+    ],
   },
   {
     stagingAt: "0018_conversation_reads",
     label: "Hito 12B",
     applied: 19,
-    expected: ["0019_whatsapp_delivery_status"],
+    expected: ["0019_whatsapp_delivery_status", "0020_vehicle_lifecycle"],
+  },
+  {
+    stagingAt: "0019_whatsapp_delivery_status",
+    label: "Hito 18",
+    applied: 20,
+    expected: ["0020_vehicle_lifecycle"],
   },
 ])(
-  "staging en $label: rollout hasta 0019",
+  "staging en $label: rollout hasta 0020",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

@@ -130,6 +130,7 @@ function closureNoticeOf(
     case "invalid":
     case "failed":
     case "vehicle_required":
+    case "vehicle_conflict":
       return null;
   }
 }

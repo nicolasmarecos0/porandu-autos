@@ -22,8 +22,11 @@ import { userOrgIds } from "./policies";
  * Estados de vehículo (TB §10): el mínimo que exige P1. Retirado/baja es
  * opcional y necesita un caso real de piloto. No es un enum de Postgres: un
  * CHECK que una migración puede reemplazar. El alta rápida (H1.3B) nace
- * siempre en `in_preparation`; la única transición aprobada es
- * `in_preparation → available` (H1.3C).
+ * siempre en `in_preparation`; las transiciones son la máquina del Hito 19
+ * (DEC-051, domains/vehicles/lifecycle.ts): `in_preparation →
+ * available`, `available ⇄ reserved` y `available | reserved → sold`, este
+ * último solo al cerrar Ganada la oportunidad que tiene la unidad
+ * vinculada. `sold` es terminal.
  */
 export const vehicleStatuses = [
   "in_preparation",
@@ -71,12 +74,18 @@ export const vehicleCurrencies = ["PYG", "USD"] as const;
  * CHECK de la policy de INSERT. El CHECK de `status` sigue admitiendo todos
  * los estados.
  *
- * Disponibilidad (H1.3C): la única edición es `in_preparation → available`.
+ * Ciclo de vida (H1.3C, Hito 19): la única edición es el estado.
  * `authenticated` solo puede actualizar `status` y `updated_at` (grant por
- * columna, 0006) y la policy de UPDATE exige la fila actual en preparación
- * (USING) y la nueva en disponible (WITH CHECK), en una organización con
- * membership activa. Marca, modelo, precio, km y el resto no se editan. Sin
- * DELETE (default deny).
+ * columna, 0006) y hay una única policy de UPDATE tenant-scoped
+ * (`vehicles_update_status`: organización con membership activa, antes y
+ * después). Qué pase es válido lo decide el trigger BEFORE UPDATE
+ * `vehicles_status_transition` (migración 0020, drizzle-kit no modela
+ * triggers), que espeja la máquina del dominio, deja inmutable el resto de
+ * la fila (también para el rol dueño), solo deja vender una unidad
+ * vinculada a una oportunidad ganada y fija `updated_at`. Como las policies
+ * permisivas de un mismo comando se combinan con OR (DEC-028 §5), los pares
+ * viven en el trigger y no en policies por transición. Sin DELETE (default
+ * deny).
  */
 export const vehicles = pgTable(
   "vehicles",
@@ -119,23 +128,23 @@ export const vehicles = pgTable(
     // Alta: organización con membership activa y siempre en preparación.
     // La regla de alta es membership activa AND role IN ('admin', 'seller'):
     // equivalente hoy porque membership_role es exactamente admin | seller
-    // (un test lo vigila). Los cambios de estado son policies de UPDATE.
+    // (un test lo vigila). Los cambios de estado los valida el trigger.
     pgPolicy("vehicles_insert_member", {
       for: "insert",
       to: authenticatedRole,
       withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.status} = 'in_preparation'`,
     }),
-    // Única transición (H1.3C): en preparación → disponible, en la misma
-    // organización con membership activa (misma regla de rol que el alta).
-    // USING ve la fila actual y WITH CHECK la nueva: con una sola policy de
-    // UPDATE, el par origen → destino es exacto. Una segunda transición no
-    // puede ser otra policy permisiva (PostgreSQL combina los USING y los
-    // WITH CHECK por separado, con OR, y cruzaría orígenes y destinos).
-    pgPolicy("vehicles_update_mark_available", {
+    // Ciclo de vida (Hito 19, DEC-051; reemplaza la policy de
+    // H1.3C, vehicles_update_mark_available): organización con membership
+    // activa, antes y después (misma regla de rol que el alta). Qué pase de
+    // estado es válido lo decide el trigger vehicles_status_transition de
+    // la migración 0020, no esta policy (DEC-028 §5 y §6, como DEC-032 §4
+    // para las oportunidades).
+    pgPolicy("vehicles_update_status", {
       for: "update",
       to: authenticatedRole,
-      using: sql`${t.organizationId} IN ${userOrgIds} AND ${t.status} = 'in_preparation'`,
-      withCheck: sql`${t.organizationId} IN ${userOrgIds} AND ${t.status} = 'available'`,
+      using: sql`${t.organizationId} IN ${userOrgIds}`,
+      withCheck: sql`${t.organizationId} IN ${userOrgIds}`,
     }),
   ],
 ).enableRLS();

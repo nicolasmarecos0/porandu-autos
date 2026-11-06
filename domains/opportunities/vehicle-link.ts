@@ -145,7 +145,7 @@ export type LinkedVehicleCard = Readonly<{
   /** "0 km", o null sin dato. */
   km: string | null;
   status: VehicleStatus;
-  /** "Disponible", "Reservado"… */
+  /** "Disponible", "Reservada"… */
   statusLabel: string;
 }>;
 

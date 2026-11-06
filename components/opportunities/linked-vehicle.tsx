@@ -1,6 +1,7 @@
 import { StatusChip } from "@/components/stock/stock-status";
 import type { Stage } from "@/domains/opportunities/stages";
 import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
+import { saleNoticeFor } from "@/domains/vehicles/lifecycle";
 
 import { VehicleLinkButton } from "./vehicle-link";
 
@@ -15,8 +16,12 @@ import { VehicleLinkButton } from "./vehicle-link";
  *   cierre (DEC-034 §4). Perdida también: es la unidad que se negociaba.
  * - Si la unidad ya no está disponible, se dice con su estado de Stock.
  *
- * Vincular no cambia el stock: la unidad sigue disponible y Ganada no la
- * marca vendida. La copy lo dice para que nadie lo suponga.
+ * Vincular no cambia el stock (no la reserva); ganar sí: la unidad vinculada
+ * pasa a Vendida en la misma transacción del cierre (Hito 19, DEC-051).
+ * La copy lo dice para que nadie suponga otra cosa. En negociación, la nota
+ * sigue al estado real de la unidad: si otra oportunidad ya la vendió o
+ * todavía está en preparación, dice que así no se puede ganar y qué hacer
+ * (saleNoticeFor(), la misma regla del cierre).
  */
 
 const TITLES: Readonly<Record<Stage, string>> = {
@@ -27,10 +32,31 @@ const TITLES: Readonly<Record<Stage, string>> = {
   lost: "Unidad que se negociaba",
 };
 
-const NOTES: Readonly<Partial<Record<Stage, string>>> = {
-  negotiating: "Vincularla no la reserva: el stock no cambia.",
-  won: "La venta y el estado Vendido de la unidad no se registran acá: el stock no cambia.",
-};
+const NEGOTIATING_NOTES = {
+  available:
+    "Vincularla no la reserva: para apartarla, reservala desde Stock. Al marcar la oportunidad como ganada, pasa a Vendida.",
+  reserved:
+    "Está reservada en el stock. Al marcar la oportunidad como ganada, pasa a Vendida.",
+} as const;
+
+const WON_NOTE = "Con el cierre, la unidad quedó Vendida en el stock.";
+
+type Note = Readonly<{ text: string; warning: boolean }>;
+
+/** Qué dice la tarjeta debajo de la unidad, según la etapa y su estado. */
+function noteFor(stage: Stage, linked: LinkedVehicleCard): Note | null {
+  if (stage === "won") return { text: WON_NOTE, warning: false };
+  if (stage !== "negotiating") return null;
+  const sale = saleNoticeFor(linked.status);
+  if (sale.kind === "conflict") return { text: sale.message, warning: true };
+  return {
+    text:
+      linked.status === "reserved"
+        ? NEGOTIATING_NOTES.reserved
+        : NEGOTIATING_NOTES.available,
+    warning: false,
+  };
+}
 
 export function LinkedVehicle({
   stage,
@@ -59,7 +85,7 @@ export function LinkedVehicle({
     );
   }
 
-  const note = NOTES[stage];
+  const note = noteFor(stage, linked);
   return (
     <section
       aria-label={TITLES[stage]}
@@ -88,7 +114,15 @@ export function LinkedVehicle({
         </dd>
       </dl>
       {note ? (
-        <p className="mt-2 text-caption text-text-secondary">{note}</p>
+        <p
+          className={
+            note.warning
+              ? "mt-2 text-caption text-warning"
+              : "mt-2 text-caption text-text-secondary"
+          }
+        >
+          {note.text}
+        </p>
       ) : null}
       {canChange ? (
         <div className="mt-3">

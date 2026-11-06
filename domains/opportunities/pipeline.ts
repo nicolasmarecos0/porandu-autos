@@ -28,7 +28,11 @@ import {
   type Recency,
   type RecencyState,
 } from "@/domains/scoring/types";
-import { vehicleDetail, vehicleName } from "@/domains/vehicles/stock";
+import {
+  vehicleDetail,
+  vehicleName,
+  type VehicleStatus,
+} from "@/domains/vehicles/stock";
 
 import type { LossReason } from "./closure";
 import { STAGES } from "./labels";
@@ -145,6 +149,8 @@ export type PipelineVehicle = Readonly<{
   model: string;
   version: string | null;
   year: number;
+  /** Estado de Stock: ganar la vende (DEC-051). */
+  status: VehicleStatus;
 }>;
 
 /** Una oportunidad del tablero, como la lee la base. */
@@ -248,8 +254,16 @@ export type CardClosure = Readonly<{
   at: string | null;
 }>;
 
-/** La unidad que se vende al marcarla ganada (la vinculada). */
-export type SaleVehicleSummary = Readonly<{ name: string; detail: string }>;
+/**
+ * La unidad que se vende al marcarla ganada (la vinculada), con su estado de
+ * Stock: la confirmación avisa que pasa a Vendida, o por qué no puede
+ * (DEC-051).
+ */
+export type SaleVehicleSummary = Readonly<{
+  name: string;
+  detail: string;
+  status: VehicleStatus;
+}>;
 
 export type PipelineCard = Readonly<{
   id: string;
@@ -365,10 +379,16 @@ function unitOf(vehicle: PipelineVehicle) {
   };
 }
 
-function saleVehicleOf(vehicle: PipelineVehicle | null) {
+function saleVehicleOf(
+  vehicle: PipelineVehicle | null,
+): SaleVehicleSummary | null {
   if (!vehicle) return null;
   const unit = unitOf(vehicle);
-  return { name: vehicleName(unit), detail: vehicleDetail(unit) };
+  return {
+    name: vehicleName(unit),
+    detail: vehicleDetail(unit),
+    status: vehicle.status,
+  };
 }
 
 /**

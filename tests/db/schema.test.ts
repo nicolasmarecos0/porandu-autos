@@ -332,6 +332,9 @@ describe("opportunities (H1.1)", () => {
         "CHECK (((delivery_date >= '2000-01-01'::date) AND (delivery_date <= '2100-12-31'::date)))",
       opportunities_won_closure_check:
         "CHECK ((((stage = 'won'::text) AND (vehicle_id IS NOT NULL) AND (sale_price IS NOT NULL) AND (sale_currency IS NOT NULL) AND (payment_method IS NOT NULL) AND (delivery_status IS NOT NULL) AND (delivery_date IS NOT NULL)) OR ((stage <> 'won'::text) AND (sale_price IS NULL) AND (sale_currency IS NULL) AND (payment_method IS NULL) AND (delivery_status IS NULL) AND (delivery_date IS NULL))))",
+      // DEC-051 §4: ganar vende la unidad vinculada en la misma
+      // transacción (constraint trigger diferido al COMMIT).
+      opportunities_won_vehicle_sold: "TRIGGER DEFERRABLE INITIALLY DEFERRED",
     });
   });
 

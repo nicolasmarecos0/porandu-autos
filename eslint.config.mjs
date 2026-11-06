@@ -159,17 +159,19 @@ const createVehicleImport = {
   message: CREATE_VEHICLE_MESSAGE,
 };
 
-// H1.3C: la transición in_preparation → available tiene una sola puerta, la
-// Server Action markVehicleAvailable() (lib/vehicles/actions.ts), que
-// obtiene el contexto con requireTenant() y valida el id antes de escribir.
-const MARK_VEHICLE_AVAILABLE_MESSAGE =
-  "Vehicles become available only through the markVehicleAvailable() Server Action (lib/vehicles/actions.ts): requireTenant(), server-side validation, then withTenant().";
-const markVehicleAvailableImport = {
+// Hito 19 (DEC-051): el ciclo de vida de una unidad desde Stock
+// (poner en el salón, reservar, liberar) tiene una sola puerta, la Server
+// Action changeVehicleStatus() (lib/vehicles/actions.ts), que obtiene el
+// contexto con requireTenant() y valida el pedido antes de escribir. Vender
+// no pasa por acá: lo hace el cierre Ganada (closeOpportunity()).
+const CHANGE_VEHICLE_STATUS_MESSAGE =
+  "Vehicle statuses change only through the changeVehicleStatus() Server Action (lib/vehicles/actions.ts): requireTenant(), server-side validation, then withTenant(). A sale happens only when the opportunity is closed as won (closeOpportunity()).";
+const changeVehicleStatusImport = {
   regex:
-    "(^|/)db/queries/mark-vehicle-available$|^\\.{1,2}/mark-vehicle-available$",
-  // Los tipos del resultado (AvailabilityTransition) no escriben nada.
+    "(^|/)db/queries/change-vehicle-status$|^\\.{1,2}/change-vehicle-status$",
+  // Los tipos del resultado (VehicleStatusChangeOutcome) no escriben nada.
   allowTypeImports: true,
-  message: MARK_VEHICLE_AVAILABLE_MESSAGE,
+  message: CHANGE_VEHICLE_STATUS_MESSAGE,
 };
 
 // H1.6 (DEC-032): el cambio de etapa de una oportunidad tiene una sola
@@ -394,7 +396,7 @@ const basePatterns = [
   opportunitiesMockImport,
   createOpportunityImport,
   createVehicleImport,
-  markVehicleAvailableImport,
+  changeVehicleStatusImport,
   changeOpportunityStageImport,
   closeOpportunityImport,
   recordOpportunityNoteImport,
@@ -525,9 +527,10 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // Stock (H1.3A, H1.3B, H1.3C y el catálogo, propuesta DEC-049): una sola
-  // fuente, PostgreSQL. Ni la lista, ni el catálogo, ni el alta rápida, ni
-  // la disponibilidad tienen fixtures.
+  // Stock (H1.3A, H1.3B, el catálogo de la propuesta DEC-049 y el ciclo de
+  // vida de la DEC-051): una sola fuente, PostgreSQL. Ni la lista,
+  // ni el catálogo, ni el alta rápida, ni los cambios de estado tienen
+  // fixtures.
   {
     files: ["app/(app)/stock/**", "components/stock/**"],
     rules: {
@@ -541,7 +544,7 @@ const eslintConfig = defineConfig([
     files: [
       "db/queries/vehicles.ts",
       "db/queries/create-vehicle.ts",
-      "db/queries/mark-vehicle-available.ts",
+      "db/queries/change-vehicle-status.ts",
       "db/queries/stock-catalog.ts",
     ],
     rules: {
@@ -597,7 +600,7 @@ const eslintConfig = defineConfig([
             opportunitiesMockImport,
             createOpportunityImport,
             createVehicleImport,
-            markVehicleAvailableImport,
+            changeVehicleStatusImport,
             changeOpportunityStageImport,
             closeOpportunityImport,
             recordOpportunityNoteImport,
@@ -631,7 +634,7 @@ const eslintConfig = defineConfig([
             opportunitiesMockImport,
             createOpportunityImport,
             createVehicleImport,
-            markVehicleAvailableImport,
+            changeVehicleStatusImport,
             changeOpportunityStageImport,
             closeOpportunityImport,
             recordOpportunityNoteImport,
@@ -666,7 +669,7 @@ const eslintConfig = defineConfig([
             resolveTenantImport,
             opportunitiesMockImport,
             createVehicleImport,
-            markVehicleAvailableImport,
+            changeVehicleStatusImport,
             recordMessageImport,
             settingsWriteImport,
             ingestWhatsAppImport,
@@ -751,8 +754,8 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // Única puerta del alta rápida (H1.3B) y de la disponibilidad (H1.3C) de
-  // unidades. Sin fixtures.
+  // Única puerta del alta rápida (H1.3B) y del ciclo de vida (Hito 19) de
+  // las unidades. Sin fixtures.
   {
     files: ["lib/vehicles/actions.ts"],
     rules: {
@@ -853,7 +856,7 @@ const eslintConfig = defineConfig([
             opportunitiesMockImport,
             createOpportunityImport,
             createVehicleImport,
-            markVehicleAvailableImport,
+            changeVehicleStatusImport,
             changeOpportunityStageImport,
             closeOpportunityImport,
             recordOpportunityNoteImport,
@@ -897,7 +900,7 @@ const eslintConfig = defineConfig([
             opportunitiesMockImport,
             createOpportunityImport,
             createVehicleImport,
-            markVehicleAvailableImport,
+            changeVehicleStatusImport,
             changeOpportunityStageImport,
             closeOpportunityImport,
             recordOpportunityNoteImport,

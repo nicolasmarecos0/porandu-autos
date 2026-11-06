@@ -76,6 +76,7 @@ const HILUX = {
   model: "Hilux",
   version: "SRV 2.8 4x4 AT",
   year: 2025,
+  status: "available",
 } as const;
 
 function board(overrides: Partial<PipelineSource> = {}) {

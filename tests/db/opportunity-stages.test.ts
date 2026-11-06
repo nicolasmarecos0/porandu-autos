@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { transitionOpportunityStage } from "@/db/queries/change-opportunity-stage";
 import { getOpportunityDetail } from "@/db/queries/opportunity-detail";
 import { getOpportunityQueue } from "@/db/queries/opportunities";
-import { opportunities } from "@/db/schema";
+import { opportunities, vehicles } from "@/db/schema";
 import { withTenant, type TenantContext } from "@/db/tenant";
 import {
   canTransition,
@@ -60,7 +60,7 @@ import {
  *
  * La acción, la escritura y los loaders son los reales, conectados como
  * app_runtime. Supabase Auth (claims ya verificados), la cookie, redirect()
- * y revalidatePath() de Next son simulados, como en vehicle-availability.test.ts.
+ * y revalidatePath() de Next son simulados, como en vehicle-lifecycle.test.ts.
  *
  * Tenants (support/tenants.ts): A: admin de ORG_1 · B: admin de ORG_2 · C:
  * seller de ORG_1 y admin de ORG_3, seller inactivo de ORG_2 · D: solo
@@ -616,7 +616,27 @@ describe("el trigger de la base espeja la máquina del dominio (25 pares)", () =
       withVehicle: from === "negotiating" || from === "won",
     });
     const before = await row(id);
-    const attempt = directUpdate(ctxA(), id, pass(to));
+    // Ganar vende la unidad vinculada en la misma transacción (DEC-051 §4):
+    // el constraint trigger diferido lo exige al COMMIT, así que
+    // el pase a `won` lleva también la venta, como closeOpportunity().
+    const [linked] = await db.admin<{ vehicleId: string | null }[]>`
+      SELECT vehicle_id AS "vehicleId" FROM public.opportunities WHERE id = ${id}
+    `;
+    const attempt =
+      to === "won" && canTransition(from, to) && linked?.vehicleId
+        ? withTenant(ctxA(), async (tx) => {
+            const updated = await tx
+              .update(opportunities)
+              .set(pass(to))
+              .where(eq(opportunities.id, id))
+              .returning({ id: opportunities.id, stage: opportunities.stage });
+            await tx
+              .update(vehicles)
+              .set({ status: "sold" })
+              .where(eq(vehicles.id, linked.vehicleId!));
+            return updated;
+          })
+        : directUpdate(ctxA(), id, pass(to));
 
     if (canTransition(from, to)) {
       expect(await attempt).toEqual([{ id, stage: to }]);

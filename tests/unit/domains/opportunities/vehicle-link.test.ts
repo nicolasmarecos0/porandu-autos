@@ -221,7 +221,7 @@ describe("linkedVehicleCard", () => {
       detail: "2019",
       price: null,
       km: null,
-      statusLabel: "Reservado",
+      statusLabel: "Reservada",
     });
   });
 });

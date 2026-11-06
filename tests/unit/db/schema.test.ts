@@ -474,12 +474,14 @@ describe("db/schema", () => {
       },
       {
         table: "vehicles",
-        name: "vehicles_update_mark_available",
+        name: "vehicles_update_status",
         as: "permissive",
         for: "update",
         to: ["authenticated"],
-        using: `"vehicles"."organization_id" IN (SELECT private.user_org_ids()) AND "vehicles"."status" = 'in_preparation'`,
-        withCheck: `"vehicles"."organization_id" IN (SELECT private.user_org_ids()) AND "vehicles"."status" = 'available'`,
+        using:
+          '"vehicles"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck:
+          '"vehicles"."organization_id" IN (SELECT private.user_org_ids())',
       },
       {
         table: "whatsapp_lines",

@@ -327,7 +327,7 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
     );
   });
 
-  it("por withTenant() nadie borra vehículos, ni da de alta fuera de preparación, ni cambia estados fuera de in_preparation → available, ni en su propia organización (H1.3C)", async () => {
+  it("por withTenant() nadie borra vehículos, ni da de alta fuera de preparación, ni vende una unidad desde Stock, ni en su propia organización (H1.3C, Hito 19)", async () => {
     const ctx = tenantContext(USER_A, ORG_1);
     const own = VEHICLES[0]!;
     // El alta rápida (create-vehicle.test.ts) solo admite `in_preparation`
@@ -340,19 +340,20 @@ describe("fuera de withTenant() falla cerrado (C2)", () => {
         "42501",
       );
     }
-    // La única transición es in_preparation → available
-    // (vehicle-availability.test.ts): una unidad disponible no cumple el
-    // USING de la policy, así que RLS no la deja tocar (0 filas, sin error).
+    // Vender no es un pase de Stock (DEC-051): sin una oportunidad
+    // ganada que la tenga vinculada, el trigger de transiciones lo rechaza
+    // (vehicle-lifecycle.test.ts cubre la matriz completa).
     expect(own.status).toBe("available");
-    expect(
-      await withTenant(ctx, (tx) =>
+    await expectSqlError(
+      withTenant(ctx, (tx) =>
         tx
           .update(vehicles)
           .set({ status: "sold" })
           .where(eq(vehicles.id, own.id))
           .returning({ id: vehicles.id }),
       ),
-    ).toEqual([]);
+      "23514",
+    );
     await expectSqlError(
       withTenant(ctx, (tx) =>
         tx.delete(vehicles).where(eq(vehicles.id, own.id)),
@@ -453,7 +454,8 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
       created = (await insert())[0]?.id;
       expect(created).toBeDefined();
       // tenant-catalog.test.ts y verify.mts esperan exactamente la policy de
-      // lectura, la de alta en preparación y la de disponibilidad.
+      // lectura, la de alta en preparación y la única de UPDATE del ciclo de
+      // vida (DEC-051).
       expect(
         (await policies(db.admin))
           .filter((policy) => policy.table === "vehicles")
@@ -462,7 +464,7 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
         "probe_insert",
         "vehicles_insert_member",
         "vehicles_select_member",
-        "vehicles_update_mark_available",
+        "vehicles_update_status",
       ]);
     } finally {
       await db.admin.unsafe(`DROP POLICY probe_insert ON public.vehicles;`);

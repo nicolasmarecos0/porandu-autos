@@ -15,6 +15,7 @@ import {
 } from "@/domains/opportunities/closure";
 import { STAGE_ACTION_LABELS } from "@/domains/opportunities/labels";
 import type { Stage } from "@/domains/opportunities/stages";
+import { saleNoticeFor } from "@/domains/vehicles/lifecycle";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 
 import { ClosureFields, type SaleVehicle } from "./closure-fields";
@@ -50,10 +51,14 @@ export const CLOSURE_DIALOG_COPY = {
   },
 } as const;
 
-/** Respuestas que se corrigen o reintentan con el formulario abierto. */
+/**
+ * Respuestas que se corrigen o reintentan con el formulario abierto. Una
+ * unidad que ya no se puede vender (`vehicle_conflict`, DEC-051)
+ * también deja el diálogo abierto, con el aviso de qué pasó en el stock.
+ */
 export type RetryableClosure = Extract<
   CloseOpportunityState,
-  { status: "invalid" | "failed" | "vehicle_required" }
+  { status: "invalid" | "failed" | "vehicle_required" | "vehicle_conflict" }
 >;
 
 export function closureStaysOpen(
@@ -62,7 +67,8 @@ export function closureStaysOpen(
   return (
     state?.status === "invalid" ||
     state?.status === "failed" ||
-    state?.status === "vehicle_required"
+    state?.status === "vehicle_required" ||
+    state?.status === "vehicle_conflict"
   );
 }
 
@@ -125,7 +131,16 @@ export function ClosureForm({
 }: ClosureFormProps) {
   const [localErrors, setLocalErrors] = useState<ClosureErrors | null>(null);
 
-  const blocked = to === "won" && saleVehicle === null;
+  // El servidor dice el estado real de la unidad si cambió desde que se abrió
+  // el formulario (otra oportunidad la vendió, por ejemplo).
+  const unit =
+    saleVehicle && !pending && state?.status === "vehicle_conflict"
+      ? { ...saleVehicle, status: state.current }
+      : saleVehicle;
+  // Ganar exige una unidad vinculada que se pueda vender (DEC-051).
+  const blocked =
+    to === "won" &&
+    (unit === null || saleNoticeFor(unit.status).kind === "conflict");
   const errors: ClosureErrors =
     localErrors ??
     (!pending && state?.status === "invalid" ? state.errors : {});
@@ -189,7 +204,7 @@ export function ClosureForm({
           today={today}
           errors={errors}
           values={echo}
-          saleVehicle={saleVehicle}
+          saleVehicle={unit}
           disabled={pending}
         />
         {blocked && blockedHint ? blockedHint : null}
@@ -221,9 +236,11 @@ export function ClosureAlert({ state }: { state: CloseOpportunityState }) {
       ? "No pudimos cerrar la oportunidad. No se hizo ningún cambio: intentá de nuevo en unos minutos."
       : state?.status === "vehicle_required"
         ? "No se hizo ningún cambio: la oportunidad ya no tiene una unidad vinculada. Vinculá la unidad que se vende y volvé a intentar."
-        : state?.status === "invalid"
-          ? "Revisá los datos marcados. No se hizo ningún cambio."
-          : null;
+        : state?.status === "vehicle_conflict"
+          ? "No se hizo ningún cambio: el estado de la unidad en el stock cambió mientras completabas el cierre."
+          : state?.status === "invalid"
+            ? "Revisá los datos marcados. No se hizo ningún cambio."
+            : null;
   if (!text) return null;
   return (
     <p

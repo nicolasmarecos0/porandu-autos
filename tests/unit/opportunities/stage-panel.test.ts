@@ -26,7 +26,11 @@ function render(stage: Stage): string {
     createElement(OpportunityStagePanel, {
       opportunityId: ID,
       stage,
-      saleVehicle: { name: "Toyota Hilux", detail: "SRV 2.8 4x4 AT · 2025" },
+      saleVehicle: {
+        name: "Toyota Hilux",
+        detail: "SRV 2.8 4x4 AT · 2025",
+        status: "available",
+      },
     }),
   );
 }

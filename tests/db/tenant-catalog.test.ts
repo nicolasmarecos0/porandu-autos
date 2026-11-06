@@ -476,14 +476,14 @@ describe("policies (ADR-001 §4)", () => {
       },
       {
         table: "vehicles",
-        name: "vehicles_update_mark_available",
+        name: "vehicles_update_status",
         permissive: "PERMISSIVE",
         roles: ["authenticated"],
         command: "UPDATE",
         using:
-          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'in_preparation'::text))",
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
         withCheck:
-          "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (status = 'available'::text))",
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
       },
       {
         table: "whatsapp_lines",
@@ -609,7 +609,7 @@ describe("grants (ADR-001 §3.6)", () => {
       "test_drives_insert_member",
       "test_drives_update_member",
       "vehicles_insert_member",
-      "vehicles_update_mark_available",
+      "vehicles_update_status",
     ]);
     expect(writePolicies.every((policy) => policy.withCheck !== null)).toBe(
       true,
@@ -621,7 +621,7 @@ describe("grants (ADR-001 §3.6)", () => {
     ).toBe(true);
   });
 
-  it("vehicles (H1.3C): SELECT, INSERT y UPDATE por columna para authenticated; policies de lectura, alta y disponibilidad; sin DELETE", async () => {
+  it("vehicles (H1.3C, Hito 19): SELECT, INSERT y UPDATE por columna para authenticated; policies de lectura, alta y la única de UPDATE del ciclo de vida; sin DELETE", async () => {
     expect(
       (
         await tablePrivileges(db.admin, [
@@ -642,7 +642,70 @@ describe("grants (ADR-001 §3.6)", () => {
     ).toEqual([
       "vehicles_insert_member INSERT",
       "vehicles_select_member SELECT",
-      "vehicles_update_mark_available UPDATE",
+      "vehicles_update_status UPDATE",
+    ]);
+  });
+
+  it("vehicles (Hito 19, DEC-051 §3): el par estado anterior → estado nuevo lo valida un trigger BEFORE UPDATE de fila, habilitado, invoker y con search_path vacío", async () => {
+    const triggers = await db.admin<
+      { name: string; definition: string; enabled: string }[]
+    >`
+      SELECT t.tgname AS name, pg_get_triggerdef(t.oid) AS definition,
+        t.tgenabled::text AS enabled
+      FROM pg_trigger t
+      WHERE t.tgrelid = 'public.vehicles'::regclass AND NOT t.tgisinternal
+    `;
+    expect(triggers).toEqual([
+      {
+        name: "vehicles_status_transition",
+        definition:
+          "CREATE TRIGGER vehicles_status_transition BEFORE UPDATE ON public.vehicles FOR EACH ROW EXECUTE FUNCTION private.enforce_vehicle_status_transition()",
+        enabled: "O",
+      },
+    ]);
+    const functions = await db.admin<
+      {
+        name: string;
+        securityDefiner: boolean;
+        config: string[] | null;
+        owner: string;
+        returns: string;
+        authenticatedExecute: boolean;
+        anonExecute: boolean;
+        runtimeExecute: boolean;
+        publicExecute: boolean;
+      }[]
+    >`
+      SELECT p.proname AS name, p.prosecdef AS "securityDefiner",
+        p.proconfig AS config, p.proowner::regrole::text AS owner,
+        p.prorettype::regtype::text AS returns,
+        has_function_privilege('authenticated', p.oid, 'EXECUTE') AS "authenticatedExecute",
+        has_function_privilege('anon', p.oid, 'EXECUTE') AS "anonExecute",
+        has_function_privilege('app_runtime', p.oid, 'EXECUTE') AS "runtimeExecute",
+        EXISTS (
+          SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+          WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+        ) AS "publicExecute"
+      FROM pg_proc p
+      WHERE p.oid IN (
+        to_regprocedure('private.enforce_vehicle_status_transition()'),
+        to_regprocedure('private.enforce_won_vehicle_sold()')
+      )
+      ORDER BY p.proname
+    `;
+    const invoker = {
+      securityDefiner: false,
+      config: ['search_path=""'],
+      owner: "postgres",
+      returns: "trigger",
+      authenticatedExecute: false,
+      anonExecute: false,
+      runtimeExecute: false,
+      publicExecute: false,
+    };
+    expect(functions).toEqual([
+      { name: "enforce_vehicle_status_transition", ...invoker },
+      { name: "enforce_won_vehicle_sold", ...invoker },
     ]);
   });
 
@@ -779,12 +842,21 @@ describe("grants (ADR-001 §3.6)", () => {
         t.tgenabled::text AS enabled
       FROM pg_trigger t
       WHERE t.tgrelid = 'public.opportunities'::regclass AND NOT t.tgisinternal
+      ORDER BY t.tgname
     `;
     expect(triggers).toEqual([
       {
         name: "opportunities_stage_transition",
         definition:
           "CREATE TRIGGER opportunities_stage_transition BEFORE UPDATE ON public.opportunities FOR EACH ROW EXECUTE FUNCTION private.enforce_opportunity_stage_transition()",
+        enabled: "O",
+      },
+      // DEC-051 §4: ganar vende la unidad vinculada en la misma
+      // transacción; el constraint trigger lo exige al COMMIT.
+      {
+        name: "opportunities_won_vehicle_sold",
+        definition:
+          "CREATE CONSTRAINT TRIGGER opportunities_won_vehicle_sold AFTER UPDATE ON public.opportunities DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (((new.stage = 'won'::text) AND (old.stage IS DISTINCT FROM 'won'::text))) EXECUTE FUNCTION private.enforce_won_vehicle_sold()",
         enabled: "O",
       },
     ]);
@@ -1253,7 +1325,7 @@ describe("grants (ADR-001 §3.6)", () => {
       "organizations.organizations_update_admin",
       "quotes.quotes_update_member",
       "test_drives.test_drives_update_member",
-      "vehicles.vehicles_update_mark_available",
+      "vehicles.vehicles_update_status",
     ]);
     expect(new Set(updates.map((policy) => policy.table)).size).toBe(
       updates.length,

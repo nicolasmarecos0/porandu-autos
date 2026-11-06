@@ -486,7 +486,7 @@ describe("getOpportunityDetail: bitácora y unidad vinculada (Hito 2)", () => {
         price: "USD 49.900",
         km: "0 km",
         status: "reserved",
-        statusLabel: "Reservado",
+        statusLabel: "Reservada",
       },
     });
   });
