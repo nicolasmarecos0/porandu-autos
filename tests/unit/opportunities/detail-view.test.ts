@@ -286,7 +286,7 @@ describe("unidad vinculada desde las tarjetas de match", () => {
     ]);
     const linked = section(html, "Unidad en negociación");
     expect(linked).toContain("Toyota Hilux");
-    // Vincular no reserva; ganar sí vende (propuesta DEC-051).
+    // Vincular no reserva; ganar sí vende (DEC-051).
     expect(linked).toContain(
       "Vincularla no la reserva: para apartarla, reservala desde Stock. Al marcar la oportunidad como ganada, pasa a Vendida.",
     );
@@ -295,7 +295,7 @@ describe("unidad vinculada desde las tarjetas de match", () => {
     expect(linked).toContain('name="vehicleId" value=""');
   });
 
-  it("Ganada: la unidad de la venta, de solo lectura (DEC-034 §4) y vendida en el stock (propuesta DEC-051)", () => {
+  it("Ganada: la unidad de la venta, de solo lectura (DEC-034 §4) y vendida en el stock (DEC-051)", () => {
     const html = render({ stage: "won", linked: LINKED });
     const linked = section(html, "Unidad de la venta");
     expect(linked).toContain(
@@ -333,8 +333,40 @@ describe("unidad vinculada desde las tarjetas de match", () => {
     const html = render({
       linked: { ...LINKED, status: "reserved", statusLabel: "Reservada" },
     });
-    expect(section(html, "Unidad en negociación")).toContain("Reservada");
+    const linked = section(html, "Unidad en negociación");
+    expect(linked).toContain("Reservada");
+    // Reservada se puede vender: la nota no invita a reservarla otra vez.
+    expect(linked).toContain(
+      "Está reservada en el stock. Al marcar la oportunidad como ganada, pasa a Vendida.",
+    );
+    expect(linked).not.toContain("reservala desde Stock");
   });
+
+  it.each([
+    [
+      "sold",
+      "Vendida",
+      "La unidad vinculada ya figura como Vendida en el stock: no se puede vender dos veces. Vinculá otra unidad a la negociación.",
+    ],
+    [
+      "inPreparation",
+      "En preparación",
+      "La unidad vinculada todavía está En preparación en el stock: ponela en el salón antes de cerrar la venta.",
+    ],
+  ] as const)(
+    "una unidad vinculada %s no promete la venta: dice por qué no se puede ganar así (DEC-051)",
+    (status, statusLabel, message) => {
+      const html = render({ linked: { ...LINKED, status, statusLabel } });
+      const linked = section(html, "Unidad en negociación");
+      expect(linked).toContain(statusLabel);
+      expect(linked).toContain(
+        `<p class="mt-2 text-caption text-warning">${message}</p>`,
+      );
+      expect(linked).not.toContain("pasa a Vendida");
+      // Se puede quitar el vínculo para elegir otra.
+      expect(buttons(linked)).toEqual(["Quitar vínculo: Toyota Hilux"]);
+    },
+  );
 
   it("sin matches, la unidad vinculada se sigue mostrando", () => {
     const html = render({
