@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/confirm-dialog";
 import type { PipelineCard } from "@/domains/opportunities/pipeline";
 import type { ClosingStage } from "@/domains/opportunities/pipeline-moves";
+import { saleNoticeFor } from "@/domains/vehicles/lifecycle";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 import { opportunityPath } from "@/lib/quotes/paths";
 
@@ -27,8 +28,9 @@ import { opportunityPath } from "@/lib/quotes/paths";
  * la tarjeta pasa a su columna y la Server Action guarda. Si el servidor
  * devuelve un error por campo, una falla o la unidad ya no está vinculada,
  * la tarjeta vuelve y este diálogo reabre con lo cargado y el aviso
- * (`state`). Ganar sin unidad vinculada no se ofrece: lleva a la
- * oportunidad, donde se vincula desde los matches.
+ * (`state`). Ganar sin unidad vinculada, o con una que ya no se puede
+ * vender (vendida o en preparación, propuesta DEC-051), no se ofrece: lleva
+ * a la oportunidad, donde se vincula otra desde los matches.
  */
 
 export type PipelineClosing = Readonly<{
@@ -51,6 +53,12 @@ export function PipelineCloseDialog({
   onConfirm: (closing: PipelineClosing, formData: FormData) => void;
   onCloseAutoFocus: (event: Event) => void;
 }) {
+  const sale = closing?.card.saleVehicle;
+  const unsellable =
+    closing?.state?.status === "vehicle_conflict" ||
+    (sale !== null &&
+      sale !== undefined &&
+      saleNoticeFor(sale.status).kind === "conflict");
   return (
     <ConfirmDialog
       open={closing !== null}
@@ -81,7 +89,9 @@ export function PipelineCloseDialog({
                 prefetch={false}
                 className="self-start rounded-sm text-label font-semibold text-brand hover:text-brand-strong hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
-                Abrir la oportunidad para vincular la unidad
+                {unsellable
+                  ? "Abrir la oportunidad para vincular otra unidad"
+                  : "Abrir la oportunidad para vincular la unidad"}
               </Link>
             }
           />

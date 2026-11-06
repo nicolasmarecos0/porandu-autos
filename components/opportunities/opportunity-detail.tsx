@@ -250,7 +250,13 @@ export function OpportunityDetailView({
         opportunityId={id}
         stage={stage}
         saleVehicle={
-          linked ? { name: linked.name, detail: linked.detail } : null
+          linked
+            ? {
+                name: linked.name,
+                detail: linked.detail,
+                status: linked.status,
+              }
+            : null
         }
         acceptedQuoteTotal={quotes.acceptedTotal}
       />

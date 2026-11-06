@@ -286,16 +286,21 @@ describe("unidad vinculada desde las tarjetas de match", () => {
     ]);
     const linked = section(html, "Unidad en negociación");
     expect(linked).toContain("Toyota Hilux");
-    expect(linked).toContain("Vincularla no la reserva: el stock no cambia.");
+    // Vincular no reserva; ganar sí vende (propuesta DEC-051).
+    expect(linked).toContain(
+      "Vincularla no la reserva: para apartarla, reservala desde Stock. Al marcar la oportunidad como ganada, pasa a Vendida.",
+    );
     expect(buttons(linked)).toEqual(["Quitar vínculo: Toyota Hilux"]);
     // Quitar envía la unidad vacía.
     expect(linked).toContain('name="vehicleId" value=""');
   });
 
-  it("Ganada: la unidad de la venta, de solo lectura y sin marcarla vendida (DEC-034 §4)", () => {
+  it("Ganada: la unidad de la venta, de solo lectura (DEC-034 §4) y vendida en el stock (propuesta DEC-051)", () => {
     const html = render({ stage: "won", linked: LINKED });
     const linked = section(html, "Unidad de la venta");
-    expect(linked).toContain("el stock no cambia");
+    expect(linked).toContain(
+      "Con el cierre, la unidad quedó Vendida en el stock.",
+    );
     expect(buttons(linked)).toEqual([]);
     expect(html).not.toContain("Vincular a la negociación:");
     expect(html).not.toContain("Quitar vínculo");
@@ -382,7 +387,7 @@ describe("tarjeta Cierre (DEC-034 §11)", () => {
       "Programada para el 15 oct 2026",
       "Unidad",
       "Toyota Hilux",
-      "el stock no cambia",
+      "Con este cierre, la unidad quedó Vendida en el stock.",
       "Los datos del cierre no se pueden modificar.",
     ]) {
       expect(card).toContain(text);

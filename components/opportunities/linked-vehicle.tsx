@@ -15,8 +15,9 @@ import { VehicleLinkButton } from "./vehicle-link";
  *   cierre (DEC-034 §4). Perdida también: es la unidad que se negociaba.
  * - Si la unidad ya no está disponible, se dice con su estado de Stock.
  *
- * Vincular no cambia el stock: la unidad sigue disponible y Ganada no la
- * marca vendida. La copy lo dice para que nadie lo suponga.
+ * Vincular no cambia el stock (no la reserva); ganar sí: la unidad vinculada
+ * pasa a Vendida en la misma transacción del cierre (Hito 19, propuesta
+ * DEC-051). La copy lo dice para que nadie suponga otra cosa.
  */
 
 const TITLES: Readonly<Record<Stage, string>> = {
@@ -28,8 +29,9 @@ const TITLES: Readonly<Record<Stage, string>> = {
 };
 
 const NOTES: Readonly<Partial<Record<Stage, string>>> = {
-  negotiating: "Vincularla no la reserva: el stock no cambia.",
-  won: "La venta y el estado Vendido de la unidad no se registran acá: el stock no cambia.",
+  negotiating:
+    "Vincularla no la reserva: para apartarla, reservala desde Stock. Al marcar la oportunidad como ganada, pasa a Vendida.",
+  won: "Con el cierre, la unidad quedó Vendida en el stock.",
 };
 
 export function LinkedVehicle({

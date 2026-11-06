@@ -267,7 +267,11 @@ describe("moveCard: el estado optimista", () => {
 
   it("ganada: primera de su columna, con la unidad vendida y el cierre de hoy", () => {
     const negotiating = openCard(1, "negotiating", 88, 30, {
-      saleVehicle: { name: "Toyota Hilux", detail: "SRV · 2025" },
+      saleVehicle: {
+        name: "Toyota Hilux",
+        detail: "SRV · 2025",
+        status: "available",
+      },
       pending: [
         {
           kind: "quote_approval",

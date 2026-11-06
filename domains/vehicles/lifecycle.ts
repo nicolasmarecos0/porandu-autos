@@ -414,4 +414,4 @@ export function saleNoticeFor(status: VehicleStatus): SaleNotice {
 
 /** "Al confirmar, la unidad pasa a Vendida en el stock." */
 export const SALE_NOTICE_TEXT =
-  "Al confirmar, la unidad vinculada pasa a estado «Vendida» en el stock: deja de ofrecerse en el catálogo y no se puede reservar ni vender otra vez.";
+  "Al confirmar, la unidad vinculada pasa a «Vendida» en el stock: deja de ofrecerse y no se puede reservar ni vender otra vez.";

@@ -1,8 +1,10 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { StatusChip } from "@/components/stock/stock-status";
 import { cn } from "@/components/ui/cn";
 import { FormField, inputClassName } from "@/components/ui/form-field";
+import { ChevronRightIcon } from "@/components/ui/icons";
 import { CURRENCIES, CURRENCY_LABELS } from "@/domains/money";
 import {
   CLOSURE_FIELDS,
@@ -18,6 +20,8 @@ import {
   type DeliveryStatus,
 } from "@/domains/opportunities/closure";
 import { noteLength, normalizeNoteBody } from "@/domains/opportunities/notes";
+import { SALE_NOTICE_TEXT, saleNoticeFor } from "@/domains/vehicles/lifecycle";
+import type { VehicleStatus } from "@/domains/vehicles/stock";
 
 /*
  * Campos del cierre comercial (DEC-034) dentro de la confirmación de
@@ -33,10 +37,20 @@ import { noteLength, normalizeNoteBody } from "@/domains/opportunities/notes";
  * (como las guarda el servidor). No conoce la base ni valida por su cuenta:
  * los errores llegan por campo (del navegador, con la misma validación del
  * dominio, o del servidor) y se enlazan a cada control.
+ *
+ * Ganar vende la unidad vinculada (Hito 19, propuesta DEC-051): la
+ * confirmación dice, junto a la unidad, que pasa de su estado actual a
+ * «Vendida» en el stock. Si ya está vendida o en preparación, no ofrece los
+ * campos: dice el conflicto y qué hacer (saleNoticeFor(), el mismo plan que
+ * aplica el servidor sobre la fila bloqueada).
  */
 
-/** La unidad que se vende: la vinculada a la negociación. */
-export type SaleVehicle = Readonly<{ name: string; detail: string }>;
+/** La unidad que se vende: la vinculada a la negociación, con su estado. */
+export type SaleVehicle = Readonly<{
+  name: string;
+  detail: string;
+  status: VehicleStatus;
+}>;
 
 const textareaClassName =
   "min-h-20 w-full resize-y rounded-md border border-border-default bg-surface-1 px-3 py-2 text-body text-text-primary transition-[border-color] hover:border-border-strong focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring aria-invalid:border-danger disabled:cursor-not-allowed disabled:bg-surface-2";
@@ -150,15 +164,28 @@ function WonFields({
     );
   }
 
+  const sale = saleNoticeFor(saleVehicle.status);
+  if (sale.kind === "conflict") {
+    return (
+      <>
+        <SaleUnit vehicle={saleVehicle} />
+        <p
+          role="alert"
+          className="rounded-md border border-warning-border bg-warning-soft px-3 py-2.5 text-label text-warning"
+        >
+          {sale.message}
+        </p>
+      </>
+    );
+  }
+
   return (
     <>
-      <div className="rounded-md border border-border-subtle bg-surface-2 px-3 py-2.5">
-        <p className="text-caption text-text-muted">Unidad vendida</p>
-        <p className="text-label font-semibold text-text-primary">
-          {saleVehicle.name}
+      <SaleUnit vehicle={saleVehicle} sold>
+        <p className="mt-2 border-t border-border-subtle pt-2 text-caption text-text-secondary">
+          {SALE_NOTICE_TEXT}
         </p>
-        <p className="text-caption text-text-secondary">{saleVehicle.detail}</p>
-      </div>
+      </SaleUnit>
       <div className="grid grid-cols-[1fr_9rem] gap-3">
         <FormField
           label="Precio final"
@@ -363,5 +390,51 @@ function LostFields({ errors, values, disabled }: ClosureFieldsProps) {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * La unidad que se vende, con su estado de Stock: el actual y, si se puede
+ * vender, el que va a tener al confirmar.
+ */
+function SaleUnit({
+  vehicle,
+  sold = false,
+  children,
+}: {
+  vehicle: SaleVehicle;
+  /** Mostrar el pase a «Vendida». */
+  sold?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-border-subtle bg-surface-2 px-3 py-2.5">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <p className="text-caption text-text-muted">
+            {sold ? "Unidad vendida" : "Unidad vinculada"}
+          </p>
+          <p className="text-label font-semibold text-text-primary">
+            {vehicle.name}
+          </p>
+          <p className="text-caption text-text-secondary">{vehicle.detail}</p>
+        </div>
+        <p className="flex shrink-0 items-center gap-1">
+          <span className="sr-only">En el stock:</span>
+          <StatusChip status={vehicle.status} />
+          {sold ? (
+            <>
+              <span className="sr-only">pasa a</span>
+              <ChevronRightIcon
+                aria-hidden="true"
+                className="size-3.5 text-text-muted"
+              />
+              <StatusChip status="sold" />
+            </>
+          ) : null}
+        </p>
+      </div>
+      {children}
+    </div>
   );
 }

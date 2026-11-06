@@ -15,7 +15,7 @@ import {
 } from "@/domains/opportunities/closure";
 import { STAGE_ACTION_LABELS } from "@/domains/opportunities/labels";
 import type { Stage } from "@/domains/opportunities/stages";
-import { saleConflictMessage } from "@/domains/vehicles/lifecycle";
+import { saleNoticeFor } from "@/domains/vehicles/lifecycle";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 
 import { ClosureFields, type SaleVehicle } from "./closure-fields";
@@ -131,7 +131,16 @@ export function ClosureForm({
 }: ClosureFormProps) {
   const [localErrors, setLocalErrors] = useState<ClosureErrors | null>(null);
 
-  const blocked = to === "won" && saleVehicle === null;
+  // El servidor dice el estado real de la unidad si cambió desde que se abrió
+  // el formulario (otra oportunidad la vendió, por ejemplo).
+  const unit =
+    saleVehicle && !pending && state?.status === "vehicle_conflict"
+      ? { ...saleVehicle, status: state.current }
+      : saleVehicle;
+  // Ganar exige una unidad vinculada que se pueda vender (propuesta DEC-051).
+  const blocked =
+    to === "won" &&
+    (unit === null || saleNoticeFor(unit.status).kind === "conflict");
   const errors: ClosureErrors =
     localErrors ??
     (!pending && state?.status === "invalid" ? state.errors : {});
@@ -195,7 +204,7 @@ export function ClosureForm({
           today={today}
           errors={errors}
           values={echo}
-          saleVehicle={saleVehicle}
+          saleVehicle={unit}
           disabled={pending}
         />
         {blocked && blockedHint ? blockedHint : null}
@@ -228,7 +237,7 @@ export function ClosureAlert({ state }: { state: CloseOpportunityState }) {
       : state?.status === "vehicle_required"
         ? "No se hizo ningún cambio: la oportunidad ya no tiene una unidad vinculada. Vinculá la unidad que se vende y volvé a intentar."
         : state?.status === "vehicle_conflict"
-          ? `No se hizo ningún cambio. ${saleConflictMessage(state.reason)}`
+          ? "No se hizo ningún cambio: el estado de la unidad en el stock cambió mientras completabas el cierre."
           : state?.status === "invalid"
             ? "Revisá los datos marcados. No se hizo ningún cambio."
             : null;

@@ -28,7 +28,7 @@ import {
 import { withTenant, type ScopedTransaction } from "../tenant";
 import { selectDemandRows } from "./demand-rows";
 import { selectLastNoteTimes } from "./opportunity-notes";
-import { selectMatchCandidates } from "./vehicles";
+import { selectMatchCandidates, statusFromDb } from "./vehicles";
 
 /*
  * Tablero de oportunidades: el embudo de ventas (propuesta DEC-048). Solo
@@ -87,6 +87,9 @@ const cardColumns = {
   vehicleModel: vehicles.model,
   vehicleVersion: vehicles.version,
   vehicleYear: vehicles.year,
+  // El cierre Ganada la vende (propuesta DEC-051): la confirmación dice qué
+  // pasa con su estado o por qué no se puede.
+  vehicleStatus: vehicles.status,
 };
 
 /** El contacto de la oportunidad, por las dos columnas de la FK compuesta. */
@@ -115,11 +118,13 @@ type CardRecord = Readonly<{
   vehicleModel: string | null;
   vehicleVersion: string | null;
   vehicleYear: number | null;
+  vehicleStatus: (typeof vehicles.$inferSelect)["status"] | null;
 }>;
 
 /** Fila leída → fila del dominio. Pura. */
 export function toPipelineRow(record: CardRecord): PipelineRow {
-  const { vehicleId, vehicleBrand, vehicleModel, vehicleYear } = record;
+  const { vehicleId, vehicleBrand, vehicleModel, vehicleYear, vehicleStatus } =
+    record;
   return {
     id: record.id,
     stage: record.stage,
@@ -133,13 +138,15 @@ export function toPipelineRow(record: CardRecord): PipelineRow {
       vehicleId !== null &&
       vehicleBrand !== null &&
       vehicleModel !== null &&
-      vehicleYear !== null
+      vehicleYear !== null &&
+      vehicleStatus !== null
         ? {
             id: vehicleId,
             brand: vehicleBrand,
             model: vehicleModel,
             version: record.vehicleVersion,
             year: vehicleYear,
+            status: statusFromDb[vehicleStatus],
           }
         : null,
   };

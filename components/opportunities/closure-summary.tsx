@@ -73,7 +73,7 @@ export function ClosureSummaryCard({
           </dl>
           <p className="text-caption text-text-secondary">
             {closure.outcome === "won"
-              ? "La venta y el estado Vendido de la unidad no se registran acá: el stock no cambia. Los datos del cierre no se pueden modificar."
+              ? "Con este cierre, la unidad quedó Vendida en el stock. Los datos del cierre no se pueden modificar."
               : "Los datos del cierre no se pueden modificar."}
           </p>
         </div>
