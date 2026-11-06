@@ -41,8 +41,9 @@ import { seedVehicles } from "./support/vehicles";
  * con las migraciones aplicadas:
  *
  *   Server Action → requireTenant() → validación del id → withTenant() →
- *   UPDATE … AND status = 'in_preparation' → RLS (USING / WITH CHECK) →
- *   la unidad pasa a Disponibles en la Stock List real
+ *   UPDATE … AND status = 'in_preparation' → RLS (policy de UPDATE) +
+ *   trigger de transiciones (0020, propuesta DEC-051) → la unidad pasa a
+ *   Disponibles en la Stock List real
  *
  * La acción, la escritura y el loader son los reales, conectados como
  * app_runtime. Supabase Auth (claims ya verificados), la cookie, redirect()
@@ -376,17 +377,18 @@ describe("solo in_preparation → available", () => {
         current: status,
       });
       expect(await row(id)).toEqual(before);
-
-      // Tampoco con un UPDATE directo por el boundary: RLS (USING) no la deja
-      // tocar, sin error y sin filas.
-      expect(
-        await directUpdate(tenantContext(USER_A, ORG_1), id, {
-          status: "available",
-        }),
-      ).toEqual([]);
-      expect(await row(id)).toEqual(before);
     },
   );
+
+  it("una vendida tampoco vuelve a disponible con un UPDATE directo: el trigger la rechaza (23514)", async () => {
+    const id = await unit(ORG_1, "sold");
+    const before = await row(id);
+    await expectSqlError(
+      directUpdate(tenantContext(USER_A, ORG_1), id, { status: "available" }),
+      "23514",
+    );
+    expect(await row(id)).toEqual(before);
+  });
 
   it("marcar dos veces seguidas: la primera hace la transición, la segunda no", async () => {
     const id = await unit(ORG_1);
@@ -517,29 +519,30 @@ describe("RLS y privilegios: la base rechaza lo que el flujo no permite", () => 
   const ctx = () => tenantContext(USER_A, ORG_1);
 
   it.each([["reserved"], ["sold"], ["in_preparation"]] as const)(
-    "in_preparation → %s falla por el WITH CHECK de la policy (42501)",
+    "in_preparation → %s falla por el trigger de transiciones (23514)",
     async (status) => {
       const id = await unit(ORG_1);
       const before = await row(id);
-      await expectSqlError(directUpdate(ctx(), id, { status }), "42501");
+      await expectSqlError(directUpdate(ctx(), id, { status }), "23514");
       expect(await row(id)).toEqual(before);
     },
   );
 
-  it("available → in_preparation (volver atrás) no toca la fila", async () => {
+  it("available → in_preparation (volver atrás) falla por el trigger (23514)", async () => {
     const id = await unit(ORG_1, "available");
-    expect(await directUpdate(ctx(), id, { status: "in_preparation" })).toEqual(
-      [],
+    await expectSqlError(
+      directUpdate(ctx(), id, { status: "in_preparation" }),
+      "23514",
     );
     expect(await statusOf(id)).toBe("available");
   });
 
-  it("updated_at solo se escribe dentro de la transición: sin cambiar el estado, falla", async () => {
+  it("updated_at solo se escribe dentro de una transición: sin cambiar el estado, falla (23514)", async () => {
     const id = await unit(ORG_1);
     const before = await row(id);
     await expectSqlError(
       directUpdate(ctx(), id, { updatedAt: new Date() }),
-      "42501",
+      "23514",
     );
     expect(await row(id)).toEqual(before);
   });
@@ -621,17 +624,14 @@ describe("RLS y privilegios: la base rechaza lo que el flujo no permite", () => 
   });
 
   /*
-   * Mutaciones: cada una rompe una condición de la policy y muestra que los
-   * tests de arriba la detectan. La policy se restaura siempre.
+   * Mutaciones: cada una rompe una barrera de la base y muestra que los
+   * tests de arriba la detectan. La barrera se restaura siempre.
    */
-  const ORIGINAL_USING =
-    "organization_id IN (SELECT private.user_org_ids()) AND status = 'in_preparation'";
-  const ORIGINAL_CHECK =
-    "organization_id IN (SELECT private.user_org_ids()) AND status = 'available'";
+  const ORIGINAL_POLICY = "organization_id IN (SELECT private.user_org_ids())";
 
   async function updatePolicy() {
     return (await policies(db.admin)).find(
-      (policy) => policy.name === "vehicles_update_mark_available",
+      (policy) => policy.name === "vehicles_update_status",
     );
   }
 
@@ -642,49 +642,35 @@ describe("RLS y privilegios: la base rechaza lo que el flujo no permite", () => 
   ): Promise<T> {
     const original = await updatePolicy();
     await db.admin.unsafe(
-      `ALTER POLICY vehicles_update_mark_available ON public.vehicles USING (${using}) WITH CHECK (${check})`,
+      `ALTER POLICY vehicles_update_status ON public.vehicles USING (${using}) WITH CHECK (${check})`,
     );
     try {
       return await fn();
     } finally {
       await db.admin.unsafe(
-        `ALTER POLICY vehicles_update_mark_available ON public.vehicles USING (${ORIGINAL_USING}) WITH CHECK (${ORIGINAL_CHECK})`,
+        `ALTER POLICY vehicles_update_status ON public.vehicles USING (${ORIGINAL_POLICY}) WITH CHECK (${ORIGINAL_POLICY})`,
       );
       expect(await updatePolicy()).toEqual(original);
     }
   }
 
-  it("mutación: sin status = 'in_preparation' en USING, una unidad reservada pasaría a disponible", async () => {
-    const id = await unit(ORG_1, "reserved");
-    await withPolicy(
-      "organization_id IN (SELECT private.user_org_ids())",
-      ORIGINAL_CHECK,
-      async () => {
-        expect(await directUpdate(ctx(), id, { status: "available" })).toEqual([
-          { id, status: "available" },
-        ]);
-      },
-    );
-    const other = await unit(ORG_1, "reserved");
-    expect(await directUpdate(ctx(), other, { status: "available" })).toEqual(
-      [],
-    );
-  });
-
-  it("mutación: sin status = 'available' en WITH CHECK, una unidad en preparación pasaría a vendida", async () => {
+  it("mutación: sin el trigger de transiciones, una unidad en preparación pasaría a vendida", async () => {
     const id = await unit(ORG_1);
-    await withPolicy(
-      ORIGINAL_USING,
-      "organization_id IN (SELECT private.user_org_ids())",
-      async () => {
-        expect(await directUpdate(ctx(), id, { status: "sold" })).toEqual([
-          { id, status: "sold" },
-        ]);
-      },
+    await db.admin.unsafe(
+      "ALTER TABLE public.vehicles DISABLE TRIGGER vehicles_status_transition",
     );
+    try {
+      expect(await directUpdate(ctx(), id, { status: "sold" })).toEqual([
+        { id, status: "sold" },
+      ]);
+    } finally {
+      await db.admin.unsafe(
+        "ALTER TABLE public.vehicles ENABLE TRIGGER vehicles_status_transition",
+      );
+    }
     await expectSqlError(
       directUpdate(ctx(), await unit(ORG_1), { status: "sold" }),
-      "42501",
+      "23514",
     );
   });
 
@@ -708,17 +694,13 @@ describe("RLS y privilegios: la base rechaza lo que el flujo no permite", () => 
       );
     // Sin la organización solo en USING, el WITH CHECK todavía la exige: el
     // UPDATE falla en vez de pasar en silencio.
-    await withPolicy("status = 'in_preparation'", ORIGINAL_CHECK, async () => {
+    await withPolicy("status = 'in_preparation'", ORIGINAL_POLICY, async () => {
       await expectSqlError(unbounded(), "42501");
     });
     expect(await statusOf(id)).toBe("in_preparation");
-    await withPolicy(
-      "status = 'in_preparation'",
-      "status = 'available'",
-      async () => {
-        await unbounded();
-      },
-    );
+    await withPolicy("status = 'in_preparation'", "true", async () => {
+      await unbounded();
+    });
     expect(await statusOf(id)).toBe("available");
     const other = await unit(ORG_2);
     await unbounded();
@@ -823,11 +805,12 @@ describe("concurrencia: una sola transición por unidad", () => {
     expect(result).toMatchObject({ outcome: "unchanged", status: "available" });
   });
 
-  it("si otra transacción la reserva mientras el pedido espera, el pedido no la sobrescribe", async () => {
+  it("si otra transacción la pone en el salón y la reserva mientras el pedido espera, el pedido no la sobrescribe", async () => {
     const id = await unit(ORG_1);
     const result = await whileRowIsHeld(
       id,
       async (tx) => {
+        await tx`UPDATE public.vehicles SET status = 'available' WHERE id = ${id}`;
         await tx`UPDATE public.vehicles SET status = 'reserved' WHERE id = ${id}`;
       },
       () => transitionVehicleToAvailable(tenantContext(USER_C, ORG_1), id),

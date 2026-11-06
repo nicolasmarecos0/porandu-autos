@@ -28,6 +28,7 @@ import {
 } from "@/db/queries/record-opportunity-note";
 import { todayInAsuncion } from "@/domains/opportunities/closure";
 import { requireTenant } from "@/lib/tenant/session";
+import { VEHICLE_LIFECYCLE_PATHS } from "@/lib/vehicles/paths";
 
 import { parseCloseRequest, type CloseOpportunityState } from "./closure";
 import { demandErrorsToForm, parseDemandEditForm } from "./demand-form";
@@ -81,9 +82,12 @@ function logFailure(
 ): void {
   const { name, cause } =
     error instanceof Error ? error : { name: undefined, cause: undefined };
+  // Drizzle deja el error del driver en `cause`; uno del COMMIT (el
+  // constraint trigger diferido de 0020) llega sin envoltorio.
+  const source = cause ?? error;
   const detail = (key: "code" | "constraint_name") =>
-    typeof cause === "object" && cause !== null && key in cause
-      ? (cause as Record<typeof key, unknown>)[key]
+    typeof source === "object" && source !== null && key in source
+      ? (source as Record<typeof key, unknown>)[key]
       : undefined;
   console.error(`[opportunities] ${operation} failed`, {
     name,
@@ -298,12 +302,14 @@ export async function changeOpportunityStage(
 
 /*
  * Cierre comercial (DEC-034), closeOpportunity(): la única puerta para
- * marcar una oportunidad ganada o perdida, con sus metadatos.
+ * marcar una oportunidad ganada o perdida, con sus metadatos. Ganada vende
+ * la unidad vinculada en la misma transacción (Hito 19, propuesta DEC-051).
  *
  *   requireTenant() → leer y validar el pedido (Zod) →
- *   closeOpportunityWithMetadata() (withTenant(), fila bloqueada, planner
- *   del dominio, una UPDATE, CHECKs de cierre y trigger) → revalidar
- *   /opportunities y /opportunities/[id]
+ *   closeOpportunityWithMetadata() (withTenant(), filas bloqueadas,
+ *   planners del dominio, la UPDATE del cierre y, al ganar, la de la
+ *   unidad, CHECKs y triggers) → revalidar /opportunities/[id] y las vistas
+ *   del stock
  *
  * 1. El TenantContext sale de requireTenant(). Autorización: membership
  *    activa AND role IN ('admin', 'seller') (DEC-027 §4), hoy todo contexto
@@ -311,20 +317,26 @@ export async function changeOpportunityStage(
  *    regla se revisa. Cualquier miembro cierra la oportunidad de otro
  *    (DEC-023: sin responsable asignado).
  * 2. El pedido solo trae la oportunidad, el resultado y sus campos. La
- *    etapa de origen y la unidad las lee el servidor de la fila bloqueada;
+ *    etapa de origen, la unidad y su estado los lee el servidor de las filas
+ *    bloqueadas;
  *    organización, usuario y reloj no salen del pedido ("hoy" es el día de
  *    Asunción del servidor). Un id malformado o ajeno es `not_found`, sin
  *    revelar nada.
  * 3. Un campo inválido vuelve con lo cargado y el error de cada campo, sin
  *    llegar a la base. Falla de forma segura: un cierre que la máquina no
  *    permite es `invalid_transition` con la etapa real, ganar sin unidad es
- *    `vehicle_required` y pedir el cierre que ya tiene es `unchanged` (los
- *    metadatos no se reescriben); en ninguno cambia nada.
+ *    `vehicle_required`, ganar con una unidad ya vendida o en preparación es
+ *    `vehicle_conflict` (con su estado real) y pedir el cierre que ya tiene
+ *    es `unchanged` (los metadatos no se reescriben); en ninguno cambia
+ *    nada.
  * 4. Un error inesperado no expone detalles de la base ni lo cargado (los
  *    logs no registran valores) y lo devuelve para reintentar.
  *
- * Cerrar no modifica `last_activity_at` (DEC-034 §9) ni el stock. El estado
- * previo (`_previous`) lo envía el cliente: no se usa.
+ * Cerrar no modifica `last_activity_at` (DEC-034 §9). Ganar deja la unidad
+ * vinculada Vendida; perder no toca el stock. Un cierre cambia el Inventario,
+ * el Catálogo y las Métricas (stock y conversión), así que se revalidan
+ * todas las vistas del ciclo de vida de la unidad. El estado previo
+ * (`_previous`) lo envía el cliente: no se usa.
  */
 export async function closeOpportunity(
   _previous: CloseOpportunityState,
@@ -357,10 +369,10 @@ export async function closeOpportunity(
   }
 
   const revalidate = () => {
-    revalidatePath(OPPORTUNITIES_PATH);
     revalidatePath(`${OPPORTUNITIES_PATH}/${opportunityId}`);
-    // El embudo (DEC-048) también cierra: vuelve con el cierre real.
-    revalidatePath(PIPELINE_PATH);
+    // La cola, el embudo (DEC-048, que también cierra), el stock que la venta
+    // cambia y las métricas (propuesta DEC-051).
+    for (const path of VEHICLE_LIFECYCLE_PATHS) revalidatePath(path);
   };
   switch (outcome.outcome) {
     case "closed":
@@ -370,6 +382,16 @@ export async function closeOpportunity(
         opportunityId,
         from: outcome.from,
         to: outcome.to,
+      };
+    case "vehicle_conflict":
+      // La unidad cambió desde que se abrió el formulario (otra oportunidad
+      // la vendió, por ejemplo): las páginas vuelven con su estado real.
+      revalidate();
+      return {
+        status: "vehicle_conflict",
+        opportunityId,
+        current: outcome.current,
+        reason: outcome.reason,
       };
     case "unchanged":
       return { status: "unchanged", opportunityId, stage: outcome.stage };

@@ -75,6 +75,14 @@ describe("una sola fuente para la Stock List", { timeout: 30_000 }, () => {
       `import { VEHICLES } from "../../mocks/vehicles";${use("VEHICLES")}`,
     ],
     [
+      "db/queries/change-vehicle-status.ts",
+      `import { VEHICLES } from "../../mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
+      "lib/vehicles/status-change.ts",
+      `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
+    ],
+    [
       "lib/vehicles/availability.ts",
       `import { VEHICLES } from "@/mocks/vehicles";${use("VEHICLES")}`,
     ],

@@ -11,6 +11,8 @@ import {
   type ClosureValues,
 } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
+import type { SaleConflictReason } from "@/domains/vehicles/lifecycle";
+import type { VehicleStatus } from "@/domains/vehicles/stock";
 
 /*
  * Pedido y respuesta de la Server Action closeOpportunity() (DEC-034). El
@@ -44,6 +46,16 @@ export type CloseOpportunityState =
     }>
   /** Ganar exige la unidad vinculada. Nada cambió. */
   | Readonly<{ status: "vehicle_required"; opportunityId: string }>
+  /**
+   * Ganar vende la unidad vinculada (propuesta DEC-051): una ya vendida o en
+   * preparación es un conflicto. `current` es su estado real. Nada cambió.
+   */
+  | Readonly<{
+      status: "vehicle_conflict";
+      opportunityId: string;
+      current: VehicleStatus;
+      reason: SaleConflictReason;
+    }>
   /** Algún campo no es válido: vuelve lo cargado para corregirlo. */
   | Readonly<{
       status: "invalid";

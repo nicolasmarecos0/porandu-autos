@@ -38,6 +38,14 @@ export const statusFromDb: Record<VehicleRecord["status"], VehicleStatus> = {
   sold: "sold",
 };
 
+/** El estado del dominio como lo guarda la base (propuesta DEC-051). */
+export const statusToDb: Record<VehicleStatus, VehicleRecord["status"]> = {
+  inPreparation: "in_preparation",
+  available: "available",
+  reserved: "reserved",
+  sold: "sold",
+};
+
 /** Lo que la lista lee de la base: solo lo persistido que muestra la UI. */
 export type StockRow = Readonly<
   Pick<

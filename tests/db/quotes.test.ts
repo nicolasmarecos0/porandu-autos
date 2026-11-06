@@ -543,6 +543,26 @@ describe("estados", () => {
     const sold = await freshQuote();
     await setStatus(ctxA(), sold.id, "approved");
     await setStatus(ctxA(), sold.id, "sent");
+    // Otra oportunidad se ganó con la unidad cotizada: la venta (propuesta
+    // DEC-051) la deja vendida. El superusuario arma el cierre con un INSERT
+    // y la unidad pasa a `sold` por el trigger, que exige esa ganada.
+    sequence += 1;
+    const buyer = randomUUID();
+    await db.admin`
+      INSERT INTO public.contacts (id, organization_id, name)
+      VALUES (${buyer}, ${ORG_1}, ${`Comprador ${sequence}`})
+    `;
+    await db.admin`
+      INSERT INTO public.opportunities ${db.admin({
+        id: randomUUID(),
+        organization_id: ORG_1,
+        contact_id: buyer,
+        stage: "won",
+        vehicle_id: sold.vehicleId,
+        source: "web",
+        ...closureColumns("won"),
+      })}
+    `;
     await db.admin`UPDATE public.vehicles SET status = 'sold' WHERE id = ${sold.vehicleId}`;
     await expectSqlError(
       setStatus(ctxA(), sold.id, "accepted"),

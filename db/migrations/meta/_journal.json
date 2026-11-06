@@ -141,6 +141,13 @@
       "when": 1793572316479,
       "tag": "0019_whatsapp_delivery_status",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793970802918,
+      "tag": "0020_vehicle_lifecycle",
+      "breakpoints": true
     }
   ]
 }

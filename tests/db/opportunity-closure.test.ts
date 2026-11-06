@@ -322,10 +322,16 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
       from: "negotiating",
       to: "won",
     });
+    // El detalle, y las vistas del stock: ganar vende la unidad (propuesta
+    // DEC-051).
     expect(mocks.revalidated).toEqual([
-      "/opportunities",
       `/opportunities/${id}`,
+      "/stock",
+      "/stock/catalog",
+      "/opportunities",
       "/opportunities/pipeline",
+      "/cockpit",
+      "/cockpit/metrics",
     ]);
 
     const after = await row(id);
@@ -342,10 +348,12 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
     expect(after!.updatedAt.getTime()).toBeGreaterThan(
       before!.updatedAt.getTime(),
     );
-    // DEC-034 §9 y §12: ni la recencia, ni la unidad, ni su stock.
+    // DEC-034 §9: ni la recencia ni la unidad vinculada. La unidad pasa a
+    // vendida en la misma transacción (propuesta DEC-051, supersede DEC-034
+    // §12); vehicle-lifecycle.test.ts prueba la venta a fondo.
     expect(after!.lastActivityAt).toEqual(before!.lastActivityAt);
     expect(after!.vehicleId).toBe(vehicleId);
-    expect(await vehicleStatus(vehicleId!)).toBe("available");
+    expect(await vehicleStatus(vehicleId!)).toBe("sold");
   });
 
   it("guaraníes y centavos se guardan exactos, sin pasar por float", async () => {

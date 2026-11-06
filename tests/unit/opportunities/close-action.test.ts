@@ -119,15 +119,13 @@ const EMPTY_VALUES = {
 };
 
 describe("closeOpportunity()", () => {
-  it("ganar: requireTenant() → escritura con ese contexto y el cierre validado → revalidar la cola, el detalle y el embudo", async () => {
+  it("ganar: requireTenant() → escritura con ese contexto y el cierre validado → revalidar el detalle y las vistas del stock", async () => {
     const state = await closeOpportunity(null, form(WON_FIELDS));
 
     expect(mocks.calls).toEqual([
       "requireTenant",
       "close",
-      "revalidatePath",
-      "revalidatePath",
-      "revalidatePath",
+      ...Array.from({ length: 7 }, () => "revalidatePath"),
     ]);
     expect(mocks.close).toHaveBeenCalledWith(CTX, {
       opportunityId: ID,
@@ -140,10 +138,16 @@ describe("closeOpportunity()", () => {
       },
     });
     expect(mocks.revalidatePath.mock.calls).toEqual([
-      ["/opportunities"],
       [`/opportunities/${ID}`],
-      // El embudo de ventas (DEC-048) también pide pases y cierres.
+      // Ganar vende la unidad (propuesta DEC-051): el Inventario, el
+      // Catálogo, la cola, el embudo (DEC-048, que también cierra), el
+      // Cockpit y sus Métricas.
+      ["/stock"],
+      ["/stock/catalog"],
+      ["/opportunities"],
       ["/opportunities/pipeline"],
+      ["/cockpit"],
+      ["/cockpit/metrics"],
     ]);
     expect(state).toEqual({
       status: "closed",
@@ -348,6 +352,24 @@ describe("closeOpportunity()", () => {
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/opportunities");
     expect(mocks.revalidatePath).toHaveBeenCalledWith(`/opportunities/${ID}`);
+  });
+
+  it("vehicle_conflict revalida y devuelve el estado real de la unidad (propuesta DEC-051)", async () => {
+    mocks.close.mockImplementation(async () => ({
+      outcome: "vehicle_conflict",
+      opportunityId: ID,
+      current: "sold",
+      reason: "already_sold",
+    }));
+    expect(await closeOpportunity(null, form(WON_FIELDS))).toEqual({
+      status: "vehicle_conflict",
+      opportunityId: ID,
+      current: "sold",
+      reason: "already_sold",
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(`/opportunities/${ID}`);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/stock");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/cockpit/metrics");
   });
 
   it("vehicle_required revalida: la unidad pudo cambiar desde que se abrió el formulario", async () => {

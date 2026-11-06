@@ -172,6 +172,21 @@ const markVehicleAvailableImport = {
   message: MARK_VEHICLE_AVAILABLE_MESSAGE,
 };
 
+// Hito 19 (propuesta DEC-051): el ciclo de vida de una unidad desde Stock
+// (poner en el salón, reservar, liberar) tiene una sola puerta, la Server
+// Action changeVehicleStatus() (lib/vehicles/actions.ts), que obtiene el
+// contexto con requireTenant() y valida el pedido antes de escribir. Vender
+// no pasa por acá: lo hace el cierre Ganada (closeOpportunity()).
+const CHANGE_VEHICLE_STATUS_MESSAGE =
+  "Vehicle statuses change only through the changeVehicleStatus() Server Action (lib/vehicles/actions.ts): requireTenant(), server-side validation, then withTenant(). A sale happens only when the opportunity is closed as won (closeOpportunity()).";
+const changeVehicleStatusImport = {
+  regex:
+    "(^|/)db/queries/change-vehicle-status$|^\\.{1,2}/change-vehicle-status$",
+  // Los tipos del resultado (VehicleStatusChangeOutcome) no escriben nada.
+  allowTypeImports: true,
+  message: CHANGE_VEHICLE_STATUS_MESSAGE,
+};
+
 // H1.6 (DEC-032): el cambio de etapa de una oportunidad tiene una sola
 // puerta, la Server Action changeOpportunityStage()
 // (lib/opportunities/actions.ts), que obtiene el contexto con
@@ -395,6 +410,7 @@ const basePatterns = [
   createOpportunityImport,
   createVehicleImport,
   markVehicleAvailableImport,
+  changeVehicleStatusImport,
   changeOpportunityStageImport,
   closeOpportunityImport,
   recordOpportunityNoteImport,
@@ -542,6 +558,7 @@ const eslintConfig = defineConfig([
       "db/queries/vehicles.ts",
       "db/queries/create-vehicle.ts",
       "db/queries/mark-vehicle-available.ts",
+      "db/queries/change-vehicle-status.ts",
       "db/queries/stock-catalog.ts",
     ],
     rules: {
@@ -598,6 +615,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeVehicleStatusImport,
             changeOpportunityStageImport,
             closeOpportunityImport,
             recordOpportunityNoteImport,
@@ -632,6 +650,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeVehicleStatusImport,
             changeOpportunityStageImport,
             closeOpportunityImport,
             recordOpportunityNoteImport,
@@ -667,6 +686,7 @@ const eslintConfig = defineConfig([
             opportunitiesMockImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeVehicleStatusImport,
             recordMessageImport,
             settingsWriteImport,
             ingestWhatsAppImport,
@@ -854,6 +874,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeVehicleStatusImport,
             changeOpportunityStageImport,
             closeOpportunityImport,
             recordOpportunityNoteImport,
@@ -898,6 +919,7 @@ const eslintConfig = defineConfig([
             createOpportunityImport,
             createVehicleImport,
             markVehicleAvailableImport,
+            changeVehicleStatusImport,
             changeOpportunityStageImport,
             closeOpportunityImport,
             recordOpportunityNoteImport,

@@ -8,10 +8,16 @@ import {
   type ClosureOutcome,
 } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
+import {
+  planVehicleSale,
+  type SaleConflictReason,
+} from "@/domains/vehicles/lifecycle";
+import type { VehicleStatus } from "@/domains/vehicles/stock";
 
-import { opportunities } from "../schema";
+import { opportunities, vehicles } from "../schema";
 import { withTenant, type TenantContext } from "../tenant";
 import { stageFromDb } from "./opportunities";
+import { statusFromDb, statusToDb } from "./vehicles";
 
 /*
  * Cierre comercial de una oportunidad (DEC-034): ganada o perdida, con sus
@@ -21,8 +27,11 @@ import { stageFromDb } from "./opportunities";
  * importar este módulo desde cualquier otro lado.
  *
  *   TenantContext → withTenant() → SELECT … FOR UPDATE (etapa y unidad) →
- *   planOpportunityClosure() (dominio) → UPDATE … AND stage = <la leída>
- *   AND vehicle_id = <la leída> → RLS + CHECKs de cierre + trigger → COMMIT
+ *   planOpportunityClosure() (dominio) → [Ganada: SELECT … FOR UPDATE de
+ *   la unidad → planVehicleSale() (dominio)] → UPDATE … AND stage = <la
+ *   leída> AND vehicle_id = <la leída> → RLS + CHECKs de cierre + trigger
+ *   → [Ganada: UPDATE de la unidad a `sold` → trigger de vehicles] →
+ *   constraint trigger diferido → COMMIT
  *
  * - El cliente solo identifica la oportunidad y manda el cierre ya
  *   validado. La etapa de origen y la unidad las lee este módulo de la fila
@@ -36,13 +45,24 @@ import { stageFromDb } from "./opportunities";
  *   después. Si este módulo tuviera un bug, la base igual lo rechaza (23514).
  * - Escribe la etapa y los metadatos en una sola UPDATE: los del otro
  *   resultado quedan NULL. `updated_at` lo fija el trigger con el reloj de la
- *   base; `last_activity_at` no cambia (DEC-034 §9), ni la unidad, ni su
- *   stock (la unidad vendida sigue `available`, DEC-034 §12).
+ *   base; `last_activity_at` no cambia (DEC-034 §9), ni la unidad vinculada.
+ * - Ganada vende la unidad (Hito 19, propuesta DEC-051 §4): en la misma
+ *   transacción, la unidad vinculada (la vendida, DEC-034 §3) se bloquea,
+ *   el dominio confirma que está disponible o reservada y pasa a `sold`
+ *   después de la oportunidad (el trigger de vehicles exige la oportunidad
+ *   ganada para vender). Una unidad ya vendida o en preparación es
+ *   `vehicle_conflict`: no se escribe nada, ni la oportunidad. El
+ *   constraint trigger diferido de 0020 lo vuelve a exigir al COMMIT: una
+ *   ganada sin su unidad vendida revierte la transacción entera.
+ * - Perdida no toca el stock: una unidad reservada sigue reservada (la
+ *   reserva se libera desde Stock).
  * - Concurrencia: el FOR UPDATE serializa los pedidos sobre una misma
  *   oportunidad. El segundo lee la etapa ya confirmada y el dominio decide
  *   sobre ella: el mismo cierre es `unchanged` (sin reescribir los
  *   metadatos) y el otro resultado, `invalid_transition`. Nunca ganada y
- *   perdida, nunca dos cierres.
+ *   perdida, nunca dos cierres. El bloqueo de la unidad (siempre después
+ *   del de la oportunidad) serializa también dos ganadas que comparten la
+ *   unidad y un cambio de estado desde Stock: nunca se vende dos veces.
  * - Una oportunidad inexistente o de otra organización es `not_found`, sin
  *   revelar cuál de las dos.
  */
@@ -74,6 +94,16 @@ export type CloseOpportunityOutcome =
     }>
   /** Ganar sin una unidad vinculada. Nada cambió. */
   | Readonly<{ outcome: "vehicle_required"; opportunityId: string }>
+  /**
+   * Ganar con una unidad que no se puede vender (ya vendida o en
+   * preparación). `current` es su estado real. Nada cambió.
+   */
+  | Readonly<{
+      outcome: "vehicle_conflict";
+      opportunityId: string;
+      current: VehicleStatus;
+      reason: SaleConflictReason;
+    }>
   /** No existe, o no es de la organización activa. Nada cambió. */
   | Readonly<{ outcome: "not_found" }>;
 
@@ -142,6 +172,34 @@ export async function closeOpportunityWithMetadata(
         break;
     }
 
+    // Ganada: la unidad vinculada se vende en esta misma transacción. Se
+    // bloquea después de la oportunidad, siempre en ese orden.
+    let sale: { vehicleId: string; from: VehicleStatus } | null = null;
+    if (plan.closure.outcome === "won" && current.vehicleId !== null) {
+      const [unit] = await tx
+        .select({ status: vehicles.status })
+        .from(vehicles)
+        .where(
+          and(
+            eq(vehicles.organizationId, organizationId),
+            eq(vehicles.id, current.vehicleId),
+          ),
+        )
+        .for("update");
+      // La FK compuesta garantiza la unidad de la misma organización.
+      if (!unit) throw new Error("the linked vehicle is missing");
+      const salePlan = planVehicleSale(statusFromDb[unit.status]);
+      if (salePlan.kind === "conflict") {
+        return {
+          outcome: "vehicle_conflict",
+          opportunityId,
+          current: salePlan.current,
+          reason: salePlan.reason,
+        };
+      }
+      sale = { vehicleId: current.vehicleId, from: salePlan.from };
+    }
+
     // La fila está bloqueada, así que etapa y unidad no pueden haber
     // cambiado; la condición es una barrera más contra un bug de este módulo.
     const updated = await tx
@@ -159,6 +217,25 @@ export async function closeOpportunityWithMetadata(
       .returning({ id: opportunities.id });
     if (updated.length !== 1) {
       throw new Error("opportunity closure affected an unexpected row count");
+    }
+
+    if (sale) {
+      // La unidad está bloqueada desde arriba: su estado no cambió. El
+      // trigger de vehicles exige el pase y la oportunidad ya ganada.
+      const sold = await tx
+        .update(vehicles)
+        .set({ status: "sold" })
+        .where(
+          and(
+            eq(vehicles.organizationId, organizationId),
+            eq(vehicles.id, sale.vehicleId),
+            eq(vehicles.status, statusToDb[sale.from]),
+          ),
+        )
+        .returning({ id: vehicles.id });
+      if (sold.length !== 1) {
+        throw new Error("vehicle sale affected an unexpected row count");
+      }
     }
     return {
       outcome: "closed",

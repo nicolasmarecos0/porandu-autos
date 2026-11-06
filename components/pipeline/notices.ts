@@ -93,7 +93,8 @@ export function advanceOutcome(
 /**
  * Respuesta de un cierre (closeOpportunity(), DEC-034 §6) que no reabre la
  * confirmación. Los que se corrigen o reintentan con el formulario
- * (`invalid`, `failed`, `vehicle_required`) los muestra la confirmación.
+ * (`invalid`, `failed`, `vehicle_required`, `vehicle_conflict`) los muestra
+ * la confirmación.
  */
 export function closeOutcome(
   name: string,

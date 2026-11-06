@@ -218,6 +218,59 @@ describe(
   },
 );
 
+const importStatusWrite = `import { transitionVehicleStatus } from "@/db/queries/change-vehicle-status";\nexport const use = transitionVehicleStatus;\n`;
+
+describe(
+  "una sola puerta para el ciclo de vida de las unidades (Hito 19, propuesta DEC-051)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/stock/page.tsx",
+      "app/(app)/stock/catalog/page.tsx",
+      "components/stock/stock-view.tsx",
+      "components/stock/catalog/vehicle-sheet.tsx",
+      "components/opportunities/closure-form.tsx",
+      "lib/vehicles/status-change.ts",
+      "lib/opportunities/actions.ts",
+      "lib/tenant/session.ts",
+      "db/queries/vehicles.ts",
+      "db/queries/close-opportunity.ts",
+      "db/queries/stock-catalog.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+      "domains/vehicles/lifecycle.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importStatusWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/close-opportunity.ts",
+          `import { transitionVehicleStatus } from "./change-vehicle-status";\nexport const use = transitionVehicleStatus;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en la Server Action", async () => {
+      expect(
+        await restrictedBy("lib/vehicles/actions.ts", importStatusWrite),
+      ).toEqual([]);
+    });
+
+    it("los tipos del resultado sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/vehicles/status-change.ts",
+          `import type { VehicleStatusChangeOutcome } from "@/db/queries/change-vehicle-status";\nexport type T = VehicleStatusChangeOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
 const importStageWrite = `import { transitionOpportunityStage } from "@/db/queries/change-opportunity-stage";\nexport const use = transitionOpportunityStage;\n`;
 
 describe(
@@ -725,6 +778,7 @@ describe(
       ["db/queries/create-opportunity.ts"],
       ["db/queries/create-vehicle.ts"],
       ["db/queries/mark-vehicle-available.ts"],
+      ["db/queries/change-vehicle-status.ts"],
     ])("%s no importa db/client", async (filePath) => {
       for (const code of [
         `import { getDb } from "../client";\nexport const use = getDb;\n`,
@@ -738,6 +792,7 @@ describe(
     it.each([
       ["db/queries/create-vehicle.ts"],
       ["db/queries/mark-vehicle-available.ts"],
+      ["db/queries/change-vehicle-status.ts"],
     ])("%s no importa withUser() ni resolveTenant()", async (filePath) => {
       for (const code of [
         `import { withUser } from "../tenant";\nexport const use = withUser;\n`,
