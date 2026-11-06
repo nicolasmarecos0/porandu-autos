@@ -7,7 +7,8 @@ import { formatMoney, groupThousands, type Currency } from "@/domains/money";
 
 /**
  * Estado comercial de la unidad (TB §10, "Estados de vehículo": el mínimo
- * de P1). En H1.3A solo se lee: las transiciones llegan con su flujo.
+ * de P1). Sus transiciones son la máquina de ./lifecycle (propuesta
+ * DEC-051).
  */
 export type VehicleStatus = "inPreparation" | "available" | "reserved" | "sold";
 
@@ -34,7 +35,11 @@ export type StockVehicle = Readonly<{
   status: VehicleStatus;
 }>;
 
-/* Copy visible (es-PY). */
+/*
+ * Copy visible (es-PY). Los estados se nombran en femenino, como la unidad
+ * ("la unidad quedó Reservada"), igual que los grupos de la lista
+ * (Reservadas, Vendidas) y el pedido del fundador para el Hito 19.
+ */
 
 export const VEHICLE_STATUSES: readonly {
   id: VehicleStatus;
@@ -42,8 +47,8 @@ export const VEHICLE_STATUSES: readonly {
 }[] = [
   { id: "inPreparation", label: "En preparación" },
   { id: "available", label: "Disponible" },
-  { id: "reserved", label: "Reservado" },
-  { id: "sold", label: "Vendido" },
+  { id: "reserved", label: "Reservada" },
+  { id: "sold", label: "Vendida" },
 ];
 
 export function vehicleStatusLabel(status: VehicleStatus): string {

@@ -72,8 +72,8 @@ describe("estados de stock", () => {
     expect(VEHICLE_STATUSES).toEqual([
       { id: "inPreparation", label: "En preparación" },
       { id: "available", label: "Disponible" },
-      { id: "reserved", label: "Reservado" },
-      { id: "sold", label: "Vendido" },
+      { id: "reserved", label: "Reservada" },
+      { id: "sold", label: "Vendida" },
     ]);
     expect(vehicleStatusLabel("available")).toBe("Disponible");
   });

@@ -326,9 +326,9 @@ describe("unidad vinculada desde las tarjetas de match", () => {
 
   it("una unidad vinculada que ya no está disponible muestra su estado", () => {
     const html = render({
-      linked: { ...LINKED, status: "reserved", statusLabel: "Reservado" },
+      linked: { ...LINKED, status: "reserved", statusLabel: "Reservada" },
     });
-    expect(section(html, "Unidad en negociación")).toContain("Reservado");
+    expect(section(html, "Unidad en negociación")).toContain("Reservada");
   });
 
   it("sin matches, la unidad vinculada se sigue mostrando", () => {
