@@ -142,6 +142,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ]);
   });
 
@@ -371,6 +372,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.test-drives",
         "schema.vehicle-lifecycle",
         "schema.quotes",
+        "schema.trade-ins",
         "schema.whatsapp-outbound",
         "schema.conversation-reads",
         "schema.message-statuses",
@@ -1171,6 +1173,90 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta el trigger de cambios de las tomas deshabilitado o sin sus reglas, el ingreso al ganar, un índice o un CHECK cambiado (Hito 20, DEC-052)", async () => {
+    const changeFn = "private.enforce_trade_in_change()";
+    const stockedFn = "private.enforce_won_trade_in_stocked()";
+    const [current] = await migrated.admin<
+      { change: string; stocked: string }[]
+    >`
+      SELECT pg_get_functiondef(${changeFn}::regprocedure) AS change,
+        pg_get_functiondef(${stockedFn}::regprocedure) AS stocked
+    `;
+    for (const [broken, restore, checks] of [
+      [
+        "ALTER TABLE public.trade_ins DISABLE TRIGGER trade_ins_change_guard",
+        "ALTER TABLE public.trade_ins ENABLE TRIGGER trade_ins_change_guard",
+        ["schema.trade-ins"],
+      ],
+      [
+        current!.change.replace(
+          /trade_ins_appraisal_requires_admin/g,
+          "no guard",
+        ),
+        current!.change,
+        ["schema.trade-ins"],
+      ],
+      [
+        current!.change.replace(/FOR SHARE/g, ""),
+        current!.change,
+        ["schema.trade-ins"],
+      ],
+      [
+        current!.stocked.replace(
+          /opportunities_won_trade_in_stocked/g,
+          "no guard",
+        ),
+        current!.stocked,
+        ["schema.trade-ins"],
+      ],
+      [
+        "ALTER TABLE public.opportunities DISABLE TRIGGER opportunities_won_trade_in_stocked",
+        "ALTER TABLE public.opportunities ENABLE TRIGGER opportunities_won_trade_in_stocked",
+        ["schema.opportunity-stages"],
+      ],
+      [
+        "DROP INDEX public.trade_ins_active_opportunity_key",
+        "CREATE UNIQUE INDEX trade_ins_active_opportunity_key ON public.trade_ins USING btree (organization_id, opportunity_id) WHERE (status = ANY (ARRAY['pending'::text, 'appraised'::text, 'accepted'::text]))",
+        ["schema.trade-ins"],
+      ],
+      [
+        "ALTER TABLE public.trade_ins DROP CONSTRAINT trade_ins_accepted_offer_check; ALTER TABLE public.trade_ins ADD CONSTRAINT trade_ins_accepted_offer_check CHECK (true)",
+        "ALTER TABLE public.trade_ins DROP CONSTRAINT trade_ins_accepted_offer_check; ALTER TABLE public.trade_ins ADD CONSTRAINT trade_ins_accepted_offer_check CHECK (((status <> 'accepted'::text) OR (offer_price IS NOT NULL)))",
+        ["schema.trade-ins"],
+      ],
+      [
+        "CREATE POLICY probe_update ON public.trade_ins FOR UPDATE TO authenticated USING (true) WITH CHECK (true)",
+        "DROP POLICY probe_update ON public.trade_ins",
+        ["rls.policies"],
+      ],
+      [
+        "GRANT UPDATE (brand) ON public.trade_ins TO authenticated",
+        "REVOKE UPDATE (brand) ON public.trade_ins FROM authenticated",
+        ["privileges.authenticated-update-columns"],
+      ],
+    ] as const) {
+      await migrated.admin.unsafe(broken);
+      try {
+        const sql = connect(migrated.migrationUrl);
+        const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+        await sql.end({ timeout: 5 });
+        expect(
+          findings.filter((f) => !f.ok).map((f) => f.check),
+          broken.slice(0, 60),
+        ).toEqual(checks);
+      } finally {
+        await migrated.admin.unsafe(restore);
+      }
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -1181,10 +1267,10 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (Hito 19, DEC-051): 0020 después del
- * merge, con preflight → migrate → verify. Staging está en el Hito 18 (0000
- * a 0019, el último bloque con migración: DEC-044 §3.3) si 0019 ya se
- * aplicó; si no, en el Hito 12B (0000 a 0018), en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * El próximo rollout real (Hito 20, DEC-052): 0021 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 19 (0000 a 0020, el
+ * último bloque con migración: DEC-051) si 0020 ya se aplicó; si no, en el
+ * Hito 18 (0000 a 0019, DEC-044 §3.3), en el Hito 12B (0000 a 0018), en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
@@ -1211,6 +1297,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1231,6 +1318,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1250,6 +1338,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1268,6 +1357,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1285,6 +1375,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1301,6 +1392,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1316,6 +1408,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1330,6 +1423,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1343,6 +1437,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1355,6 +1450,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1366,6 +1462,7 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
@@ -1376,22 +1473,33 @@ describe.each([
       "0018_conversation_reads",
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
+      "0021_trade_ins",
     ],
   },
   {
     stagingAt: "0018_conversation_reads",
     label: "Hito 12B",
     applied: 19,
-    expected: ["0019_whatsapp_delivery_status", "0020_vehicle_lifecycle"],
+    expected: [
+      "0019_whatsapp_delivery_status",
+      "0020_vehicle_lifecycle",
+      "0021_trade_ins",
+    ],
   },
   {
     stagingAt: "0019_whatsapp_delivery_status",
     label: "Hito 18",
     applied: 20,
-    expected: ["0020_vehicle_lifecycle"],
+    expected: ["0020_vehicle_lifecycle", "0021_trade_ins"],
+  },
+  {
+    stagingAt: "0020_vehicle_lifecycle",
+    label: "Hito 19",
+    applied: 21,
+    expected: ["0021_trade_ins"],
   },
 ])(
-  "staging en $label: rollout hasta 0020",
+  "staging en $label: rollout hasta 0021",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

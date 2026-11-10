@@ -76,7 +76,7 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives), la del Hito 10 (quotes), la del Hito 12B (conversation_reads) y la del Hito 12C (message_statuses)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives), la del Hito 10 (quotes), la del Hito 12B (conversation_reads), la del Hito 12C (message_statuses) y la del Hito 20 (trade_ins)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "conversation_reads",
@@ -91,6 +91,7 @@ describe("db/schema", () => {
       "profiles",
       "quotes",
       "test_drives",
+      "trade_ins",
       "vehicles",
       "whatsapp_lines",
     ]);
@@ -173,7 +174,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4; conversation_reads, solo las filas propias, desde el Hito 12B; message_statuses desde el Hito 12C) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9) y quotes (Hito 10) la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4; conversation_reads, solo las filas propias, desde el Hito 12B; message_statuses desde el Hito 12C) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9), quotes (Hito 10) y trade_ins (Hito 20) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -452,6 +453,37 @@ describe("db/schema", () => {
           '"test_drives"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck:
           '"test_drives"."organization_id" IN (SELECT private.user_org_ids())',
+      },
+      {
+        table: "trade_ins",
+        name: "trade_ins_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck:
+          '"trade_ins"."organization_id" IN (SELECT private.user_org_ids()) AND "trade_ins"."created_by" = (select auth.uid()) AND "trade_ins"."status" = \'pending\' AND "trade_ins"."currency" IS NULL AND "trade_ins"."estimated_repair_cost" IS NULL AND "trade_ins"."offer_price" IS NULL AND "trade_ins"."appraised_by" IS NULL AND "trade_ins"."appraised_at" IS NULL AND "trade_ins"."converted_vehicle_id" IS NULL AND "trade_ins"."created_at" = now() AND "trade_ins"."updated_at" = now() AND EXISTS (SELECT FROM "opportunities" WHERE "opportunities"."organization_id" = "trade_ins"."organization_id" AND "opportunities"."id" = "trade_ins"."opportunity_id" AND "opportunities"."stage" IN (\'new\', \'qualifying\', \'negotiating\'))',
+      },
+      {
+        table: "trade_ins",
+        name: "trade_ins_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"trade_ins"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "trade_ins",
+        name: "trade_ins_update_member",
+        as: "permissive",
+        for: "update",
+        to: ["authenticated"],
+        using:
+          '"trade_ins"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck:
+          '"trade_ins"."organization_id" IN (SELECT private.user_org_ids())',
       },
       {
         table: "vehicles",
@@ -1302,6 +1334,107 @@ describe("db/schema", () => {
     );
   });
 
+  it("trade_ins: la toma de una oportunidad con el usado, su tasación con moneda, el estado, los sellos y la unidad en la que se convirtió (Hito 20)", () => {
+    expect(
+      table("trade_ins").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", "PgUUID", true, true],
+      ["organization_id", "PgUUID", true, false],
+      ["opportunity_id", "PgUUID", true, false],
+      ["brand", "PgText", true, false],
+      ["model", "PgText", true, false],
+      ["version", "PgText", false, false],
+      ["year", "PgSmallInt", true, false],
+      ["km", "PgInteger", false, false],
+      ["plate", "PgText", false, false],
+      ["currency", "PgText", false, false],
+      ["estimated_repair_cost", "PgNumeric", false, false],
+      ["offer_price", "PgNumeric", false, false],
+      ["status", "PgText", true, true],
+      ["created_by", "PgUUID", true, false],
+      ["appraised_by", "PgUUID", false, false],
+      ["appraised_at", "PgTimestamp", false, false],
+      ["converted_vehicle_id", "PgUUID", false, false],
+      ["created_at", "PgTimestamp", true, true],
+      ["updated_at", "PgTimestamp", true, true],
+    ]);
+    // Dinero exacto (DEC-025 §5): numeric(14, 2), nunca float.
+    for (const name of ["offer_price", "estimated_repair_cost"]) {
+      expect(column("trade_ins", name)).toMatchObject({
+        precision: 14,
+        scale: 2,
+      });
+    }
+    // Nace pendiente; los sellos y el reloj los pone la base.
+    expect(column("trade_ins", "status").default).toBe("pending");
+    expect(column("trade_ins", "created_at").defaultFn).toBeUndefined();
+    expect(foreignKeys("trade_ins")).toEqual([
+      "appraised_by -> public.profiles(id) ON DELETE restrict",
+      "created_by -> public.profiles(id) ON DELETE restrict",
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,converted_vehicle_id -> public.vehicles(organization_id,id) ON DELETE restrict",
+      "organization_id,opportunity_id -> public.opportunities(organization_id,id) ON DELETE restrict",
+    ]);
+    expect(table("trade_ins").checks.map((c) => c.name)).toEqual([
+      "trade_ins_status_check",
+      "trade_ins_currency_check",
+      "trade_ins_brand_check",
+      "trade_ins_model_check",
+      "trade_ins_version_check",
+      "trade_ins_year_check",
+      "trade_ins_km_check",
+      "trade_ins_plate_check",
+      "trade_ins_offer_price_check",
+      "trade_ins_repair_cost_check",
+      "trade_ins_appraisal_check",
+      "trade_ins_accepted_offer_check",
+      "trade_ins_converted_check",
+    ]);
+    // Lectura, alta y una sola edición: qué cambio vale lo decide el
+    // trigger de 0021 (DEC-028 §5).
+    expect(
+      table("trade_ins").policies.map((p) => `${p.name} ${p.for}`),
+    ).toEqual([
+      "trade_ins_select_member select",
+      "trade_ins_insert_member insert",
+      "trade_ins_update_member update",
+    ]);
+    expect(
+      table("trade_ins").indexes.map((i) => ({
+        name: i.config.name,
+        unique: i.config.unique,
+        columns: i.config.columns.map((c) => ("name" in c ? c.name : null)),
+      })),
+    ).toEqual([
+      {
+        name: "trade_ins_organization_id_opportunity_id_idx",
+        unique: false,
+        columns: ["organization_id", "opportunity_id"],
+      },
+      {
+        name: "trade_ins_active_opportunity_key",
+        unique: true,
+        columns: ["organization_id", "opportunity_id"],
+      },
+    ]);
+    expect(
+      table("trade_ins").uniqueConstraints.map((u) => ({
+        name: u.name,
+        columns: u.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "trade_ins_organization_id_converted_vehicle_id_key",
+        columns: ["organization_id", "converted_vehicle_id"],
+      },
+    ]);
+  });
+
   it("whatsapp_lines: la línea receptora, única global, de una organización y de solo lectura para los miembros (Hito 7, Hito 8)", () => {
     expect(
       table("whatsapp_lines").columns.map((c) => [
@@ -1372,6 +1505,7 @@ describe("db/schema", () => {
       "opportunity_notes",
       "quotes",
       "test_drives",
+      "trade_ins",
       "vehicles",
       "whatsapp_lines",
     ]);
