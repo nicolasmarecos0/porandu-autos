@@ -91,6 +91,36 @@ describe("TradeInPanel", () => {
     expect(html).not.toContain('role="dialog"');
   });
 
+  it("en el teléfono: el título entero, etiquetas cortas e importes que no se parten", () => {
+    const html = render([row("appraised")], { admin: true });
+    // El sufijo y el chip del encabezado se muestran desde sm: en 390 px el
+    // título va entero y el estado va en la tarjeta, junto al usado.
+    expect(html).toMatch(
+      /Vehículo en parte de pago<span class="hidden text-text-muted sm:inline"> \/ Toma<\/span>/,
+    );
+    expect(html).toMatch(/<span class="ml-auto hidden sm:inline-flex">/);
+    expect(html).toMatch(/<span class="sm:hidden"><span[^>]*>.*?Tasado/);
+    expect(html).toMatch(/<span class="sm:hidden">Cargado<\/span>/);
+    // Cada importe va en una sola línea.
+    const amounts = [...html.matchAll(/<dd class="([^"]+)">([^<]+)<\/dd>/g)];
+    expect(amounts.map((match) => match[2])).toEqual([
+      "USD 8.000",
+      "USD 800",
+      "USD 8.800",
+    ]);
+    for (const [, classes] of amounts)
+      expect(classes).toContain("whitespace-nowrap");
+  });
+
+  it("para el seller, el valor de toma va solo, sin la línea del total", () => {
+    const html = render([row("appraised")]);
+    const rows = [
+      ...html.matchAll(/<div class="([^"]*justify-between[^"]*)"><dt/g),
+    ];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]![1]).not.toContain("border-t");
+  });
+
   it("cerrada, no ofrece registrar", () => {
     const html = render([], { stage: "lost" });
     expect(buttons(html)).toEqual([]);

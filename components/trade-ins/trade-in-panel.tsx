@@ -95,8 +95,9 @@ const NOTE_TONE: Readonly<Record<TradeInNoteTone, string>> = {
   warning: "border-warning-border bg-warning-soft text-warning",
 };
 
+/** En el teléfono (cuatro pasos en ~240 px): palabras que entran enteras. */
 const STEP_SHORT: Readonly<Record<TradeInStep, string>> = {
-  registered: "Registrado",
+  registered: "Cargado",
   appraised: "Tasado",
   accepted: "Aprobado",
   stocked: "En stock",
@@ -164,21 +165,25 @@ function AmountRow({
   label,
   value,
   emphasis = false,
+  divided = false,
 }: {
   label: string;
   value: string;
+  /** El importe principal de la tarjeta. */
   emphasis?: boolean;
+  /** Separado de las filas de arriba (el total). */
+  divided?: boolean;
 }) {
   return (
     <div
       className={cn(
         "flex items-baseline justify-between gap-4",
-        emphasis && "border-t border-border-subtle pt-2",
+        divided && "border-t border-border-subtle pt-2",
       )}
     >
       <dt
         className={cn(
-          "text-label",
+          "min-w-0 text-label",
           emphasis ? "font-semibold text-text-primary" : "text-text-secondary",
         )}
       >
@@ -186,7 +191,7 @@ function AmountRow({
       </dt>
       <dd
         className={cn(
-          "text-right tabular-nums",
+          "shrink-0 text-right whitespace-nowrap tabular-nums",
           emphasis
             ? "text-title font-semibold text-text-primary"
             : "text-body text-text-primary",
@@ -260,7 +265,13 @@ function TradeInCard({
           <span className="inline-flex h-6 items-center rounded-sm bg-surface-2 px-2 text-caption text-text-muted">
             {TRADE_IN_PENDING}
           </span>
-        ) : null}
+        ) : (
+          // En el teléfono el encabezado no tiene lugar para el estado: va
+          // junto al usado (desde sm, en el encabezado del panel).
+          <span className="sm:hidden">
+            <TradeInStatusChip status={view.status} />
+          </span>
+        )}
       </div>
 
       {appraisal ? (
@@ -280,6 +291,7 @@ function TradeInCard({
                 label="Costo total de ingreso"
                 value={appraisal.financial.intakeCostLabel}
                 emphasis
+                divided
               />
             </>
           ) : (
@@ -551,9 +563,10 @@ export function TradeInPanel({
             className="min-w-0 truncate text-heading text-text-primary"
           >
             Vehículo en parte de pago
-            <span className="text-text-muted"> / Toma</span>
+            <span className="hidden text-text-muted sm:inline"> / Toma</span>
           </h2>
-          <span className="ml-auto">
+          {/* En el teléfono el título va entero y el estado, en la tarjeta. */}
+          <span className="ml-auto hidden sm:inline-flex">
             {current ? <TradeInStatusChip status={current.status} /> : null}
           </span>
         </PanelHeader>
