@@ -19,6 +19,8 @@ Porandú conecta inventario, conversaciones, intención de compra y operación c
 > **Hito 8 — Bandeja y envío de WhatsApp (DEC-040):** `/conversations` muestra las conversaciones activas y el historial de la elegida, y cualquier miembro activo responde por WhatsApp desde el composer (`POST /api/messages/send` → Cloud API de Meta → registro en `messages` por `private.record_outbound_whatsapp_message()`). `0014_whatsapp_outbound` se aplica a staging después del merge (ver "Bandeja y envío de WhatsApp (Hito 8)").
 >
 > **Hito 19 — Ciclo de vida de las unidades (DEC-051):** las unidades del stock siguen una máquina de estados formal (en preparación → disponible ⇄ reservada → vendida, terminal). Se ponen en el salón, se reservan y se liberan desde Stock y desde la ficha del catálogo, y se venden solo al cerrar Ganada su oportunidad, en la misma transacción. Reemplaza la disponibilidad de H1.3C (`markVehicleAvailable()` y la policy `vehicles_update_mark_available`). `0020_vehicle_lifecycle` se aplica a staging después del merge (ver "Ciclo de vida de las unidades (Hito 19)").
+>
+> **Hito 20 — Toma de usados y tasaciones (DEC-052):** el panel "Vehículo en parte de pago / Toma" de `/opportunities/[id]` registra el usado que el cliente entrega, lo tasa un admin (valor de toma, costo de reacondicionamiento y costo total de ingreso; los costos solo los ve el admin) y registra la respuesta del cliente. Ganar la oportunidad con la toma aprobada inserta el usado en `vehicles` como unidad En preparación en la misma transacción del cierre. `0021_trade_ins` se aplica a staging después del merge (ver "Toma de usados y tasaciones (Hito 20)").
 
 ---
 
@@ -1103,6 +1105,67 @@ closeOpportunity() → … → withTenant(): SELECT … FOR UPDATE (oportunidad,
 - **Fuera de este bloque:** venta directa desde Stock sin oportunidad, volver a preparación, deshacer una venta, la reserva con dueño, vencimiento o seña, liberar la reserva al perder, vincular una unidad reservada, el historial de estados y Matching al volver a estar disponible.
 - **Tests:** `tests/unit/domains/vehicles/lifecycle.test.ts` (la matriz de 16 pares, los planes y la copy), `tests/unit/vehicles/status-change.test.ts` y `tests/unit/vehicles/stock-ui.test.ts` (Server Action y UI), y `tests/db/vehicle-lifecycle.test.ts` contra PostgreSQL 17: los 16 pares del trigger cruzados con el dominio, inmutabilidad y privilegios, aislamiento entre organizaciones (contexto falsificado y membership revocada), un mutante por barrera, la venta atómica con el cierre y carreras reales. `tests/db/migrations.test.ts` aplica `0020` sobre una base en el Hito 18 (backfill, precondición, postcondiciones que fallan cerradas, idempotencia y reversión).
 - `0020_vehicle_lifecycle` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0020_vehicle_lifecycle` si staging ya tiene `0019` (o con las anteriores que falten delante, en orden). La verificación suma `schema.vehicle-lifecycle` y amplía `rls.policies` y `schema.opportunity-stages`.
+
+## Toma de usados y tasaciones (Hito 20)
+
+El vehículo que el cliente entrega en parte de pago (DEC-052): se registra en la oportunidad, lo tasa un admin (el tasador o gerente), se registra la respuesta del cliente y, si la aprobó, entra al stock como unidad En preparación con el cierre Ganada, en la misma transacción.
+
+```text
+Pendiente de tasación ──"Tasar" (admin)──► Tasado ──"Cliente aprobó"──► Aprobado por el cliente
+        │                                  │  ▲                                   │
+        │ "Descartar toma"                 │  └── "Retasar" (admin)               │ "Cliente desistió"
+        ▼                                  ▼ "Cliente rechazó"                    ▼
+                         Rechazado (terminal: para volver a negociar, otra toma)
+
+Aprobado por el cliente + cierre Ganada ──► unidad nueva En preparación (converted_vehicle_id)
+
+Toma (registrar, tasar, decidir):
+registerTradeIn() / appraiseTradeIn() / changeTradeInStatus() → requireTenant() → pedido (Zod)
+→ withTenant(): SELECT … FOR SHARE (oportunidad) → SELECT … FOR UPDATE (toma) → plan del dominio
+→ INSERT o UPDATE → RLS + trigger trade_ins_change_guard → revalidar
+
+Cierre Ganada (la regla de oro):
+closeOpportunity() → … → withTenant(): FOR UPDATE oportunidad → unidad vendida → toma vigente
+→ UPDATE oportunidad → UPDATE unidad SET status = 'sold'
+→ [toma aceptada] INSERT vehicles (in_preparation, sin precio) → UPDATE toma (converted_vehicle_id)
+→ COMMIT (opportunities_won_vehicle_sold y opportunities_won_trade_in_stocked, diferidos) → revalidar
+```
+
+| Acción | Desde | Hacia | Quién |
+|---|---|---|---|
+| Registrar usado | — | Pendiente de tasación | Cualquier miembro (un admin puede tasar en el mismo acto) |
+| Tasar | Pendiente de tasación | Tasado | Admin |
+| Retasar | Tasado | Tasado, con otra tasación | Admin |
+| Cliente aprobó | Tasado | Aprobado por el cliente | Cualquier miembro |
+| Cliente rechazó | Tasado | Rechazado | Cualquier miembro |
+| Descartar toma | Pendiente de tasación | Rechazado | Cualquier miembro |
+| Cliente desistió | Aprobado por el cliente | Rechazado | Cualquier miembro |
+| Ingreso al stock | Aprobado por el cliente | Unidad En preparación | Solo el cierre Ganada de su oportunidad |
+
+- **Dominio puro** (`domains/opportunities/trade-ins.ts`): la máquina (`TRADE_IN_TRANSITIONS`), las decisiones del cliente (`TRADE_IN_DECISIONS`), la validación del usado y de la tasación (Zod, montos es-PY, la chapa normalizada: "abc-123" → "ABC 123") y los planes sobre la fila leída (`planTradeInRegistration()`, `planTradeInAppraisal()`, `planTradeInDecision()`, `planTradeInIntake()`). La presentación (`trade-in-presentation.ts`) arma el ViewModel del panel y su estado optimista.
+- **Reglas del fundador:** no se acepta una toma sin valor de toma (`canAcceptTradeIn()` → `offer_price_required`), y el costo total de ingreso es el valor de toma más el costo de reacondicionamiento (`tradeInIntakeCost()`, exacto en centavos y en la moneda de la tasación).
+- **Puertas:** las Server Actions `registerTradeIn()`, `appraiseTradeIn()` y `changeTradeInStatus()` (`lib/trade-ins/actions.ts`). El pedido trae el usado, la tasación o la decisión; el estado de origen lo lee el servidor de la fila bloqueada y la organización sale del `TenantContext`. ESLint impide importar `db/queries/trade-ins-write.ts` desde otro módulo.
+- **Respuestas:** `registered`, `appraised` o `changed`; `unchanged`; `conflict` (con el estado real); `offer_price_required`; `already_registered` (ya hay una vigente); `opportunity_closed`; `requires_admin`; `invalid`; `not_found` (inexistente o de otra organización, sin distinguir) y `failed` (sin detalles de la base).
+- **La regla de oro:** `closeOpportunity()` Ganada bloquea la oportunidad, la unidad vendida y la toma vigente, en ese orden. Con la toma aprobada por el cliente, en la misma transacción que escribe el cierre y vende la unidad, inserta el usado en `vehicles` como `in_preparation` (marca, modelo, versión, año y km; sin precio: el valor de toma es lo que costó) y lo vincula a la toma. Una toma sin aprobar no entra y perder no toca nada. Cualquier falla revierte el cierre entero. La respuesta `closed` dice qué unidad nació (`stockedTradeIn`) y los avisos del detalle y del embudo lo cuentan.
+- **Base (`0021_trade_ins`):**
+  - `trade_ins` con FKs compuestas hacia la oportunidad y hacia la unidad que nace, a lo sumo una toma vigente por oportunidad y una toma por unidad (índices únicos), y CHECKs del usado (textos de una línea, año, km, chapa), de la tasación (completa o ausente, montos positivos, PYG sin decimales) y del ingreso (solo en una aceptada).
+  - RLS: lectura de la organización; alta solo pendiente, sin tasación ni sellos, con el autor y el reloj de la base y una oportunidad abierta; UPDATE tenant-scoped. Grants: `SELECT` e `INSERT` de tabla para `authenticated` y UPDATE solo de `status`, la tasación, `converted_vehicle_id` y `updated_at`. Sin DELETE.
+  - Trigger `trade_ins_change_guard` (`BEFORE UPDATE FOR EACH ROW`, invoker, `search_path` vacío, sin EXECUTE para nadie), que no exime al rol dueño: el usado, el autor y los sellos son inmutables; no admite cambios con la oportunidad cerrada; exige la matriz, el valor de toma para aceptar, un admin de la organización para tasar y el ingreso solo con el cierre Ganada hacia una unidad En preparación con los datos del usado y sin precio. Fija el sello de la tasación y `updated_at`. Todo con `23514`.
+  - Constraint trigger diferido `opportunities_won_trade_in_stocked`: una ganada con su toma aceptada fuera del stock revierte la transacción entera al COMMIT, aunque la aplicación tuviera un bug.
+  - Postcondiciones: las de `0020`, con `trade_ins` en las altas y cambios aprobados, y las de DEC-052 (policies, triggers, FKs, CHECKs e índices).
+- **Concurrencia:** una decisión del cliente y un cierre simultáneos se serializan sobre la oportunidad (el cierre ve la decisión confirmada, o la decisión ve la oportunidad cerrada). Dos altas a la vez dejan una sola toma vigente; dos cierres Ganada, un solo ingreso.
+- **Autorización:** registrar el usado y la respuesta del cliente, cualquier miembro activo (`admin` o `seller`); tasar y retasar, el admin. El seller ve el valor de toma; el costo de reacondicionamiento y el costo total de ingreso no llegan a su navegador.
+- **UI:**
+  - `/opportunities/[id]`, después de Cotizaciones: el panel "Vehículo en parte de pago / Toma", con el recorrido (Registrado → Tasado → Aprobado por el cliente → En stock), el usado con su chapa, la tasación, quién registró y tasó, qué sigue y las acciones de cada estado. Las rechazadas van en "Tomas anteriores".
+  - Registrar y tasar en un drawer de Radix (hoja completa en el teléfono, lateral desde `sm`), con validación local, el costo total de ingreso en vivo y reintento sin perder lo cargado. Cada respuesta del cliente pide confirmación (alertdialog).
+  - Optimista (`useOptimistic` con las Server Actions): la toma cambia al instante, dice "Guardando…" y no admite otro pedido; si el servidor no hizo el cambio, vuelve a su estado real. Un aviso dice cómo terminó.
+  - La confirmación de Ganada (detalle y embudo) muestra el usado aceptado con su pase Aprobado por el cliente → En preparación, o avisa que una toma sin aprobar no entra.
+  - Verificado con Playwright en 390 y 1280 px, sin scroll horizontal.
+- **Revalida:** `/opportunities/[id]` y `/opportunities/pipeline` al registrar, tasar o decidir; el cierre, las rutas del ciclo de vida de las unidades.
+- **Limitaciones conocidas:** la unidad que nace no tiene precio y todavía no se puede editar (solo cambia su estado): se puede poner en el salón con el precio "Sin dato". Retasar reemplaza la tasación anterior. Una toma rechazada no se reabre. El valor de toma no se descuenta del precio final del cierre.
+- **Fuera de este bloque:** fotos y documentación del usado, tasación asistida o automática, historial de tasaciones, editar el usado, el saldo del cierre, el precio de venta de la unidad que nace, la venta como entidad, la preventa "Próximamente", Matching al ponerla en el salón y un rol de tasador.
+- **Tests:** `tests/unit/domains/opportunities/trade-ins.test.ts` (la matriz, las reglas del fundador, el costo de ingreso, la validación y los planes) y `trade-in-presentation.test.ts` (ViewModel, visibilidad de la sección financiera y estado optimista), `tests/unit/trade-ins/` (Server Actions y panel), los cierres (`close-action.test.ts`, `closure-fields.test.ts`) y la guarda de escritura de ESLint. `tests/db/trade-ins.test.ts` contra PostgreSQL 17: RLS, los 16 pares del trigger cruzados con el dominio, tasación solo del admin, sellos e inmutabilidad (también para el rol dueño), CHECKs, el ingreso y el constraint trigger diferido, las Server Actions y la regla de oro de punta a punta (registrar → tasar → aprobar → ganar → la unidad nace En preparación y aparece en el Inventario y en el panel), con los casos sin aprobación y perdida, un conflicto de venta, una falla inyectada que revierte todo y carreras reales. `tests/db/migrations.test.ts` aplica `0021` sobre una base en el Hito 19; `tests/db/pipeline.test.ts` prueba la toma vigente del embudo.
+- `0021_trade_ins` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0021_trade_ins` si staging ya tiene `0020` (o con las anteriores que falten delante, en orden). La verificación suma `schema.trade-ins` y amplía `schema.tables`, `rls.policies` y `schema.opportunity-stages`.
 
 ## Convenciones
 
