@@ -37,6 +37,12 @@ import {
 } from "@/domains/opportunities/closure";
 import { NOTE_MAX_LENGTH } from "@/domains/opportunities/notes";
 import { OPPORTUNITY_STAGES } from "@/domains/opportunities/stages";
+import {
+  ACTIVE_TRADE_IN_STATUSES,
+  TRADE_IN_MAX_LENGTH,
+  TRADE_IN_OPEN_STAGES,
+  TRADE_IN_STATUSES,
+} from "@/domains/opportunities/trade-ins";
 import { VEHICLE_HOLDING_STAGES } from "@/domains/opportunities/vehicle-link";
 import { EXTERNAL_ID_MAX_LENGTH } from "@/domains/webhooks/inbound-message";
 
@@ -1370,6 +1376,13 @@ describe("db/schema", () => {
         scale: 2,
       });
     }
+    // Los estados, las vigentes, las etapas abiertas, las monedas y los
+    // largos de la base son los del dominio (DEC-052 §2).
+    expect(schema.tradeInStatuses).toEqual(TRADE_IN_STATUSES);
+    expect(schema.activeTradeInStatuses).toEqual(ACTIVE_TRADE_IN_STATUSES);
+    expect(schema.tradeInOpenStages).toEqual(TRADE_IN_OPEN_STAGES);
+    expect(schema.tradeInCurrencies).toEqual(CURRENCIES);
+    expect(schema.tradeInMaxLength).toEqual(TRADE_IN_MAX_LENGTH);
     // Nace pendiente; los sellos y el reloj los pone la base.
     expect(column("trade_ins", "status").default).toBe("pending");
     expect(column("trade_ins", "created_at").defaultFn).toBeUndefined();

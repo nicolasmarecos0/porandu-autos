@@ -6,6 +6,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { opportunities, tradeIns, vehicles } from "@/db/schema";
 import { withTenant, type TenantContext } from "@/db/tenant";
+import {
+  TRADE_IN_STATUSES,
+  TRADE_IN_TRANSITIONS,
+} from "@/domains/opportunities/trade-ins";
 
 import { closureColumns, WON_METADATA } from "./support/closures";
 import {
@@ -438,6 +442,11 @@ function appraisalValues(
 }
 
 describe("la base exige la matriz de DEC-052 (trigger trade_ins_change_guard)", () => {
+  it("la matriz que prueba la base es la del dominio", () => {
+    expect(STATUSES).toEqual(TRADE_IN_STATUSES);
+    expect(MATRIX).toEqual(TRADE_IN_TRANSITIONS);
+  });
+
   const PAIRS = STATUSES.flatMap((from) =>
     STATUSES.map((to) => [from, to] as const),
   );
