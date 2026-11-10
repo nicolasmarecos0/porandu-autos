@@ -250,6 +250,7 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
       "messages",
       "quotes",
       "vehicles",
+      "trade_ins",
     ]);
   });
 
@@ -272,7 +273,7 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
     await getOpportunityDetail(OPPORTUNITY);
 
     expect(mocks.withTenant).toHaveBeenCalledTimes(1);
-    const [quotes, vehicles] = mocks.queries.slice(-2);
+    const [quotes, vehicles] = mocks.queries.slice(-3, -1);
     expect(quotes?.sql).toMatch(/from "quotes" inner join "vehicles"/);
     expect(quotes?.sql).toMatch(
       /where \("quotes"\."organization_id" = \$1 and "quotes"\."opportunity_id" = \$2\) order by "quotes"\."number" desc limit \$3$/,
@@ -282,6 +283,27 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
       /from "vehicles" where \("vehicles"\."organization_id" = \$1 and "vehicles"\."status" in \(\$2, \$3\) and "vehicles"\."price" is not null and "vehicles"\."currency" is not null\)/,
     );
     expect(vehicles?.params).toEqual([ORG, "available", "reserved", 200]);
+  });
+
+  it("Hito 20: lee las tomas de la oportunidad en la misma transacción, filtradas por organización", async () => {
+    mocks.results = [[OPPORTUNITY_ROW], [], [], [], [], [], [], []];
+
+    const detail = await getOpportunityDetail(OPPORTUNITY);
+
+    expect(mocks.withTenant).toHaveBeenCalledTimes(1);
+    const tradeIns = mocks.queries.at(-1);
+    expect(tradeIns?.sql).toMatch(
+      /from "trade_ins" where \("trade_ins"\."organization_id" = \$1 and "trade_ins"\."opportunity_id" = \$2\) order by "trade_ins"\."created_at" desc, "trade_ins"\."id" desc limit \$3$/,
+    );
+    expect(tradeIns?.params).toEqual([ORG, OPPORTUNITY, 50]);
+    // Sin tomas: el panel ofrece registrar una (la oportunidad está abierta).
+    expect(detail?.tradeIns).toMatchObject({
+      stage: "qualifying",
+      current: null,
+      history: [],
+      canRegister: true,
+      saving: false,
+    });
   });
 });
 

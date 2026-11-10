@@ -7,12 +7,14 @@ import {
   decisionsFor,
   isActiveTradeInStatus,
   isTradeInOpenStage,
+  optimisticTradeInStatus,
   TRADE_IN_STATUS_LABELS,
   tradeInIntakeCost,
   type TradeInAppraisal,
   type TradeInAppraisalValues,
   type TradeInDecisionId,
   type TradeInStatus,
+  type TradeInVehicle,
 } from "./trade-ins";
 
 /*
@@ -153,6 +155,8 @@ export type TradeInClosureNotice =
     }>;
 
 export type TradeInPanelData = Readonly<{
+  /** Etapa de la oportunidad: con ella cerrada, la toma no cambia más. */
+  stage: Stage;
   /** La toma vigente (pendiente, tasada o aceptada), o null. */
   current: TradeInCardView | null;
   /** Las rechazadas, de la más reciente a la más vieja. */
@@ -165,6 +169,8 @@ export type TradeInPanelData = Readonly<{
   viewerIsAdmin: boolean;
   /** El aviso de la confirmación del cierre Ganada. */
   closure: TradeInClosureNotice | null;
+  /** Un pedido en curso (estado optimista): sin acciones hasta la respuesta. */
+  saving: boolean;
 }>;
 
 /* ── Copy (es-PY) ───────────────────────────────────────────────────────── */
@@ -235,13 +241,15 @@ export function tradeInLabel(
   return `${row.brand} ${row.model} ${row.year}`;
 }
 
-function noteFor(
-  row: TradeInRow,
+/** Qué pasa ahora con la toma, en una oración, según el estado y la etapa. */
+export function tradeInNote(
+  status: TradeInStatus,
+  stocked: boolean,
   stage: Stage,
   viewerIsAdmin: boolean,
 ): TradeInCardView["note"] {
   const open = isTradeInOpenStage(stage);
-  switch (row.status) {
+  switch (status) {
     case "pending":
       if (!open) {
         return stage === "won"
@@ -280,7 +288,7 @@ function noteFor(
         text: "Comunicale al cliente el valor de toma y registrá su respuesta.",
       };
     case "accepted":
-      if (row.convertedVehicleId !== null) {
+      if (stocked) {
         return {
           tone: "success",
           text: "Ingresó al stock como unidad En preparación con el cierre de la venta.",
@@ -301,9 +309,13 @@ function noteFor(
   }
 }
 
-function stepOf(row: TradeInRow): TradeInStep {
-  if (row.convertedVehicleId !== null) return "stocked";
-  switch (row.status) {
+/** El paso del recorrido en el que está la toma. */
+export function tradeInStep(
+  status: TradeInStatus,
+  stocked: boolean,
+): TradeInStep {
+  if (stocked) return "stocked";
+  switch (status) {
     case "pending":
     case "rejected":
       return "registered";
@@ -325,6 +337,34 @@ export function appraisalValuesOf(
   };
 }
 
+/**
+ * La tasación para mostrar: el valor de toma para todos y, para el admin,
+ * la sección financiera (el reacondicionamiento y el costo total de
+ * ingreso, la regla 2 de DEC-052).
+ */
+export function tradeInAppraisalView(
+  appraisal: TradeInAppraisal,
+  viewerIsAdmin: boolean,
+  appraisedLabel: string | null,
+): TradeInAppraisalView {
+  return {
+    offerPriceLabel: formatMoney({
+      amount: appraisal.offerPrice,
+      currency: appraisal.currency,
+    }),
+    financial: viewerIsAdmin
+      ? {
+          repairCostLabel: formatMoney({
+            amount: appraisal.estimatedRepairCost,
+            currency: appraisal.currency,
+          }),
+          intakeCostLabel: formatMoney(tradeInIntakeCost(appraisal)),
+        }
+      : null,
+    appraisedLabel,
+  };
+}
+
 export function tradeInCardView(
   row: TradeInRow,
   context: Readonly<{
@@ -336,6 +376,7 @@ export function tradeInCardView(
   const open = isTradeInOpenStage(context.opportunityStage);
   const appraisal = appraisalOf(row);
   const admin = context.viewerIsAdmin;
+  const stocked = row.convertedVehicleId !== null;
   return {
     id: row.id,
     status: row.status,
@@ -349,25 +390,13 @@ export function tradeInCardView(
     plateLabel: row.plate,
     registeredLabel: `Registró: ${authorLabel(row.createdBy, context.viewerUserId)} · ${formatDemandDate(row.createdAt)}`,
     appraisal: appraisal
-      ? {
-          offerPriceLabel: formatMoney({
-            amount: appraisal.offerPrice,
-            currency: appraisal.currency,
-          }),
-          financial: admin
-            ? {
-                repairCostLabel: formatMoney({
-                  amount: appraisal.estimatedRepairCost,
-                  currency: appraisal.currency,
-                }),
-                intakeCostLabel: formatMoney(tradeInIntakeCost(appraisal)),
-              }
+      ? tradeInAppraisalView(
+          appraisal,
+          admin,
+          row.appraisedBy && row.appraisedAt
+            ? `Tasó: ${authorLabel(row.appraisedBy, context.viewerUserId)} · ${formatDemandDate(row.appraisedAt)}`
             : null,
-          appraisedLabel:
-            row.appraisedBy && row.appraisedAt
-              ? `Tasó: ${authorLabel(row.appraisedBy, context.viewerUserId)} · ${formatDemandDate(row.appraisedAt)}`
-              : null,
-        }
+        )
       : null,
     decisions: open ? decisionsFor(row.status) : [],
     appraise:
@@ -379,9 +408,9 @@ export function tradeInCardView(
             : null
         : null,
     appraisalValues: admin && appraisal ? appraisalValuesOf(appraisal) : null,
-    note: noteFor(row, context.opportunityStage, admin),
-    step: stepOf(row),
-    stocked: row.convertedVehicleId !== null,
+    note: tradeInNote(row.status, stocked, context.opportunityStage, admin),
+    step: tradeInStep(row.status, stocked),
+    stocked,
   };
 }
 
@@ -454,6 +483,7 @@ export function tradeInPanelData(
   const active = sorted.find((row) => isActiveTradeInStatus(row.status));
   const open = isTradeInOpenStage(context.opportunityStage);
   return {
+    stage: context.opportunityStage,
     current: active ? tradeInCardView(active, context) : null,
     history: sorted
       .filter((row) => row.status === "rejected")
@@ -479,6 +509,114 @@ export function tradeInPanelData(
         : null,
     viewerIsAdmin: context.viewerIsAdmin,
     closure: open ? tradeInClosureNotice(active ?? null) : null,
+    saving: false,
+  };
+}
+
+/* ── Estado optimista (useOptimistic de React 19) ───────────────────────── */
+
+/** Lo que el panel muestra apenas se confirma un pedido, antes de la respuesta. */
+export type TradeInOptimisticAction =
+  | Readonly<{
+      kind: "register";
+      vehicle: TradeInVehicle;
+      /** La tasación que cargó un admin en el mismo formulario, si hay. */
+      appraisal: TradeInAppraisal | null;
+    }>
+  | Readonly<{ kind: "appraise"; appraisal: TradeInAppraisal }>
+  | Readonly<{ kind: "decide"; decision: TradeInDecisionId }>;
+
+/** Quien pide el cambio es "Vos": el panel optimista no conoce ids. */
+const OPTIMISTIC_VIEWER = "optimistic-viewer";
+
+/** Id de la toma que todavía no existe en la base. */
+export const OPTIMISTIC_TRADE_IN_ID = "optimistic-trade-in";
+
+/**
+ * El panel con lo que el pedido va a dejar, marcado como guardando y sin
+ * acciones hasta la respuesta. La página revalidada por la Server Action lo
+ * reemplaza; si el servidor no hizo el cambio, el estado optimista se
+ * descarta solo y vuelve lo real.
+ */
+export function optimisticTradeInPanel(
+  data: TradeInPanelData,
+  action: TradeInOptimisticAction,
+  now: Date,
+): TradeInPanelData {
+  const admin = data.viewerIsAdmin;
+  const freeze = (view: TradeInCardView): TradeInCardView => ({
+    ...view,
+    decisions: [],
+    appraise: null,
+  });
+  const appraisedLabel = `Tasó: Vos · ${formatDemandDate(now)}`;
+
+  if (action.kind === "register") {
+    const { vehicle, appraisal } = action;
+    const row: TradeInRow = {
+      id: OPTIMISTIC_TRADE_IN_ID,
+      status: appraisal ? "appraised" : "pending",
+      ...vehicle,
+      currency: appraisal?.currency ?? null,
+      estimatedRepairCost: appraisal?.estimatedRepairCost ?? null,
+      offerPrice: appraisal?.offerPrice ?? null,
+      createdBy: OPTIMISTIC_VIEWER,
+      createdAt: now,
+      appraisedBy: appraisal ? OPTIMISTIC_VIEWER : null,
+      appraisedAt: appraisal ? now : null,
+      convertedVehicleId: null,
+      updatedAt: now,
+    };
+    return {
+      ...data,
+      current: freeze(
+        tradeInCardView(row, {
+          viewerUserId: OPTIMISTIC_VIEWER,
+          viewerIsAdmin: admin,
+          opportunityStage: data.stage,
+        }),
+      ),
+      canRegister: false,
+      hint: null,
+      closure: tradeInClosureNotice(row),
+      saving: true,
+    };
+  }
+
+  const current = data.current;
+  if (current === null) return { ...data, saving: true };
+
+  if (action.kind === "appraise") {
+    return {
+      ...data,
+      current: freeze({
+        ...current,
+        status: "appraised",
+        statusLabel: TRADE_IN_STATUS_LABELS.appraised,
+        appraisal: tradeInAppraisalView(
+          action.appraisal,
+          admin,
+          appraisedLabel,
+        ),
+        appraisalValues: admin ? appraisalValuesOf(action.appraisal) : null,
+        note: tradeInNote("appraised", false, data.stage, admin),
+        step: "appraised",
+      }),
+      saving: true,
+    };
+  }
+
+  const to = optimisticTradeInStatus(action.decision);
+  return {
+    ...data,
+    current: freeze({
+      ...current,
+      status: to,
+      statusLabel: TRADE_IN_STATUS_LABELS[to],
+      note: tradeInNote(to, false, data.stage, admin),
+      step: tradeInStep(to, false),
+    }),
+    saving: true,
   };
 }
 

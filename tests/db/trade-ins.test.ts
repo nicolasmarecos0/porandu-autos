@@ -11,6 +11,14 @@ import {
   TRADE_IN_TRANSITIONS,
 } from "@/domains/opportunities/trade-ins";
 
+import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
+import {
+  appraiseTradeIn,
+  changeTradeInStatus,
+  registerTradeIn,
+} from "@/lib/trade-ins/actions";
+
+import { cookieJar, type CookieJar } from "../unit/support/cookie-jar";
 import { closureColumns, WON_METADATA } from "./support/closures";
 import {
   runMigrations,
@@ -27,6 +35,8 @@ import {
   USER_A,
   USER_B,
   USER_C,
+  USER_D,
+  USER_E,
 } from "./support/tenants";
 
 /*
@@ -51,6 +61,44 @@ import {
 
 vi.mock("server-only", () => ({}));
 
+const mocks = vi.hoisted(() => {
+  class RedirectSignal extends Error {
+    constructor(readonly path: string) {
+      super(`redirect(${path})`);
+    }
+  }
+  return {
+    RedirectSignal,
+    claims: null as Record<string, unknown> | null,
+    jar: null as CookieJar | null,
+    revalidated: [] as string[],
+    redirect: (path: string): never => {
+      throw new RedirectSignal(path);
+    },
+  };
+});
+
+vi.mock("@/lib/supabase/server", () => ({
+  createAuthClient: async () => ({
+    getClaims: async () =>
+      mocks.claims
+        ? { data: { claims: mocks.claims }, error: null }
+        : { data: null, error: null },
+  }),
+}));
+vi.mock("next/headers", () => ({
+  cookies: async () => {
+    if (!mocks.jar) throw new Error("no cookie jar");
+    return mocks.jar.store;
+  },
+}));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next/cache", () => ({
+  revalidatePath: (path: string) => {
+    mocks.revalidated.push(path);
+  },
+}));
+
 let server: TestServer;
 let db: TestDatabase;
 
@@ -67,6 +115,26 @@ afterAll(async () => {
   vi.unstubAllEnvs();
   await server?.close();
 });
+
+/** Nueva request: usuario autenticado (o ninguno) y cookie de organización. */
+function request(userId: string | null, cookie?: string): void {
+  mocks.revalidated.length = 0;
+  mocks.claims = userId
+    ? {
+        iss: "https://testref.supabase.co/auth/v1",
+        sub: userId,
+        aud: "authenticated",
+        exp: 1_900_000_000,
+        iat: 1_899_996_400,
+        role: "authenticated",
+        aal: "aal1",
+        session_id: "00000000-0000-4000-8000-0000000000e1",
+      }
+    : null;
+  mocks.jar = cookieJar(
+    cookie === undefined ? {} : { [ACTIVE_ORGANIZATION_COOKIE]: cookie },
+  );
+}
 
 const ctxA = (): TenantContext => tenantContext(USER_A, ORG_1);
 const ctxB = (): TenantContext => tenantContext(USER_B, ORG_2);
@@ -955,5 +1023,277 @@ describe("el ingreso al stock: trade_ins_intake y el constraint trigger diferido
         sql`UPDATE public.trade_ins SET converted_vehicle_id = ${stocked} WHERE id = ${id}`,
     );
     expect((await rowOf(id)).convertedVehicleId).toBe(stocked);
+  });
+});
+
+function form(fields: Record<string, string>): FormData {
+  const data = new FormData();
+  for (const [name, value] of Object.entries(fields)) data.append(name, value);
+  return data;
+}
+
+const USED = {
+  brand: "Toyota",
+  model: "Vitz",
+  version: "1.3 F",
+  year: "2015",
+  km: "98.000",
+  plate: "abc-123",
+} as const;
+
+const OFFER = {
+  currency: "USD",
+  estimatedRepairCost: "800",
+  offerPrice: "8.000",
+} as const;
+
+async function redirectOf(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof mocks.RedirectSignal) return error.path;
+    throw error;
+  }
+  throw new Error("expected a redirect");
+}
+
+/** La toma vigente de una oportunidad (sin RLS). */
+async function activeOf(
+  opportunityId: string,
+): Promise<{ id: string } & TradeInRow> {
+  const [found] = await db.admin<{ id: string }[]>`
+    SELECT id FROM public.trade_ins
+    WHERE opportunity_id = ${opportunityId}
+      AND status IN ('pending', 'appraised', 'accepted')
+  `;
+  return { id: found!.id, ...(await rowOf(found!.id)) };
+}
+
+describe("Server Actions: requireTenant() → pedido → withTenant() → trade_ins", () => {
+  it("seller registra, admin tasa y el cliente aprueba: pendiente → tasado → aprobado, con sus sellos", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    const paths = [
+      `/opportunities/${opportunityId}`,
+      "/opportunities/pipeline",
+    ];
+
+    request(USER_C, ORG_1);
+    expect(
+      await registerTradeIn(null, form({ opportunityId, ...USED })),
+    ).toMatchObject({
+      status: "registered",
+      appraised: false,
+      label: "Toyota Vitz 2015",
+    });
+    expect(mocks.revalidated).toEqual(paths);
+    const registered = await activeOf(opportunityId);
+    expect(registered).toMatchObject({
+      status: "pending",
+      createdBy: USER_C,
+      offerPrice: null,
+    });
+    const [used] = await db.admin`
+      SELECT brand, model, version, year, km, plate FROM public.trade_ins
+      WHERE id = ${registered.id}
+    `;
+    expect(used).toEqual({
+      brand: "Toyota",
+      model: "Vitz",
+      version: "1.3 F",
+      year: 2015,
+      km: 98000,
+      plate: "ABC 123",
+    });
+
+    // El seller no tasa: es del admin (la escritura no llega a la base).
+    request(USER_C, ORG_1);
+    expect(
+      await appraiseTradeIn(
+        null,
+        form({ tradeInId: registered.id, from: "pending", ...OFFER }),
+      ),
+    ).toEqual({ status: "requires_admin" });
+    expect((await rowOf(registered.id)).status).toBe("pending");
+
+    request(USER_A);
+    expect(
+      await appraiseTradeIn(
+        null,
+        form({ tradeInId: registered.id, from: "pending", ...OFFER }),
+      ),
+    ).toEqual({
+      status: "appraised",
+      label: "Toyota Vitz 2015",
+      offerPriceLabel: "USD 8.000",
+    });
+    expect(await rowOf(registered.id)).toMatchObject({
+      status: "appraised",
+      currency: "USD",
+      offerPrice: "8000.00",
+      estimatedRepairCost: "800.00",
+      appraisedBy: USER_A,
+    });
+
+    request(USER_C, ORG_1);
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: registered.id, decision: "accept" }),
+      ),
+    ).toEqual({
+      status: "changed",
+      decision: "accept",
+      to: "accepted",
+      label: "Toyota Vitz 2015",
+    });
+    expect(mocks.revalidated).toEqual(paths);
+    expect((await rowOf(registered.id)).status).toBe("accepted");
+  });
+
+  it("un admin registra y tasa en el mismo acto", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1, "qualifying");
+    request(USER_A);
+    expect(
+      await registerTradeIn(null, form({ opportunityId, ...USED, ...OFFER })),
+    ).toMatchObject({ status: "registered", appraised: true });
+    expect(await activeOf(opportunityId)).toMatchObject({
+      status: "appraised",
+      createdBy: USER_A,
+      appraisedBy: USER_A,
+      offerPrice: "8000.00",
+    });
+  });
+
+  it("un seller no puede colar la tasación en el alta: requires_admin y nada se registra", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    request(USER_C, ORG_1);
+    expect(
+      await registerTradeIn(null, form({ opportunityId, ...USED, ...OFFER })),
+    ).toMatchObject({ status: "requires_admin" });
+    const [{ count } = { count: -1 }] = await db.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.trade_ins
+      WHERE opportunity_id = ${opportunityId}
+    `;
+    expect(count).toBe(0);
+  });
+
+  it("aceptar sin tasar es offer_price_required; con una vigente no se registra otra; cerrada, nada cambia", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    request(USER_C, ORG_1);
+    await registerTradeIn(null, form({ opportunityId, ...USED }));
+    const { id } = await activeOf(opportunityId);
+
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: id, decision: "accept" }),
+      ),
+    ).toEqual({ status: "offer_price_required" });
+    expect(
+      await registerTradeIn(null, form({ opportunityId, ...USED })),
+    ).toMatchObject({ status: "already_registered" });
+
+    const { id: closed } = await opportunity(ORG_1, "lost");
+    const frozen = await tradeIn(ORG_1, closed, "appraised");
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: frozen, decision: "accept" }),
+      ),
+    ).toEqual({ status: "opportunity_closed" });
+    expect(
+      await registerTradeIn(null, form({ opportunityId: closed, ...USED })),
+    ).toMatchObject({ status: "opportunity_closed" });
+    expect((await rowOf(frozen)).status).toBe("appraised");
+  });
+
+  it("un pedido viejo no deshace lo que hizo otro: conflict con el estado real", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    const id = await tradeIn(ORG_1, opportunityId, "accepted");
+    request(USER_C, ORG_1);
+    // Vio la toma tasada y pidió "el cliente rechazó": ya estaba aprobada.
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: id, decision: "reject" }),
+      ),
+    ).toEqual({
+      status: "conflict",
+      current: "accepted",
+      label: "Toyota Vitz 2015",
+    });
+    request(USER_A);
+    expect(
+      await appraiseTradeIn(
+        null,
+        form({ tradeInId: id, from: "appraised", ...OFFER }),
+      ),
+    ).toEqual({
+      status: "conflict",
+      current: "accepted",
+      label: "Toyota Vitz 2015",
+    });
+    expect((await rowOf(id)).status).toBe("accepted");
+  });
+
+  it("aislamiento: otra organización no ve ni cambia la toma (not_found, sin revelar nada)", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    const id = await tradeIn(ORG_1, opportunityId, "appraised");
+    request(USER_B);
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: id, decision: "accept" }),
+      ),
+    ).toEqual({ status: "not_found" });
+    expect(
+      await appraiseTradeIn(
+        null,
+        form({ tradeInId: id, from: "appraised", ...OFFER }),
+      ),
+    ).toEqual({ status: "not_found" });
+    expect(
+      await registerTradeIn(null, form({ opportunityId, ...USED })),
+    ).toEqual({ status: "not_found" });
+    expect((await rowOf(id)).status).toBe("appraised");
+  });
+
+  it("sin sesión o sin membership activa no llega a la base", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    for (const [userId, path] of [
+      [null, "/login"],
+      [USER_D, "/no-access"],
+      [USER_E, "/no-access"],
+    ] as const) {
+      request(userId);
+      expect(
+        await redirectOf(
+          registerTradeIn(null, form({ opportunityId, ...USED })),
+        ),
+      ).toBe(path);
+    }
+    const [{ count } = { count: -1 }] = await db.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.trade_ins
+      WHERE opportunity_id = ${opportunityId}
+    `;
+    expect(count).toBe(0);
+  });
+
+  it("dos altas simultáneas dejan una sola toma vigente", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    request(USER_A);
+    const results = await Promise.all([
+      registerTradeIn(null, form({ opportunityId, ...USED })),
+      registerTradeIn(null, form({ opportunityId, ...USED, plate: "XYZ 999" })),
+    ]);
+    expect(results.map((result) => result?.status).sort()).toEqual([
+      "already_registered",
+      "registered",
+    ]);
+    const [{ count } = { count: -1 }] = await db.admin<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM public.trade_ins
+      WHERE opportunity_id = ${opportunityId}
+    `;
+    expect(count).toBe(1);
   });
 });

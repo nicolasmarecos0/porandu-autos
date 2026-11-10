@@ -4,6 +4,8 @@ import type { Stage } from "@/domains/opportunities/stages";
 import {
   appraisalOf,
   appraisalValuesOf,
+  OPTIMISTIC_TRADE_IN_ID,
+  optimisticTradeInPanel,
   tradeInCardView,
   tradeInClosureNotice,
   tradeInHint,
@@ -194,12 +196,14 @@ describe("el panel", () => {
 
   it("sin tomas: se registra, con la pista de la demanda", () => {
     expect(tradeInPanelData([], context)).toEqual({
+      stage: "negotiating",
       current: null,
       history: [],
       canRegister: true,
       hint: null,
       viewerIsAdmin: false,
       closure: null,
+      saving: false,
     });
     expect(tradeInPanelData([], { ...context, tradeInIntent: true }).hint).toBe(
       "El cliente dijo que entrega su usado: registralo para tasarlo.",
@@ -303,5 +307,156 @@ describe("helpers", () => {
     // Lo que precarga el formulario se vuelve a leer igual.
     expect(parseTradeInAppraisal(values)).toEqual({ ok: true, appraisal });
     expect(tradeInLabel(row("pending"))).toBe("Toyota Vitz 2015");
+  });
+});
+
+describe("estado optimista: lo que muestra el panel mientras guarda", () => {
+  const NOW = new Date("2026-11-10T12:00:00Z");
+  const context = {
+    viewerUserId: VIEWER,
+    viewerIsAdmin: true,
+    opportunityStage: "negotiating" as Stage,
+    tradeInIntent: null,
+  };
+  const APPRAISAL = {
+    currency: "USD",
+    estimatedRepairCost: "600.00",
+    offerPrice: "8500.00",
+  } as const;
+
+  it("registrar: aparece la toma pendiente, sin acciones y guardando", () => {
+    const data = optimisticTradeInPanel(
+      tradeInPanelData([], context),
+      {
+        kind: "register",
+        vehicle: {
+          brand: "Toyota",
+          model: "Vitz",
+          version: null,
+          year: 2015,
+          km: null,
+          plate: "ABC 123",
+        },
+        appraisal: null,
+      },
+      NOW,
+    );
+    expect(data).toMatchObject({
+      saving: true,
+      canRegister: false,
+      hint: null,
+      current: {
+        id: OPTIMISTIC_TRADE_IN_ID,
+        status: "pending",
+        name: "Toyota Vitz",
+        detail: "2015",
+        plateLabel: "ABC 123",
+        registeredLabel: "Registró: Vos · 10 nov 2026 09:00",
+        decisions: [],
+        appraise: null,
+      },
+    });
+  });
+
+  it("registrar y tasar (admin): aparece tasada, con su costo total de ingreso", () => {
+    const data = optimisticTradeInPanel(
+      tradeInPanelData([], context),
+      {
+        kind: "register",
+        vehicle: {
+          brand: "Toyota",
+          model: "Vitz",
+          version: "1.3 F",
+          year: 2015,
+          km: 98000,
+          plate: null,
+        },
+        appraisal: APPRAISAL,
+      },
+      NOW,
+    );
+    expect(data.current).toMatchObject({
+      status: "appraised",
+      appraisal: {
+        offerPriceLabel: "USD 8.500",
+        financial: { intakeCostLabel: "USD 9.100" },
+        appraisedLabel: "Tasó: Vos · 10 nov 2026 09:00",
+      },
+    });
+    expect(data.closure).toMatchObject({ kind: "undecided" });
+  });
+
+  it("tasar: la tarjeta pasa a Tasado con la tasación nueva; un seller no ve el detalle financiero", () => {
+    const pending = tradeInPanelData([row("pending")], context);
+    expect(
+      optimisticTradeInPanel(
+        pending,
+        { kind: "appraise", appraisal: APPRAISAL },
+        NOW,
+      ).current,
+    ).toMatchObject({
+      status: "appraised",
+      statusLabel: "Tasado",
+      step: "appraised",
+      appraisal: { financial: { repairCostLabel: "USD 600" } },
+      decisions: [],
+      appraise: null,
+    });
+    const seller = tradeInPanelData([row("pending")], {
+      ...context,
+      viewerIsAdmin: false,
+    });
+    expect(
+      optimisticTradeInPanel(
+        seller,
+        { kind: "appraise", appraisal: APPRAISAL },
+        NOW,
+      ).current?.appraisal?.financial,
+    ).toBeNull();
+  });
+
+  it("decidir: el destino de la decisión, con su nota", () => {
+    const appraised = tradeInPanelData([row("appraised")], context);
+    expect(
+      optimisticTradeInPanel(
+        appraised,
+        { kind: "decide", decision: "accept" },
+        NOW,
+      ),
+    ).toMatchObject({
+      saving: true,
+      current: {
+        status: "accepted",
+        statusLabel: "Aprobado por el cliente",
+        step: "accepted",
+        decisions: [],
+        note: {
+          tone: "info",
+          text: "Al marcar la oportunidad como ganada, ingresa al stock como unidad En preparación.",
+        },
+      },
+    });
+    expect(
+      optimisticTradeInPanel(
+        appraised,
+        { kind: "decide", decision: "reject" },
+        NOW,
+      ).current,
+    ).toMatchObject({
+      status: "rejected",
+      statusLabel: "Rechazado",
+      note: null,
+    });
+  });
+
+  it("no inventa una toma: sin vigente, solo marca que guarda", () => {
+    const empty = tradeInPanelData([], context);
+    expect(
+      optimisticTradeInPanel(
+        empty,
+        { kind: "decide", decision: "accept" },
+        NOW,
+      ),
+    ).toEqual({ ...empty, saving: true });
   });
 });
