@@ -278,7 +278,7 @@ describe("el panel", () => {
       detail: "1.3 F · 2015",
       status: "appraised",
       message:
-        "La toma está «Tasado», sin la aprobación del cliente: al confirmar, el usado no ingresa al stock. Si el cliente la aprobó, registralo en «Vehículo en parte de pago» antes de cerrar.",
+        "El usado está «Tasado», sin la aprobación del cliente: al confirmar, no ingresa al stock. Si el cliente aprobó la toma, registralo en «Vehículo en parte de pago» antes de cerrar.",
     });
     expect(tradeInClosureNotice(row("rejected"))).toBeNull();
     expect(

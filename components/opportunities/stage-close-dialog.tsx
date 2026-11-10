@@ -14,6 +14,7 @@ import {
 } from "@/domains/opportunities/closure";
 import { STAGE_ACTION_LABELS } from "@/domains/opportunities/labels";
 import type { Stage } from "@/domains/opportunities/stages";
+import type { TradeInClosureNotice } from "@/domains/opportunities/trade-in-presentation";
 import { closeOpportunity } from "@/lib/opportunities/actions";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 
@@ -58,6 +59,8 @@ type StageCloseDialogProps = Readonly<{
    * precio final y la moneda al ganar. Se puede cambiar.
    */
   acceptedQuoteTotal?: Money | null;
+  /** La toma vigente (Hito 20, DEC-052 §5): qué le pasa al ganar. */
+  tradeIn?: TradeInClosureNotice | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Respuesta que cierra el diálogo: el panel la avisa. */
@@ -71,6 +74,7 @@ export function StageCloseDialog({
   stage,
   saleVehicle,
   acceptedQuoteTotal = null,
+  tradeIn = null,
   open,
   onOpenChange,
   onSettled,
@@ -119,6 +123,7 @@ export function StageCloseDialog({
           stage={stage}
           saleVehicle={saleVehicle}
           acceptedQuoteTotal={acceptedQuoteTotal}
+          tradeIn={tradeIn}
           today={today}
           pending={pending}
           state={state}

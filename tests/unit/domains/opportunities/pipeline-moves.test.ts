@@ -55,6 +55,7 @@ function openCard(
     closure: null,
     saleVehicle: null,
     acceptedQuoteTotal: null,
+    tradeIn: null,
     ...overrides,
   };
 }

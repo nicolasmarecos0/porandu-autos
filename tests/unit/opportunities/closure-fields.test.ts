@@ -18,6 +18,7 @@ import {
   type ClosureOutcome,
   type ClosureValues,
 } from "@/domains/opportunities/closure";
+import type { TradeInClosureNotice } from "@/domains/opportunities/trade-in-presentation";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 
 /*
@@ -45,10 +46,12 @@ function render(
     errors = {},
     values,
     saleVehicle = SALE_VEHICLE,
+    tradeIn = null,
   }: {
     errors?: ClosureErrors;
     values?: Partial<ClosureValues>;
     saleVehicle?: SaleVehicle | null;
+    tradeIn?: TradeInClosureNotice | null;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -58,6 +61,7 @@ function render(
       errors,
       values,
       saleVehicle,
+      tradeIn,
       disabled: false,
     }),
   );
@@ -231,6 +235,59 @@ describe("Ganada vende la unidad (Hito 19, DEC-051)", () => {
   );
 });
 
+describe("Ganada hace entrar la toma aceptada (Hito 20, DEC-052 §5)", () => {
+  const WILL_STOCK: TradeInClosureNotice = {
+    kind: "will_stock",
+    name: "Toyota Vitz",
+    detail: "1.0 F · 2015",
+  };
+
+  it("aceptada: el usado, su pase a En preparación y que entra sin precio", () => {
+    const html = render("won", { tradeIn: WILL_STOCK });
+    expect(html).toContain("Vehículo en parte de pago");
+    expect(html).toContain("Toyota Vitz");
+    expect(html).toContain("1.0 F · 2015");
+    expect(html).toContain("Aprobado por el cliente");
+    expect(html).toContain("En preparación");
+    // El pase se anuncia en texto, no solo con los chips.
+    expect(html).toMatch(/Toma:.*ingresa al stock como/);
+    expect(html).toContain(
+      "Al confirmar, el usado en parte de pago ingresa al stock como unidad «En preparación», con sus datos y sin precio publicado.",
+    );
+    // No agrega campos: la toma ya está decidida.
+    expect(names(html)).toEqual([
+      "salePrice",
+      "saleCurrency",
+      "paymentMethod",
+      "deliveryStatus",
+      "deliveryDate",
+    ]);
+  });
+
+  it("sin la aprobación del cliente: solo un aviso, el cierre sigue", () => {
+    const html = render("won", {
+      tradeIn: {
+        kind: "undecided",
+        name: "Toyota Vitz",
+        detail: "1.0 F · 2015",
+        status: "appraised",
+        message:
+          "El usado está «Tasado», sin la aprobación del cliente: al confirmar, no ingresa al stock.",
+      },
+    });
+    expect(html).toContain("sin la aprobación del cliente");
+    expect(html).not.toContain("ingresa al stock como unidad");
+    expect(names(html)).toContain("salePrice");
+  });
+
+  it("sin toma o al perder: nada sobre el usado", () => {
+    expect(render("won")).not.toContain("Vehículo en parte de pago");
+    expect(render("lost", { tradeIn: WILL_STOCK })).not.toContain(
+      "Vehículo en parte de pago",
+    );
+  });
+});
+
 describe("Perdida", () => {
   it("pide el motivo (lista nueva) y notas opcionales con contador", () => {
     const html = render("lost");
@@ -323,7 +380,13 @@ describe("StageCloseDialog", () => {
     ],
     [null, null],
     [
-      { status: "closed", opportunityId: "x", from: "negotiating", to: "won" },
+      {
+        status: "closed",
+        opportunityId: "x",
+        from: "negotiating",
+        to: "won",
+        stockedTradeIn: null,
+      },
       null,
     ],
   ])("el aviso dentro del diálogo (%j)", (state, text) => {

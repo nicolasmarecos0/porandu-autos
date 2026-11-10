@@ -431,9 +431,15 @@ export function tradeInHint(
   return null;
 }
 
+/** Lo que el aviso del cierre necesita de la toma vigente. */
+export type TradeInClosureRow = Pick<
+  TradeInRow,
+  "status" | "brand" | "model" | "version" | "year" | "convertedVehicleId"
+>;
+
 /** El aviso de la confirmación "Marcar como ganada" para la toma vigente. */
 export function tradeInClosureNotice(
-  row: TradeInRow | null,
+  row: TradeInClosureRow | null,
 ): TradeInClosureNotice | null {
   if (row === null || row.convertedVehicleId !== null) return null;
   const name = vehicleName(row);
@@ -451,11 +457,16 @@ export function tradeInClosureNotice(
         name,
         detail,
         status: row.status,
-        message: `La toma está «${TRADE_IN_STATUS_LABELS[row.status]}», sin la aprobación del cliente: al confirmar, el usado no ingresa al stock. Si el cliente la aprobó, registralo en «Vehículo en parte de pago» antes de cerrar.`,
+        message: `El usado está «${TRADE_IN_STATUS_LABELS[row.status]}», sin la aprobación del cliente: al confirmar, no ingresa al stock. Si el cliente aprobó la toma, registralo en «Vehículo en parte de pago» antes de cerrar.`,
       };
     case "rejected":
       return null;
   }
+}
+
+/** El aviso del cierre Ganada que hizo entrar el usado al stock. */
+export function stockedTradeInText(label: string): string {
+  return `El usado ${label} ingresó al stock como unidad En preparación.`;
 }
 
 /** "Al confirmar, el usado entra al stock En preparación." */

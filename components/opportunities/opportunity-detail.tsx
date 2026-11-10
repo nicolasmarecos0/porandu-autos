@@ -267,6 +267,7 @@ export function OpportunityDetailView({
             : null
         }
         acceptedQuoteTotal={quotes.acceptedTotal}
+        tradeIn={tradeIns.closure}
       />
       {closure ? (
         <ClosureSummaryCard

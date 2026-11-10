@@ -48,8 +48,9 @@ import { seedVehicles, VEHICLES } from "./support/vehicles";
  * Prueba que el tablero trae solo la organización activa (también para un
  * usuario con varias), la ventana y el tope de las cerradas, las acciones
  * pendientes (cotizaciones por aprobar vigentes, pruebas vencidas y la
- * unidad por vincular), el total de la cotización aceptada y que leer no
- * escribe nada. Mover una tarjeta usa las Server Actions de DEC-032 y
+ * unidad por vincular), el total de la cotización aceptada, la toma de
+ * usado vigente que avisa la confirmación de Ganada (Hito 20, DEC-052 §5) y
+ * que leer no escribe nada. Mover una tarjeta usa las Server Actions de DEC-032 y
  * DEC-034, que ya prueban opportunity-stages.test.ts y
  * opportunity-closure.test.ts.
  *
@@ -180,6 +181,39 @@ async function quote(seed: QuoteSeed): Promise<string> {
   return row!.id;
 }
 
+/** Una toma de usado de `opportunityId` en `status` (superusuario). */
+async function tradeIn(
+  organizationId: string,
+  opportunityId: string,
+  status: "pending" | "accepted" | "rejected",
+): Promise<void> {
+  const appraised = status !== "pending";
+  await db.admin`
+    INSERT INTO public.trade_ins ${db.admin({
+      organization_id: organizationId,
+      opportunity_id: opportunityId,
+      brand: "Toyota",
+      model: "Vitz",
+      version: "1.3 F",
+      year: 2015,
+      km: 98000,
+      plate: "ABC 123",
+      status,
+      created_by: USER_C,
+      currency: appraised ? "USD" : null,
+      offer_price: appraised ? "8000.00" : null,
+      estimated_repair_cost: appraised ? "800.00" : null,
+      // Tasa un admin de la organización: A en ORG_1, C en ORG_3.
+      appraised_by: appraised
+        ? organizationId === ORG_1
+          ? USER_A
+          : USER_C
+        : null,
+      appraised_at: appraised ? from(-HOUR) : null,
+    })}
+  `;
+}
+
 async function testDrive(
   opportunityId: string,
   status: string,
@@ -270,6 +304,13 @@ beforeAll(async () => {
     validDays: 7,
     totalPrice: "47500.00",
   });
+
+  // Tomas de usados (DEC-052): en ORG_1, una rechazada (historial) y la
+  // aceptada de la negociación activa; en ORG_3, una pendiente de la
+  // negociación sembrada.
+  await tradeIn(ORG_1, seeded.negotiatingActive, "rejected");
+  await tradeIn(ORG_1, seeded.negotiatingActive, "accepted");
+  await tradeIn(ORG_3, NEGOTIATING_3, "pending");
 
   // ORG_1 · pruebas de la calificación: dos vencidas (franja terminada, en
   // la ventana), una cancelada, una en curso y una vencida de hace 10 días
@@ -447,6 +488,26 @@ describe("getOpportunityPipeline()", () => {
     });
   });
 
+  it("la toma vigente de cada abierta, para el aviso de Ganada: solo la de la organización activa, sin la chapa ni los importes", async () => {
+    const board = await boardAs(tenantContext(USER_A, ORG_1));
+    // La aceptada entra al stock al ganar; la rechazada no cuenta.
+    expect(cardOf(board, seeded.negotiatingActive).tradeIn).toEqual({
+      kind: "will_stock",
+      name: "Toyota Vitz",
+      detail: "1.3 F · 2015",
+    });
+    expect(cardOf(board, QUALIFYING_1).tradeIn).toBeNull();
+    // La toma pendiente de ORG_3 solo aparece en ORG_3, como aviso.
+    const own = await boardAs(tenantContext(USER_C, ORG_3));
+    expect(cardOf(own, NEGOTIATING_3).tradeIn).toMatchObject({
+      kind: "undecided",
+      status: "pending",
+    });
+    expect(JSON.stringify([board, own])).not.toMatch(
+      /ABC 123|8000\.00|800\.00/,
+    );
+  });
+
   it("la ganada muestra la unidad vendida y no tiene score ni alertas", async () => {
     const board = await boardAs(tenantContext(USER_A, ORG_1));
     expect(cardOf(board, seeded.wonRecent)).toMatchObject({
@@ -467,9 +528,21 @@ describe("getOpportunityPipeline()", () => {
     const quotesSnapshot = () => db.admin`
       SELECT id, status, updated_at FROM public.quotes ORDER BY id
     `;
-    const before = [await snapshot(), await quotesSnapshot()];
+    const tradeInsSnapshot = () => db.admin`
+      SELECT id, status, converted_vehicle_id, updated_at
+      FROM public.trade_ins ORDER BY id
+    `;
+    const before = [
+      await snapshot(),
+      await quotesSnapshot(),
+      await tradeInsSnapshot(),
+    ];
     await boardAs(tenantContext(USER_A, ORG_1));
     await boardAs(tenantContext(USER_C, ORG_3));
-    expect([await snapshot(), await quotesSnapshot()]).toEqual(before);
+    expect([
+      await snapshot(),
+      await quotesSnapshot(),
+      await tradeInsSnapshot(),
+    ]).toEqual(before);
   });
 });

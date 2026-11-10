@@ -12,10 +12,12 @@ import {
   type ClosedSource,
   type PipelineBoard,
   type PipelineRow,
+  type PipelineTradeIn,
   type PipelineWindow,
   type QuoteSignals,
   type TestDriveSignals,
 } from "@/domains/opportunities/pipeline";
+import { ACTIVE_TRADE_IN_STATUSES } from "@/domains/opportunities/trade-ins";
 import { requireTenant } from "@/lib/tenant/session";
 
 import {
@@ -23,6 +25,7 @@ import {
   opportunities,
   quotes,
   testDrives,
+  tradeIns,
   vehicles,
 } from "../schema";
 import { withTenant, type ScopedTransaction } from "../tenant";
@@ -58,6 +61,10 @@ import { selectMatchCandidates, statusFromDb } from "./vehicles";
  *   8. Las pruebas de manejo vencidas de las abiertas (DEC-047 §3.3),
  *      agregadas por oportunidad · índice test_drives (organization_id,
  *      opportunity_id).
+ *   9. La toma de usado vigente de cada abierta (Hito 20, DEC-052 §5): lo
+ *      que la confirmación de Ganada avisa · índice trade_ins
+ *      (organization_id, opportunity_id); a lo sumo una vigente por
+ *      oportunidad (`trade_ins_active_opportunity_key`).
  *
  * Cada lectura filtra por `organization_id` además de RLS (ADR-001 §2: con
  * varias memberships activas, RLS deja ver todas y el filtro deja solo la
@@ -301,6 +308,42 @@ async function selectOverdueTestDrives(
 }
 
 /**
+ * 9. La toma vigente (pendiente, tasada o aceptada) de cada abierta. Solo
+ * lo que el aviso del cierre muestra: ni la chapa ni los importes de la
+ * tasación viajan al tablero.
+ */
+async function selectActiveTradeIns(
+  tx: ScopedTransaction,
+  organizationId: string,
+  opportunityIds: readonly string[],
+): Promise<Map<string, PipelineTradeIn>> {
+  const signals = new Map<string, PipelineTradeIn>();
+  if (opportunityIds.length === 0) return signals;
+  const rows = await tx
+    .select({
+      opportunityId: tradeIns.opportunityId,
+      status: tradeIns.status,
+      brand: tradeIns.brand,
+      model: tradeIns.model,
+      version: tradeIns.version,
+      year: tradeIns.year,
+      convertedVehicleId: tradeIns.convertedVehicleId,
+    })
+    .from(tradeIns)
+    .where(
+      and(
+        eq(tradeIns.organizationId, organizationId),
+        inArray(tradeIns.opportunityId, [...opportunityIds]),
+        inArray(tradeIns.status, [...ACTIVE_TRADE_IN_STATUSES]),
+      ),
+    );
+  for (const { opportunityId, ...tradeIn } of rows) {
+    signals.set(opportunityId, tradeIn);
+  }
+  return signals;
+}
+
+/**
  * Loader de /opportunities/pipeline. `now` es el instante de la request:
  * fija la recencia, la ventana de cerradas y el día de validez.
  */
@@ -348,6 +391,11 @@ export async function getOpportunityPipeline(
       openIds,
       window,
     );
+    const tradeInSignals = await selectActiveTradeIns(
+      tx,
+      organizationId,
+      openIds,
+    );
     return {
       open,
       won,
@@ -357,6 +405,7 @@ export async function getOpportunityPipeline(
       lastNotes,
       quotes: quoteSignals,
       testDrives: testDriveSignals,
+      tradeIns: tradeInSignals,
     };
   });
 

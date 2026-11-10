@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import {
   planOpportunityClosure,
@@ -9,12 +9,17 @@ import {
 } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
 import {
+  ACTIVE_TRADE_IN_STATUSES,
+  planTradeInIntake,
+  type TradeInStockUnit,
+} from "@/domains/opportunities/trade-ins";
+import {
   planVehicleSale,
   type SaleConflictReason,
 } from "@/domains/vehicles/lifecycle";
 import type { VehicleStatus } from "@/domains/vehicles/stock";
 
-import { opportunities, vehicles } from "../schema";
+import { opportunities, tradeIns, vehicles } from "../schema";
 import { withTenant, type TenantContext } from "../tenant";
 import { stageFromDb } from "./opportunities";
 import { statusFromDb, statusToDb } from "./vehicles";
@@ -28,10 +33,13 @@ import { statusFromDb, statusToDb } from "./vehicles";
  *
  *   TenantContext → withTenant() → SELECT … FOR UPDATE (etapa y unidad) →
  *   planOpportunityClosure() (dominio) → [Ganada: SELECT … FOR UPDATE de
- *   la unidad → planVehicleSale() (dominio)] → UPDATE … AND stage = <la
- *   leída> AND vehicle_id = <la leída> → RLS + CHECKs de cierre + trigger
- *   → [Ganada: UPDATE de la unidad a `sold` → trigger de vehicles] →
- *   constraint trigger diferido → COMMIT
+ *   la unidad → planVehicleSale() (dominio) → SELECT … FOR UPDATE de la
+ *   toma vigente → planTradeInIntake() (dominio)] → UPDATE … AND stage =
+ *   <la leída> AND vehicle_id = <la leída> → RLS + CHECKs de cierre +
+ *   trigger → [Ganada: UPDATE de la unidad a `sold` → trigger de vehicles
+ *   → con la toma aceptada, INSERT de la unidad En preparación y UPDATE de
+ *   la toma (`converted_vehicle_id`) → trigger de trade_ins] → constraint
+ *   triggers diferidos → COMMIT
  *
  * - El cliente solo identifica la oportunidad y manda el cierre ya
  *   validado. La etapa de origen y la unidad las lee este módulo de la fila
@@ -54,15 +62,30 @@ import { statusFromDb, statusToDb } from "./vehicles";
  *   `vehicle_conflict`: no se escribe nada, ni la oportunidad. El
  *   constraint trigger diferido de 0020 lo vuelve a exigir al COMMIT: una
  *   ganada sin su unidad vendida revierte la transacción entera.
- * - Perdida no toca el stock: una unidad reservada sigue reservada (la
- *   reserva se libera desde Stock).
+ * - Ganada hace entrar al stock la toma aceptada (Hito 20, DEC-052 §5, la
+ *   regla de oro): en la misma transacción, la toma vigente de la
+ *   oportunidad se bloquea (después de la unidad vendida) y, si el cliente
+ *   la aprobó, nace una unidad En preparación con los datos del usado (sin
+ *   recapturarlos y sin precio publicado: el valor de toma es lo que costó)
+ *   y la toma queda vinculada a ella (`converted_vehicle_id`). El trigger de
+ *   trade_ins exige la oportunidad ya ganada y la unidad nueva con esos
+ *   datos; el constraint trigger diferido de 0021 revierte al COMMIT una
+ *   ganada con su toma aceptada fuera del stock. Una toma pendiente o
+ *   tasada sin la aprobación del cliente no entra: el cierre no la toca.
+ * - Perdida no toca el stock ni la toma: una unidad reservada sigue
+ *   reservada (la reserva se libera desde Stock) y una toma aceptada no se
+ *   convierte.
  * - Concurrencia: el FOR UPDATE serializa los pedidos sobre una misma
  *   oportunidad. El segundo lee la etapa ya confirmada y el dominio decide
  *   sobre ella: el mismo cierre es `unchanged` (sin reescribir los
  *   metadatos) y el otro resultado, `invalid_transition`. Nunca ganada y
  *   perdida, nunca dos cierres. El bloqueo de la unidad (siempre después
  *   del de la oportunidad) serializa también dos ganadas que comparten la
- *   unidad y un cambio de estado desde Stock: nunca se vende dos veces.
+ *   unidad y un cambio de estado desde Stock: nunca se vende dos veces. Las
+ *   escrituras de la toma bloquean la oportunidad antes que la toma (FOR
+ *   SHARE): una decisión del cliente y un cierre simultáneos se
+ *   serializan, y el cierre ve la decisión confirmada (o la decisión ve la
+ *   oportunidad ya cerrada y no cambia nada).
  * - Una oportunidad inexistente o de otra organización es `not_found`, sin
  *   revelar cuál de las dos.
  */
@@ -72,6 +95,15 @@ export type ClosureRequest = Readonly<{
   closure: Closure;
 }>;
 
+/** La unidad que nació de la toma aceptada con el cierre Ganada. */
+export type StockedTradeIn = Readonly<{
+  tradeInId: string;
+  vehicleId: string;
+  brand: string;
+  model: string;
+  year: number;
+}>;
+
 export type CloseOpportunityOutcome =
   /** Este pedido cerró la oportunidad. */
   | Readonly<{
@@ -79,6 +111,8 @@ export type CloseOpportunityOutcome =
       opportunityId: string;
       from: Stage;
       to: ClosureOutcome;
+      /** Ganada con una toma aceptada: la unidad En preparación que nació. */
+      stockedTradeIn: StockedTradeIn | null;
     }>
   /** Ya estaba cerrada así: no se escribió nada. */
   | Readonly<{
@@ -200,6 +234,37 @@ export async function closeOpportunityWithMetadata(
       sale = { vehicleId: current.vehicleId, from: salePlan.from };
     }
 
+    // Ganada: la toma vigente se bloquea después de la unidad (el orden de
+    // siempre: oportunidad → unidad → toma) y, si el cliente la aprobó,
+    // entra al stock en esta misma transacción (DEC-052 §5).
+    let intake: { tradeInId: string; unit: TradeInStockUnit } | null = null;
+    if (plan.closure.outcome === "won") {
+      const [active] = await tx
+        .select({
+          id: tradeIns.id,
+          status: tradeIns.status,
+          convertedVehicleId: tradeIns.convertedVehicleId,
+          brand: tradeIns.brand,
+          model: tradeIns.model,
+          version: tradeIns.version,
+          year: tradeIns.year,
+          km: tradeIns.km,
+        })
+        .from(tradeIns)
+        .where(
+          and(
+            eq(tradeIns.organizationId, organizationId),
+            eq(tradeIns.opportunityId, opportunityId),
+            inArray(tradeIns.status, [...ACTIVE_TRADE_IN_STATUSES]),
+          ),
+        )
+        .for("update");
+      const intakePlan = planTradeInIntake(active ?? null);
+      if (intakePlan.kind === "intake") {
+        intake = { tradeInId: intakePlan.tradeInId, unit: intakePlan.unit };
+      }
+    }
+
     // La fila está bloqueada, así que etapa y unidad no pueden haber
     // cambiado; la condición es una barrera más contra un bug de este módulo.
     const updated = await tx
@@ -237,11 +302,58 @@ export async function closeOpportunityWithMetadata(
         throw new Error("vehicle sale affected an unexpected row count");
       }
     }
+
+    let stockedTradeIn: StockedTradeIn | null = null;
+    if (intake) {
+      // La unidad nace En preparación (lo exige la policy de alta de
+      // vehicles), con los datos del usado y sin precio publicado.
+      const { unit } = intake;
+      const [created] = await tx
+        .insert(vehicles)
+        .values({
+          organizationId,
+          brand: unit.brand,
+          model: unit.model,
+          version: unit.version,
+          year: unit.year,
+          km: unit.km,
+          status: "in_preparation",
+        })
+        .returning({ id: vehicles.id });
+      if (!created) throw new Error("trade-in stock intake returned no row");
+      // La toma está bloqueada desde arriba: sigue aceptada y sin unidad. El
+      // trigger de trade_ins exige la oportunidad ya ganada y esta unidad.
+      const linked = await tx
+        .update(tradeIns)
+        .set({ convertedVehicleId: created.id })
+        .where(
+          and(
+            eq(tradeIns.organizationId, organizationId),
+            eq(tradeIns.id, intake.tradeInId),
+            eq(tradeIns.status, "accepted"),
+            isNull(tradeIns.convertedVehicleId),
+          ),
+        )
+        .returning({ id: tradeIns.id });
+      if (linked.length !== 1) {
+        throw new Error(
+          "trade-in stock intake affected an unexpected row count",
+        );
+      }
+      stockedTradeIn = {
+        tradeInId: intake.tradeInId,
+        vehicleId: created.id,
+        brand: unit.brand,
+        model: unit.model,
+        year: unit.year,
+      };
+    }
     return {
       outcome: "closed",
       opportunityId,
       from: plan.from,
       to: plan.closure.outcome,
+      stockedTradeIn,
     };
   });
 }

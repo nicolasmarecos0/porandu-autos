@@ -4,19 +4,25 @@ import { and, eq } from "drizzle-orm";
 import postgres, { type Sql } from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { getOpportunityDetail } from "@/db/queries/opportunity-detail";
+import { getStockCatalog } from "@/db/queries/stock-catalog";
+import { getStockList } from "@/db/queries/vehicles";
 import { opportunities, tradeIns, vehicles } from "@/db/schema";
 import { withTenant, type TenantContext } from "@/db/tenant";
 import {
   TRADE_IN_STATUSES,
   TRADE_IN_TRANSITIONS,
 } from "@/domains/opportunities/trade-ins";
-
+import { groupByStatus } from "@/domains/vehicles/stock";
+import { closeOpportunity } from "@/lib/opportunities/actions";
+import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
 import {
   appraiseTradeIn,
   changeTradeInStatus,
   registerTradeIn,
 } from "@/lib/trade-ins/actions";
+import { VEHICLE_LIFECYCLE_PATHS } from "@/lib/vehicles/paths";
 
 import { cookieJar, type CookieJar } from "../unit/support/cookie-jar";
 import { closureColumns, WON_METADATA } from "./support/closures";
@@ -51,6 +57,12 @@ import {
  *   oportunidad abierta bloqueada FOR SHARE, valor de toma para aceptar,
  *   admin para tasar, ingreso al stock solo con el cierre Ganada) →
  *   CHECKs → constraint trigger diferido opportunities_won_trade_in_stocked
+ *
+ * Después, las Server Actions de la toma (registrar, tasar, decidir) y la
+ * regla de oro por el boundary completo: closeOpportunity() ganada, con la
+ * toma aprobada por el cliente, hace nacer el usado en `vehicles` En
+ * preparación en la misma transacción que la venta (DEC-052 §5), o no
+ * escribe nada.
  *
  * Tenants (support/tenants.ts): A: admin de ORG_1 · B: admin de ORG_2 · C:
  * seller de ORG_1 y admin de ORG_3.
@@ -180,20 +192,21 @@ async function unit(
 /**
  * Una oportunidad propia del caso en `stage`. En negociación o cerrada,
  * con una unidad vinculada (vendida si está ganada), como la deja la
- * aplicación.
+ * aplicación; `unitStatus` fuerza otro estado de esa unidad.
  */
 async function opportunity(
   organizationId: string,
   stage: StageName = "negotiating",
+  unitStatus?: DbVehicleStatus,
 ): Promise<{ id: string; vehicleId: string | null }> {
   sequence += 1;
   const contactId = randomUUID();
   const id = randomUUID();
   const vehicleId =
     stage === "negotiating" || stage === "lost"
-      ? await unit(organizationId, "available")
+      ? await unit(organizationId, unitStatus ?? "available")
       : stage === "won"
-        ? await unit(organizationId, "sold")
+        ? await unit(organizationId, unitStatus ?? "sold")
         : null;
   await db.admin`
     INSERT INTO public.contacts (id, organization_id, name)
@@ -1295,5 +1308,395 @@ describe("Server Actions: requireTenant() → pedido → withTenant() → trade_
       WHERE opportunity_id = ${opportunityId}
     `;
     expect(count).toBe(1);
+  });
+});
+
+/** El cierre Ganada del formulario: precio, moneda, pago y entrega. */
+const WIN = {
+  outcome: "won",
+  salePrice: "47.500",
+  saleCurrency: "USD",
+  paymentMethod: "financing",
+  deliveryStatus: "scheduled",
+  deliveryDate: "2100-01-15",
+} as const;
+
+function close(
+  opportunityId: string,
+  fields: Record<string, string> = WIN,
+): Promise<CloseOpportunityState> {
+  return closeOpportunity(null, form({ opportunityId, ...fields }));
+}
+
+/** Las unidades de una organización (sin RLS), por id. */
+async function vehicleIdsOf(organizationId: string): Promise<string[]> {
+  const rows = await db.admin<{ id: string }[]>`
+    SELECT id FROM public.vehicles
+    WHERE organization_id = ${organizationId} ORDER BY id
+  `;
+  return rows.map((row) => row.id);
+}
+
+async function vehicleStatusOf(id: string | null): Promise<string> {
+  const [row] = await db.admin<{ status: string }[]>`
+    SELECT status FROM public.vehicles WHERE id = ${id}
+  `;
+  return row!.status;
+}
+
+async function stageOf(opportunityId: string): Promise<string> {
+  const [row] = await db.admin<{ stage: string }[]>`
+    SELECT stage FROM public.opportunities WHERE id = ${opportunityId}
+  `;
+  return row!.stage;
+}
+
+/** El id de la unidad que nació del cierre, si nació una. */
+function stockedOf(state: CloseOpportunityState): string | null {
+  return state?.status === "closed"
+    ? (state.stockedTradeIn?.vehicleId ?? null)
+    : null;
+}
+
+describe("la regla de oro: closeOpportunity() ganada hace entrar la toma aceptada al stock (DEC-052 §5)", () => {
+  it("crear la tasación → tasar → aprobar → ganar: el usado nace en vehicles En preparación, en la misma transacción que la venta", async () => {
+    const { id: opportunityId, vehicleId } = await opportunity(ORG_1);
+
+    // 1. El seller registra el usado que el cliente entrega en parte de pago.
+    request(USER_C, ORG_1);
+    expect(
+      await registerTradeIn(null, form({ opportunityId, ...USED })),
+    ).toMatchObject({ status: "registered", appraised: false });
+    const { id: tradeInId } = await activeOf(opportunityId);
+
+    // 2. El admin (tasador o gerente) lo tasa.
+    request(USER_A);
+    expect(
+      await appraiseTradeIn(
+        null,
+        form({ tradeInId, from: "pending", ...OFFER }),
+      ),
+    ).toMatchObject({ status: "appraised", offerPriceLabel: "USD 8.000" });
+
+    // 3. El cliente aprueba el valor de toma.
+    request(USER_C, ORG_1);
+    expect(
+      await changeTradeInStatus(null, form({ tradeInId, decision: "accept" })),
+    ).toMatchObject({ status: "changed", to: "accepted" });
+    const before = await vehicleIdsOf(ORG_1);
+
+    // 4. El seller gana la oportunidad.
+    request(USER_C, ORG_1);
+    const state = await close(opportunityId);
+    expect(state).toEqual({
+      status: "closed",
+      opportunityId,
+      from: "negotiating",
+      to: "won",
+      stockedTradeIn: {
+        vehicleId: expect.any(String),
+        label: "Toyota Vitz 2015",
+      },
+    });
+    const created = stockedOf(state)!;
+    // El cierre revalida el detalle y las vistas del stock.
+    expect(mocks.revalidated).toEqual([
+      `/opportunities/${opportunityId}`,
+      ...VEHICLE_LIFECYCLE_PATHS,
+    ]);
+
+    // 5. El usado nació en vehicles: una sola unidad nueva, En preparación,
+    // con los datos del usado y sin precio publicado.
+    expect(
+      (await vehicleIdsOf(ORG_1)).filter((id) => !before.includes(id)),
+    ).toEqual([created]);
+    const [stocked] = await db.admin`
+      SELECT organization_id, brand, model, version, year, km, price,
+        currency, status
+      FROM public.vehicles WHERE id = ${created}
+    `;
+    expect(stocked).toEqual({
+      organization_id: ORG_1,
+      brand: "Toyota",
+      model: "Vitz",
+      version: "1.3 F",
+      year: 2015,
+      km: 98000,
+      price: null,
+      currency: null,
+      status: "in_preparation",
+    });
+    // En la misma transacción: la venta cerrada, la unidad vendida y la toma
+    // vinculada a la unidad nueva, con su tasación intacta.
+    expect(await stageOf(opportunityId)).toBe("won");
+    expect(await vehicleStatusOf(vehicleId)).toBe("sold");
+    expect(await rowOf(tradeInId)).toMatchObject({
+      status: "accepted",
+      convertedVehicleId: created,
+      currency: "USD",
+      offerPrice: "8000.00",
+      estimatedRepairCost: "800.00",
+      appraisedBy: USER_A,
+    });
+
+    // 6. Aparece en el inventario del taller (Stock List, grupo En
+    // preparación) y cuenta en el Catálogo, que no la muestra en el salón.
+    request(USER_C, ORG_1);
+    const group = groupByStatus(await getStockList()).find((item) =>
+      item.vehicles.some((vehicle) => vehicle.id === created),
+    );
+    expect(group?.status).toBe("inPreparation");
+    request(USER_C, ORG_1);
+    const catalog = await getStockCatalog();
+    expect(catalog.vehicles.some((vehicle) => vehicle.id === created)).toBe(
+      false,
+    );
+
+    // 7. El panel de la oportunidad la muestra ingresada; el seller ve el
+    // valor de toma, no el costo de arreglo ni el de ingreso.
+    request(USER_C, ORG_1);
+    const detail = (await getOpportunityDetail(opportunityId))!;
+    expect(detail.tradeIns.current).toMatchObject({
+      id: tradeInId,
+      status: "accepted",
+      stocked: true,
+      decisions: [],
+      appraise: null,
+      appraisal: { offerPriceLabel: "USD 8.000", financial: null },
+    });
+    expect(detail.tradeIns.closure).toBeNull();
+    request(USER_A);
+    expect(
+      (await getOpportunityDetail(opportunityId))!.tradeIns.current?.appraisal,
+    ).toMatchObject({
+      financial: { repairCostLabel: "USD 800", intakeCostLabel: "USD 8.800" },
+    });
+
+    // 8. Repetir el cierre no vuelve a hacer entrar el usado.
+    request(USER_C, ORG_1);
+    expect(await close(opportunityId)).toEqual({
+      status: "unchanged",
+      opportunityId,
+      stage: "won",
+    });
+    expect(
+      (await vehicleIdsOf(ORG_1)).filter((id) => !before.includes(id)),
+    ).toEqual([created]);
+  });
+
+  it("la unidad nueva es de la organización: otra no la ve, ni en el Inventario", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    await tradeIn(ORG_1, opportunityId, "accepted");
+    request(USER_B);
+    const otherBefore = await getStockList();
+    request(USER_A);
+    const created = stockedOf(await close(opportunityId));
+    expect(created).not.toBeNull();
+
+    const visible = (ctx: TenantContext) =>
+      withTenant(ctx, (tx) =>
+        tx
+          .select({ id: vehicles.id })
+          .from(vehicles)
+          .where(eq(vehicles.id, created!)),
+      );
+    expect(await visible(ctxC())).toEqual([{ id: created }]);
+    expect(await visible(ctxB())).toEqual([]);
+    request(USER_B);
+    expect(await getStockList()).toEqual(otherBefore);
+  });
+
+  it.each(["pending", "appraised", "rejected"] as const)(
+    "ganar con la toma %s (sin la aprobación del cliente): la venta se cierra y el usado no entra",
+    async (status) => {
+      const { id: opportunityId, vehicleId } = await opportunity(ORG_1);
+      const id = await tradeIn(ORG_1, opportunityId, status);
+      const before = await vehicleIdsOf(ORG_1);
+      request(USER_A);
+      expect(await close(opportunityId)).toEqual({
+        status: "closed",
+        opportunityId,
+        from: "negotiating",
+        to: "won",
+        stockedTradeIn: null,
+      });
+      expect(await vehicleIdsOf(ORG_1)).toEqual(before);
+      expect(await vehicleStatusOf(vehicleId)).toBe("sold");
+      expect(await rowOf(id)).toMatchObject({
+        status,
+        convertedVehicleId: null,
+      });
+      // Cerrada, la toma ya no se decide: no puede entrar después.
+      if (status !== "rejected") {
+        request(USER_A);
+        expect(
+          await changeTradeInStatus(
+            null,
+            form({
+              tradeInId: id,
+              decision: status === "pending" ? "discard" : "accept",
+            }),
+          ),
+        ).toEqual({ status: "opportunity_closed" });
+        expect((await rowOf(id)).status).toBe(status);
+      }
+    },
+  );
+
+  it("perder con la toma aceptada no toca el stock ni la toma, que ya no cambia", async () => {
+    const { id: opportunityId, vehicleId } = await opportunity(ORG_1);
+    const id = await tradeIn(ORG_1, opportunityId, "accepted");
+    const before = await vehicleIdsOf(ORG_1);
+    request(USER_A);
+    expect(
+      await close(opportunityId, {
+        outcome: "lost",
+        lossReason: "competitor",
+        lossNotes: "",
+      }),
+    ).toEqual({
+      status: "closed",
+      opportunityId,
+      from: "negotiating",
+      to: "lost",
+      stockedTradeIn: null,
+    });
+    expect(await vehicleIdsOf(ORG_1)).toEqual(before);
+    expect(await vehicleStatusOf(vehicleId)).toBe("available");
+    expect(await rowOf(id)).toMatchObject({
+      status: "accepted",
+      convertedVehicleId: null,
+    });
+    request(USER_A);
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: id, decision: "withdraw" }),
+      ),
+    ).toEqual({ status: "opportunity_closed" });
+  });
+
+  it("si la unidad vendida no se puede vender (En preparación), no se escribe nada: ni el cierre ni el ingreso del usado", async () => {
+    const { id: opportunityId, vehicleId } = await opportunity(
+      ORG_1,
+      "negotiating",
+      "in_preparation",
+    );
+    const id = await tradeIn(ORG_1, opportunityId, "accepted");
+    const before = await vehicleIdsOf(ORG_1);
+    request(USER_A);
+    expect(await close(opportunityId)).toMatchObject({
+      status: "vehicle_conflict",
+      current: "inPreparation",
+    });
+    expect(await stageOf(opportunityId)).toBe("negotiating");
+    expect(await vehicleStatusOf(vehicleId)).toBe("in_preparation");
+    expect(await vehicleIdsOf(ORG_1)).toEqual(before);
+    expect((await rowOf(id)).convertedVehicleId).toBeNull();
+  });
+
+  it("una falla al crear la unidad del usado revierte la transacción entera: ni la venta ni el cierre quedan escritos", async () => {
+    const { id: opportunityId, vehicleId } = await opportunity(ORG_1);
+    const id = randomUUID();
+    await db.admin`
+      INSERT INTO public.trade_ins ${db.admin({
+        id,
+        organization_id: ORG_1,
+        opportunity_id: opportunityId,
+        ...VITZ,
+        model: "Falla inyectada",
+        status: "accepted",
+        created_by: USER_C,
+        currency: APPRAISAL.currency,
+        offer_price: APPRAISAL.offer_price,
+        estimated_repair_cost: APPRAISAL.estimated_repair_cost,
+        appraised_by: USER_A,
+        appraised_at: new Date(Date.now() - 3_600_000),
+      })}
+    `;
+    // Una falla de la base justo en el INSERT del ingreso (después de la
+    // UPDATE del cierre y de la venta), solo para este usado.
+    await db.admin.unsafe(`
+      CREATE FUNCTION public.test_fail_trade_in_intake() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.model = 'Falla inyectada' THEN
+          RAISE EXCEPTION 'injected intake failure';
+        END IF;
+        RETURN NEW;
+      END
+      $$;
+      CREATE TRIGGER test_fail_trade_in_intake BEFORE INSERT ON public.vehicles
+        FOR EACH ROW EXECUTE FUNCTION public.test_fail_trade_in_intake();
+    `);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const before = await vehicleIdsOf(ORG_1);
+      request(USER_A);
+      expect(await close(opportunityId)).toMatchObject({
+        status: "failed",
+        outcome: "won",
+      });
+      expect(errors).toHaveBeenCalled();
+      expect(mocks.revalidated).toEqual([]);
+      expect(await stageOf(opportunityId)).toBe("negotiating");
+      expect(await vehicleStatusOf(vehicleId)).toBe("available");
+      expect(await vehicleIdsOf(ORG_1)).toEqual(before);
+      expect((await rowOf(id)).convertedVehicleId).toBeNull();
+    } finally {
+      errors.mockRestore();
+      await db.admin.unsafe(`
+        DROP TRIGGER test_fail_trade_in_intake ON public.vehicles;
+        DROP FUNCTION public.test_fail_trade_in_intake();
+      `);
+    }
+  });
+
+  it("la decisión del cliente y el cierre simultáneos se serializan: nunca una ganada con su toma aceptada fuera del stock", async () => {
+    for (let round = 0; round < 4; round += 1) {
+      const { id: opportunityId } = await opportunity(ORG_1);
+      const id = await tradeIn(ORG_1, opportunityId, "appraised");
+      request(USER_A);
+      const [decision, closure] = await Promise.all([
+        changeTradeInStatus(null, form({ tradeInId: id, decision: "accept" })),
+        close(opportunityId),
+      ]);
+      expect(closure).toMatchObject({ status: "closed", to: "won" });
+      const after = await rowOf(id);
+      if (decision?.status === "changed") {
+        // La decisión llegó antes: el cierre la vio y el usado entró.
+        expect(after.status).toBe("accepted");
+        expect(after.convertedVehicleId).not.toBeNull();
+        expect(stockedOf(closure)).toBe(after.convertedVehicleId);
+      } else {
+        // El cierre llegó antes: la decisión ve la oportunidad cerrada.
+        expect(decision).toEqual({ status: "opportunity_closed" });
+        expect(after).toMatchObject({
+          status: "appraised",
+          convertedVehicleId: null,
+        });
+        expect(stockedOf(closure)).toBeNull();
+      }
+    }
+  });
+
+  it("dos cierres Ganada simultáneos: uno cierra y el otro es unchanged; el usado entra una sola vez", async () => {
+    const { id: opportunityId } = await opportunity(ORG_1);
+    const id = await tradeIn(ORG_1, opportunityId, "accepted");
+    const before = await vehicleIdsOf(ORG_1);
+    request(USER_A);
+    const results = await Promise.all([
+      close(opportunityId),
+      close(opportunityId),
+    ]);
+    expect(results.map((result) => result?.status).sort()).toEqual([
+      "closed",
+      "unchanged",
+    ]);
+    const created = (await vehicleIdsOf(ORG_1)).filter(
+      (vehicle) => !before.includes(vehicle),
+    );
+    expect(created).toHaveLength(1);
+    expect((await rowOf(id)).convertedVehicleId).toBe(created[0]);
   });
 });

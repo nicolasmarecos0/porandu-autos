@@ -66,9 +66,27 @@ describe("advanceOutcome()", () => {
 describe("closeOutcome()", () => {
   it.each([
     [
-      { status: "closed", opportunityId: ID, from: "negotiating", to: "won" },
+      {
+        status: "closed",
+        opportunityId: ID,
+        from: "negotiating",
+        to: "won",
+        stockedTradeIn: null,
+      },
       "info",
       "Oportunidad de María cerrada: Ganada.",
+      false,
+    ],
+    [
+      {
+        status: "closed",
+        opportunityId: ID,
+        from: "negotiating",
+        to: "won",
+        stockedTradeIn: { vehicleId: ID, label: "Toyota Vitz 2015" },
+      },
+      "info",
+      "Oportunidad de María cerrada: Ganada. El usado Toyota Vitz 2015 ingresó al stock como unidad En preparación.",
       false,
     ],
     [
