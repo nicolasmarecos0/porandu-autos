@@ -32,7 +32,11 @@
  * e INSERT de trade_ins y su UPDATE de la tasación, el estado, el ingreso
  * al stock y `updated_at`, por columna; su trigger de cambios y el
  * constraint trigger diferido de opportunities que exige el ingreso de la
- * toma aceptada al ganar son SQL custom.
+ * toma aceptada al ganar son SQL custom. 0022 da SELECT e INSERT de
+ * deliveries y su UPDATE del checklist, la fecha pactada, el estado y
+ * `updated_at`, por columna; su trigger de cambios, el constraint trigger
+ * diferido que exige la unidad entregada y el pase `sold → delivered` del
+ * trigger de vehicles son SQL custom.
  */
 export * from "./organizations";
 export * from "./profiles";
@@ -50,3 +54,4 @@ export * from "./quotes";
 export * from "./conversation-reads";
 export * from "./message-statuses";
 export * from "./trade-ins";
+export * from "./deliveries";

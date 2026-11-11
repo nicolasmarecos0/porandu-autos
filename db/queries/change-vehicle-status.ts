@@ -137,6 +137,9 @@ export async function transitionVehicleStatus(
         // Una transición de Stock nunca es vender: el tipo lo impide y el
         // dominio lo vuelve a decir. Si llegara, no se escribe nada.
         throw new Error("a sale is not a Stock transition");
+      case "delivery_requires_completion":
+        // Tampoco entregar (DEC-053): la salida nace del remito completado.
+        throw new Error("a delivery is not a Stock transition");
       case "change":
         break;
     }

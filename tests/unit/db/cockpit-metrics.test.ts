@@ -267,10 +267,11 @@ describe("cada lectura filtra por la organización del contexto", () => {
     expect(sql).toContain(
       'extract(epoch from ($1::timestamptz - "vehicles"."created_at"))',
     );
+    // Una entregada (DEC-053) salió del salón: no es stock de hoy.
     expect(sql).toMatch(
-      /from "vehicles" where "vehicles"\."organization_id" = \$\d+ group by "vehicles"\."status", "vehicles"\."currency"/,
+      /from "vehicles" where \("vehicles"\."organization_id" = \$\d+ and "vehicles"\."status" <> \$\d+\) group by "vehicles"\."status", "vehicles"\."currency"/,
     );
-    expect(params).toEqual(["2026-11-03T17:30:00.000Z", ORG]);
+    expect(params).toEqual(["2026-11-03T17:30:00.000Z", ORG, "delivered"]);
   });
 
   it("ningún Date crudo: el driver no lo serializaría (ver el loader)", async () => {

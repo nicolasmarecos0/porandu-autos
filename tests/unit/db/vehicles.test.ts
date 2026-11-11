@@ -92,8 +92,11 @@ describe("getStockList: requireTenant() → withTenant()", () => {
     await getStockList();
 
     const [query] = mocks.queries;
-    expect(query?.sql).toContain('where "vehicles"."organization_id" = $1');
-    expect(query?.params).toEqual([ORG]);
+    expect(query?.sql).toContain(
+      'where ("vehicles"."organization_id" = $1 and "vehicles"."status" <> $2)',
+    );
+    // Una entregada (DEC-053) salió del salón: deja el Inventario.
+    expect(query?.params).toEqual([ORG, "delivered"]);
   });
 
   it("ordena por ingreso, el más reciente primero, y desempata por id", async () => {

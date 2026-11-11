@@ -12,6 +12,8 @@ import {
  * - Reservada: marca, comprometida con un comprador.
  * - Vendida: cerrada. Gris, contorno punteado y check, sin relleno: nunca se
  *   lee como stock vendible.
+ * - Entregada (DEC-053): salió del salón. Igual que vendida: el Inventario
+ *   y el Catálogo no la muestran; la ve la oportunidad que la vendió.
  */
 
 export const STATUS_DOT: Readonly<Record<VehicleStatus, string>> = {
@@ -19,6 +21,7 @@ export const STATUS_DOT: Readonly<Record<VehicleStatus, string>> = {
   inPreparation: "bg-warning",
   reserved: "bg-brand",
   sold: "bg-border-strong",
+  delivered: "bg-border-strong",
 };
 
 /** Canto de la fila y segmento del medidor. */
@@ -27,6 +30,7 @@ export const STATUS_EDGE: Readonly<Record<VehicleStatus, string>> = {
   inPreparation: "bg-warning",
   reserved: "bg-brand",
   sold: "bg-border-default",
+  delivered: "bg-border-default",
 };
 
 export const STATUS_TEXT: Readonly<Record<VehicleStatus, string>> = {
@@ -34,6 +38,7 @@ export const STATUS_TEXT: Readonly<Record<VehicleStatus, string>> = {
   inPreparation: "text-warning",
   reserved: "text-brand-strong",
   sold: "text-text-muted",
+  delivered: "text-text-muted",
 };
 
 const CHIP: Readonly<Record<VehicleStatus, string>> = {
@@ -41,6 +46,8 @@ const CHIP: Readonly<Record<VehicleStatus, string>> = {
   inPreparation: "border-warning-border bg-warning-soft text-warning",
   reserved: "border-brand-border bg-brand-soft text-brand-strong",
   sold: "border-dashed border-border-strong bg-transparent text-text-muted",
+  delivered:
+    "border-dashed border-border-strong bg-transparent text-text-muted",
 };
 
 /**
@@ -57,7 +64,7 @@ export function StatusChip({ status }: { status: VehicleStatus }) {
         CHIP[status],
       )}
     >
-      {status === "sold" ? (
+      {status === "sold" || status === "delivered" ? (
         <CheckIcon className="size-3" strokeWidth={2.25} />
       ) : (
         <span

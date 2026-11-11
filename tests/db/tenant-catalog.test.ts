@@ -20,7 +20,7 @@ import {
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
  * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
  * 0015_test_drives, 0016_quotes, 0018_conversation_reads,
- * 0019_whatsapp_delivery_status y 0021_trade_ins,
+ * 0019_whatsapp_delivery_status, 0021_trade_ins y 0022_deliveries,
  * leídos del catálogo de
  * PostgreSQL 17 (ADR-001 §2, §3.6 y §4; criterios C2,
  * C3 y C9). El acceso a datos se prueba en tenant-isolation.test.ts,
@@ -37,6 +37,7 @@ const TABLES = [
   "contacts",
   "conversation_reads",
   "conversations",
+  "deliveries",
   "memberships",
   "message_statuses",
   "messages",
@@ -188,7 +189,7 @@ describe("rol de runtime app_runtime (ADR-001 §2)", () => {
 });
 
 describe("policies (ADR-001 §4)", () => {
-  it("lectura para authenticated, alta de contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin, Hito 6), test_drives (Hito 9), quotes (Hito 10) y trade_ins (Hito 20) con WITH CHECK, y las ediciones de vehicles, opportunities, organizations, memberships (admin, Hito 6), test_drives (Hito 9), quotes (Hito 10) y trade_ins (Hito 20) con USING y WITH CHECK, con la forma de referencia", async () => {
+  it("lectura para authenticated, alta de contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin, Hito 6), test_drives (Hito 9), quotes (Hito 10), trade_ins (Hito 20) y deliveries (Hito 21) con WITH CHECK, y las ediciones de vehicles, opportunities, organizations, memberships (admin, Hito 6), test_drives (Hito 9), quotes (Hito 10), trade_ins (Hito 20) y deliveries (Hito 21) con USING y WITH CHECK, con la forma de referencia", async () => {
     expect(await policies(db.admin)).toEqual([
       {
         table: "contacts",
@@ -230,6 +231,37 @@ describe("policies (ADR-001 §4)", () => {
         using:
           "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
         withCheck: null,
+      },
+      {
+        table: "deliveries",
+        name: "deliveries_insert_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "INSERT",
+        using: null,
+        withCheck:
+          '((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (created_by = ( SELECT auth.uid() AS uid)) AND (status = \'pending\'::text) AND (completed_at IS NULL) AND (completed_by IS NULL) AND (checklist = \'{"keys": false, "manuals": false, "cleaning": false, "documents": false, "spare_tire": false}\'::jsonb) AND (created_at = now()) AND (updated_at = now()) AND (EXISTS ( SELECT\n   FROM opportunities\n  WHERE ((opportunities.organization_id = deliveries.organization_id) AND (opportunities.id = deliveries.opportunity_id) AND (opportunities.stage = \'won\'::text) AND (opportunities.vehicle_id = deliveries.vehicle_id)))) AND (EXISTS ( SELECT\n   FROM vehicles\n  WHERE ((vehicles.organization_id = deliveries.organization_id) AND (vehicles.id = deliveries.vehicle_id) AND (vehicles.status = \'sold\'::text)))))',
+      },
+      {
+        table: "deliveries",
+        name: "deliveries_select_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "SELECT",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck: null,
+      },
+      {
+        table: "deliveries",
+        name: "deliveries_update_member",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "UPDATE",
+        using:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+        withCheck:
+          "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
       },
       {
         table: "memberships",
@@ -541,9 +573,10 @@ describe("policies (ADR-001 §4)", () => {
 });
 
 describe("grants (ADR-001 §3.6)", () => {
-  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships, test_drives, quotes y trade_ins, y UPDATE solo sobre opportunities, vehicles, organizations, memberships, test_drives, quotes y trade_ins", async () => {
+  it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships, test_drives, quotes, trade_ins y deliveries, y UPDATE solo sobre opportunities, vehicles, organizations, memberships, test_drives, quotes, trade_ins y deliveries", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
       "authenticated INSERT contacts",
+      "authenticated INSERT deliveries",
       "authenticated INSERT memberships",
       "authenticated INSERT messages",
       "authenticated INSERT opportunities",
@@ -554,6 +587,7 @@ describe("grants (ADR-001 §3.6)", () => {
       "authenticated INSERT trade_ins",
       "authenticated INSERT vehicles",
       ...TABLES.map((table) => `authenticated SELECT ${table}`),
+      "authenticated UPDATE deliveries",
       "authenticated UPDATE memberships",
       "authenticated UPDATE opportunities",
       "authenticated UPDATE organizations",
@@ -564,11 +598,12 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
   });
 
-  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id, updated_at y los metadatos del cierre (H1.6, Hito 2, DEC-034), vehicles.status y updated_at (H1.3C), organizations.name, default_currency y updated_at memberships.role, active y updated_at (Hito 6), test_drives.status y updated_at (Hito 9), quotes.status y updated_at (Hito 10) y la tasación, el estado, el ingreso al stock y updated_at de trade_ins (Hito 20), por columna, nunca la tabla", async () => {
+  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id, updated_at y los metadatos del cierre (H1.6, Hito 2, DEC-034), vehicles.status y updated_at (H1.3C), organizations.name, default_currency y updated_at memberships.role, active y updated_at (Hito 6), test_drives.status y updated_at (Hito 9), quotes.status y updated_at (Hito 10) la tasación, el estado, el ingreso al stock y updated_at de trade_ins (Hito 20) y el checklist, la fecha pactada, el estado y updated_at de deliveries (Hito 21), por columna, nunca la tabla", async () => {
     const writes = (await tablePrivileges(db.admin, ["authenticated"])).filter(
       (grant) => !/^authenticated (SELECT|INSERT) /.test(grant),
     );
     expect(writes).toEqual([
+      "authenticated UPDATE deliveries",
       "authenticated UPDATE memberships",
       "authenticated UPDATE opportunities",
       "authenticated UPDATE organizations",
@@ -579,6 +614,7 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
 
     for (const name of [
+      "deliveries",
       "memberships",
       "opportunities",
       "organizations",
@@ -601,6 +637,10 @@ describe("grants (ADR-001 §3.6)", () => {
       ORDER BY 1
     `;
     expect(columns.map((row) => row.column)).toEqual([
+      "deliveries.checklist",
+      "deliveries.scheduled_at",
+      "deliveries.status",
+      "deliveries.updated_at",
       "memberships.active",
       "memberships.role",
       "memberships.updated_at",
@@ -638,6 +678,8 @@ describe("grants (ADR-001 §3.6)", () => {
     );
     expect(writePolicies.map((policy) => policy.name)).toEqual([
       "contacts_insert_member",
+      "deliveries_insert_member",
+      "deliveries_update_member",
       "memberships_insert_admin",
       "memberships_update_admin",
       "messages_insert_member",
@@ -926,6 +968,84 @@ describe("grants (ADR-001 §3.6)", () => {
         name: "trade_ins_change_guard",
         type: 19,
         deferred: false,
+        ...invoker,
+      },
+    ]);
+  });
+
+  it("deliveries (Hito 21, DEC-053): SELECT, INSERT y UPDATE del checklist, la fecha pactada y el estado por columna para authenticated; policies de lectura, alta y edición; sin DELETE; trigger de cambios BEFORE UPDATE de fila y constraint trigger diferido de la salida, habilitados, invoker y con search_path vacío", async () => {
+    expect(
+      (
+        await tablePrivileges(db.admin, [
+          "anon",
+          "authenticated",
+          "app_runtime",
+        ])
+      ).filter((grant) => grant.endsWith(" deliveries")),
+    ).toEqual([
+      "authenticated INSERT deliveries",
+      "authenticated SELECT deliveries",
+      "authenticated UPDATE deliveries",
+    ]);
+    expect(
+      (await policies(db.admin))
+        .filter((policy) => policy.table === "deliveries")
+        .map((policy) => `${policy.name} ${policy.command}`),
+    ).toEqual([
+      "deliveries_insert_member INSERT",
+      "deliveries_select_member SELECT",
+      "deliveries_update_member UPDATE",
+    ]);
+    const triggers = await db.admin<
+      {
+        table: string;
+        name: string;
+        enabled: string;
+        type: number;
+        deferred: boolean;
+        securityDefiner: boolean;
+        config: string[] | null;
+        authenticatedExecute: boolean;
+        publicExecute: boolean;
+      }[]
+    >`
+      SELECT t.tgrelid::regclass::text AS table, t.tgname AS name,
+        t.tgenabled AS enabled, t.tgtype AS type,
+        (t.tgdeferrable AND t.tginitdeferred) AS deferred,
+        p.prosecdef AS "securityDefiner", p.proconfig AS config,
+        has_function_privilege('authenticated', p.oid, 'EXECUTE') AS "authenticatedExecute",
+        EXISTS (
+          SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+          WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE'
+        ) AS "publicExecute"
+      FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+      WHERE p.oid IN (
+          to_regprocedure('private.enforce_delivery_change()'),
+          to_regprocedure('private.enforce_completed_delivery_vehicle_delivered()')
+        )
+        AND NOT t.tgisinternal
+      ORDER BY t.tgname
+    `;
+    const invoker = {
+      enabled: "O",
+      securityDefiner: false,
+      config: ['search_path=""'],
+      authenticatedExecute: false,
+      publicExecute: false,
+    };
+    expect(triggers).toEqual([
+      {
+        table: "deliveries",
+        name: "deliveries_change_guard",
+        type: 19,
+        deferred: false,
+        ...invoker,
+      },
+      {
+        table: "deliveries",
+        name: "deliveries_completed_vehicle_delivered",
+        type: 17,
+        deferred: true,
         ...invoker,
       },
     ]);
@@ -1450,6 +1570,7 @@ describe("grants (ADR-001 §3.6)", () => {
       ["UPDATE", "ALL"].includes(policy.command),
     );
     expect(updates.map((policy) => `${policy.table}.${policy.name}`)).toEqual([
+      "deliveries.deliveries_update_member",
       "memberships.memberships_update_admin",
       "opportunities.opportunities_update_stage",
       "organizations.organizations_update_admin",

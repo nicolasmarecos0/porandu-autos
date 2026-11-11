@@ -761,7 +761,7 @@ describe("la policy de alta exige el estado inicial (WITH CHECK status = 'in_pre
       WHERE conname = 'vehicles_status_check'
     `;
     expect(row?.definition).toBe(
-      "CHECK ((status = ANY (ARRAY['in_preparation'::text, 'available'::text, 'reserved'::text, 'sold'::text])))",
+      "CHECK ((status = ANY (ARRAY['in_preparation'::text, 'available'::text, 'reserved'::text, 'sold'::text, 'delivered'::text])))",
     );
   });
 

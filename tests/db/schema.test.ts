@@ -392,7 +392,7 @@ describe("vehicles (H1.3A)", () => {
       vehicles_organization_id_organizations_id_fk:
         "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
       vehicles_status_check:
-        "CHECK ((status = ANY (ARRAY['in_preparation'::text, 'available'::text, 'reserved'::text, 'sold'::text])))",
+        "CHECK ((status = ANY (ARRAY['in_preparation'::text, 'available'::text, 'reserved'::text, 'sold'::text, 'delivered'::text])))",
       vehicles_currency_check:
         "CHECK ((currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
       vehicles_price_check:
@@ -1135,6 +1135,88 @@ describe("trade_ins (Hito 20)", () => {
   });
 });
 
+describe("deliveries (Hito 21)", () => {
+  it("columnas: la oportunidad, la unidad, la fecha pactada, el checklist, el estado, el autor y el sello de la entrega", async () => {
+    expect(await columns(db.admin, "deliveries")).toEqual([
+      { name: "id", type: "uuid", notNull: true, default: "gen_random_uuid()" },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "opportunity_id", type: "uuid", notNull: true, default: null },
+      { name: "vehicle_id", type: "uuid", notNull: true, default: null },
+      {
+        name: "scheduled_at",
+        type: "timestamp with time zone",
+        notNull: true,
+        default: null,
+      },
+      {
+        name: "completed_at",
+        type: "timestamp with time zone",
+        notNull: false,
+        default: null,
+      },
+      {
+        name: "checklist",
+        type: "jsonb",
+        notNull: true,
+        default:
+          '\'{"keys": false, "manuals": false, "cleaning": false, "documents": false, "spare_tire": false}\'::jsonb',
+      },
+      {
+        name: "status",
+        type: "text",
+        notNull: true,
+        default: "'pending'::text",
+      },
+      { name: "created_by", type: "uuid", notNull: true, default: null },
+      { name: "completed_by", type: "uuid", notNull: false, default: null },
+      ...TIMESTAMPS,
+    ]);
+  });
+
+  it("PK, FKs RESTRICT (organización, oportunidad y unidad de la misma organización, autores), CHECKs del estado, del checklist, de la entrega completada y de la fecha, y las uniques por oportunidad y por unidad", async () => {
+    expect(await constraints(db.admin, "deliveries")).toEqual({
+      deliveries_checklist_check:
+        "CHECK (((jsonb_typeof(checklist) = 'object'::text) AND (checklist ?& ARRAY['keys'::text, 'manuals'::text, 'spare_tire'::text, 'cleaning'::text, 'documents'::text]) AND ((checklist - ARRAY['keys'::text, 'manuals'::text, 'spare_tire'::text, 'cleaning'::text, 'documents'::text]) = '{}'::jsonb) AND (jsonb_typeof((checklist -> 'keys'::text)) = 'boolean'::text) AND (jsonb_typeof((checklist -> 'manuals'::text)) = 'boolean'::text) AND (jsonb_typeof((checklist -> 'spare_tire'::text)) = 'boolean'::text) AND (jsonb_typeof((checklist -> 'cleaning'::text)) = 'boolean'::text) AND (jsonb_typeof((checklist -> 'documents'::text)) = 'boolean'::text)))",
+      deliveries_completed_by_profiles_id_fk:
+        "FOREIGN KEY (completed_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+      // DEC-053 §4: completar la entrega da salida a la unidad en la misma
+      // transacción (constraint trigger diferido al COMMIT).
+      deliveries_completed_vehicle_delivered:
+        "TRIGGER DEFERRABLE INITIALLY DEFERRED",
+      deliveries_completion_check:
+        'CHECK ((((status = \'completed\'::text) = (completed_at IS NOT NULL)) AND ((completed_at IS NULL) = (completed_by IS NULL)) AND ((status <> \'completed\'::text) OR (checklist = \'{"keys": true, "manuals": true, "cleaning": true, "documents": true, "spare_tire": true}\'::jsonb))))',
+      deliveries_created_by_profiles_id_fk:
+        "FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+      deliveries_opportunity_fk:
+        "FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+      deliveries_organization_id_opportunity_id_key:
+        "UNIQUE (organization_id, opportunity_id)",
+      deliveries_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      deliveries_organization_id_vehicle_id_key:
+        "UNIQUE (organization_id, vehicle_id)",
+      deliveries_pkey: "PRIMARY KEY (id)",
+      deliveries_scheduled_at_check:
+        "CHECK (((scheduled_at >= '2000-01-01 00:00:00+00'::timestamp with time zone) AND (scheduled_at < '2101-01-01 00:00:00+00'::timestamp with time zone)))",
+      deliveries_status_check:
+        "CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text])))",
+      deliveries_vehicle_fk:
+        "FOREIGN KEY (organization_id, vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
+    });
+  });
+
+  it("índices: una entrega por oportunidad y una por unidad", async () => {
+    expect(await indexes(db.admin, "deliveries")).toEqual({
+      deliveries_organization_id_opportunity_id_key:
+        "CREATE UNIQUE INDEX deliveries_organization_id_opportunity_id_key ON public.deliveries USING btree (organization_id, opportunity_id)",
+      deliveries_organization_id_vehicle_id_key:
+        "CREATE UNIQUE INDEX deliveries_organization_id_vehicle_id_key ON public.deliveries USING btree (organization_id, vehicle_id)",
+      deliveries_pkey:
+        "CREATE UNIQUE INDEX deliveries_pkey ON public.deliveries USING btree (id)",
+    });
+  });
+});
+
 describe("constraints de opportunity_demand_facts con datos (H1.4)", () => {
   const OPP_1 = "30000000-0000-4000-8000-000000000001";
   const OPP_1B = "30000000-0000-4000-8000-000000000002";
@@ -1512,6 +1594,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
       "contacts",
       "conversation_reads",
       "conversations",
+      "deliveries",
       "memberships",
       "message_statuses",
       "messages",

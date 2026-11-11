@@ -9,7 +9,8 @@ import { formatMoney, groupThousands, type Currency } from "@/domains/money";
  * Estado comercial de la unidad (TB §10, "Estados de vehículo": el mínimo
  * de P1). Sus transiciones son la máquina de ./lifecycle (DEC-051).
  */
-export type VehicleStatus = "inPreparation" | "available" | "reserved" | "sold";
+export type VehicleStatus =
+  "inPreparation" | "available" | "reserved" | "sold" | "delivered";
 
 /** Moneda del precio publicado. No se convierte entre monedas. */
 export type { Currency };
@@ -48,6 +49,7 @@ export const VEHICLE_STATUSES: readonly {
   { id: "available", label: "Disponible" },
   { id: "reserved", label: "Reservada" },
   { id: "sold", label: "Vendida" },
+  { id: "delivered", label: "Entregada" },
 ];
 
 export function vehicleStatusLabel(status: VehicleStatus): string {
@@ -124,6 +126,7 @@ export function countByStatus(
     available: 0,
     reserved: 0,
     sold: 0,
+    delivered: 0,
   };
   for (const vehicle of vehicles) counts[vehicle.status] += 1;
   return counts;

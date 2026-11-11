@@ -27,6 +27,7 @@ const AVAILABILITY: Readonly<Record<VehicleStatus, string>> = {
   inPreparation: "Todavía no se entrega",
   reserved: "Comprometida con un comprador",
   sold: "Vendida · operación cerrada",
+  delivered: "Entregada · salió del salón",
 };
 
 export function UnitContext({

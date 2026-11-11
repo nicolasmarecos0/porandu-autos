@@ -60,13 +60,19 @@ export const QUOTE_VALUE_STATUSES = [
 
 export type QuoteValueStatus = (typeof QUOTE_VALUE_STATUSES)[number];
 
-/** Estados de stock en el orden del ciclo de la unidad (DEC-025 §4). */
+/**
+ * Estados de stock en el orden del ciclo de la unidad (DEC-025 §4): las
+ * unidades que están en el salón. Una entregada (DEC-053) ya salió y no
+ * cuenta en el stock de hoy.
+ */
 export const STOCK_STATUS_ORDER = [
   "inPreparation",
   "available",
   "reserved",
   "sold",
 ] as const satisfies readonly VehicleStatus[];
+
+export type SalonVehicleStatus = (typeof STOCK_STATUS_ORDER)[number];
 
 /**
  * Stock publicado: lo que está a la venta en el salón (y en el Catálogo,
@@ -211,7 +217,7 @@ export type AttentionView = Readonly<{
 }>;
 
 export type StockStatusView = Readonly<{
-  status: VehicleStatus;
+  status: SalonVehicleStatus;
   count: number;
   /** Porcentaje del total de unidades, con un decimal; null sin unidades. */
   share: number | null;

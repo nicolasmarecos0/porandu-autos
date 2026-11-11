@@ -412,6 +412,7 @@ describe("unidades no disponibles: descarte inmediato", () => {
       ["available", true],
       ["reserved", false],
       ["sold", false],
+      ["delivered", false],
     ]);
   });
 

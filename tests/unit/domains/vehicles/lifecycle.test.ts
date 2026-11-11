@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   canTransitionVehicle,
   catalogTransitionFor,
+  DELIVERY_REQUIRES_COMPLETION_MESSAGE,
   isStockTransitionId,
   isTerminalVehicleStatus,
   isVehicleTransitionId,
@@ -35,39 +36,42 @@ import { VEHICLE_STATUSES, type VehicleStatus } from "@/domains/vehicles/stock";
 /*
  * Ciclo de vida de una unidad (Hito 19, DEC-051): la máquina de
  * estados de vehicles.status, las reglas de Stock y de la venta al cerrar
- * Ganada, las acciones de cada vista y el copy es-PY. La base exige la
- * misma matriz con el trigger vehicles_status_transition (el cruce de los
- * 16 pares está en tests/db/vehicle-lifecycle.test.ts).
+ * Ganada, las acciones de cada vista y el copy es-PY. El Hito 21 (DEC-053)
+ * suma la salida del salón, sold → delivered, solo al completar la entrega.
+ * La base exige la misma matriz con el trigger vehicles_status_transition
+ * (el cruce de los 25 pares está en tests/db/vehicle-lifecycle.test.ts).
  */
 
 const STATUSES = VEHICLE_STATUSES.map(({ id }) => id);
 
-/** Los 16 pares (origen, destino), en el orden de VEHICLE_STATUSES. */
+/** Los 25 pares (origen, destino), en el orden de VEHICLE_STATUSES. */
 const PAIRS = STATUSES.flatMap((from) =>
   STATUSES.map((to) => [from, to] as const),
 );
 
-/** Los pases que aprobó el fundador para el Hito 19. */
+/** Los pases que aprobó el fundador para el Hito 19 y el Hito 21. */
 const APPROVED: readonly (readonly [VehicleStatus, VehicleStatus])[] = [
   ["inPreparation", "available"],
   ["available", "reserved"],
   ["reserved", "available"],
   ["available", "sold"],
   ["reserved", "sold"],
+  ["sold", "delivered"],
 ];
 
 describe("máquina de estados de vehicles.status", () => {
-  it("los estados son los cuatro de DEC-025 §4, en el orden del flujo", () => {
+  it("los estados son los cuatro de DEC-025 §4 y la entregada de DEC-053, en el orden del flujo", () => {
     expect(STATUSES).toEqual([
       "inPreparation",
       "available",
       "reserved",
       "sold",
+      "delivered",
     ]);
     expect(Object.keys(VEHICLE_LIFECYCLE)).toEqual(STATUSES);
   });
 
-  it("exactamente los cinco pases aprobados existen: los 16 pares cruzados", () => {
+  it("exactamente los seis pases aprobados existen: los 25 pares cruzados", () => {
     const allowed = PAIRS.filter(([from, to]) =>
       canTransitionVehicle(from, to),
     );
@@ -77,6 +81,7 @@ describe("máquina de estados de vehicles.status", () => {
       ["available", "sold"],
       ["reserved", "available"],
       ["reserved", "sold"],
+      ["sold", "delivered"],
     ]);
     expect(new Set(allowed.map((pair) => pair.join("→")))).toEqual(
       new Set(APPROVED.map((pair) => pair.join("→"))),
@@ -92,18 +97,34 @@ describe("máquina de estados de vehicles.status", () => {
   it("sin saltos ni vuelta atrás: de preparación no se reserva ni se vende, y nada vuelve a preparación", () => {
     expect(canTransitionVehicle("inPreparation", "reserved")).toBe(false);
     expect(canTransitionVehicle("inPreparation", "sold")).toBe(false);
+    // Sin vender no se entrega.
+    for (const from of ["inPreparation", "available", "reserved"] as const) {
+      expect(canTransitionVehicle(from, "delivered")).toBe(false);
+    }
     for (const from of STATUSES) {
       expect(canTransitionVehicle(from, "inPreparation")).toBe(false);
     }
   });
 
-  it("vendida es terminal: no se vuelve a vender, reservar, liberar ni preparar", () => {
-    expect(isTerminalVehicleStatus("sold")).toBe(true);
-    expect(VEHICLE_LIFECYCLE.sold).toEqual([]);
+  it("vendida solo sale del salón: no se vuelve a vender, reservar, liberar ni preparar", () => {
+    expect(VEHICLE_LIFECYCLE.sold).toEqual(["delivered"]);
     for (const to of STATUSES) {
-      expect(canTransitionVehicle("sold", to)).toBe(false);
+      expect(canTransitionVehicle("sold", to)).toBe(to === "delivered");
     }
-    for (const status of ["inPreparation", "available", "reserved"] as const) {
+  });
+
+  it("entregada es terminal: ya no está en el salón (DEC-053)", () => {
+    expect(isTerminalVehicleStatus("delivered")).toBe(true);
+    expect(VEHICLE_LIFECYCLE.delivered).toEqual([]);
+    for (const to of STATUSES) {
+      expect(canTransitionVehicle("delivered", to)).toBe(false);
+    }
+    for (const status of [
+      "inPreparation",
+      "available",
+      "reserved",
+      "sold",
+    ] as const) {
       expect(isTerminalVehicleStatus(status)).toBe(false);
     }
   });
@@ -138,13 +159,14 @@ describe("máquina de estados de vehicles.status", () => {
             "reserved→available": "release",
             "available→sold": "sell",
             "reserved→sold": "sell",
+            "sold→delivered": "deliver",
           } as Record<string, string>
         )[`${from}→${to}`] ?? null,
       ]),
     );
   });
 
-  it("vender es solo del cierre; poner en salón, reservar y liberar, de Stock", () => {
+  it("vender es solo del cierre y entregar, solo de la entrega; poner en salón, reservar y liberar, de Stock", () => {
     expect(
       VEHICLE_TRANSITION_IDS.map((id) => [id, VEHICLE_TRANSITIONS[id].channel]),
     ).toEqual([
@@ -152,6 +174,7 @@ describe("máquina de estados de vehicles.status", () => {
       ["reserve", "stock"],
       ["release", "stock"],
       ["sell", "closure"],
+      ["deliver", "delivery"],
     ]);
     expect(STOCK_TRANSITION_IDS).toEqual([
       "put_on_floor",
@@ -175,6 +198,7 @@ describe("pedido de Stock: input no confiable", () => {
     ["reserve", true, true],
     ["release", true, true],
     ["sell", true, false],
+    ["deliver", true, false],
     ["available", false, false],
     ["sold", false, false],
     ["PUT_ON_FLOOR", false, false],
@@ -260,6 +284,27 @@ describe("planVehicleStatusChange(): sobre la fila bloqueada", () => {
     },
   );
 
+  it.each(STATUSES)(
+    "entregar desde Stock no existe, aunque la unidad esté %s: delivery_requires_completion",
+    (current) => {
+      expect(planVehicleStatusChange(current, "deliver")).toEqual({
+        kind: "delivery_requires_completion",
+        current,
+      });
+    },
+  );
+
+  it.each(STOCK_TRANSITION_IDS)(
+    "una unidad entregada no acepta %s: conflicto, nunca un pase",
+    (transition) => {
+      expect(planVehicleStatusChange("delivered", transition)).toEqual({
+        kind: "conflict",
+        transition,
+        current: "delivered",
+      });
+    },
+  );
+
   it("todo plan `change` es un pase de la máquina", () => {
     for (const status of STATUSES) {
       for (const transition of VEHICLE_TRANSITION_IDS) {
@@ -290,6 +335,14 @@ describe("planVehicleSale(): la unidad vinculada al ganar", () => {
     });
   });
 
+  it("una ya entregada también: salió del salón y no se vende otra vez", () => {
+    expect(planVehicleSale("delivered")).toEqual({
+      kind: "conflict",
+      current: "delivered",
+      reason: "already_sold",
+    });
+  });
+
   it("una en preparación es un conflicto: primero va al salón", () => {
     expect(planVehicleSale("inPreparation")).toEqual({
       kind: "conflict",
@@ -300,7 +353,7 @@ describe("planVehicleSale(): la unidad vinculada al ganar", () => {
 });
 
 describe("acciones de cada vista", () => {
-  it("Inventario: una acción rápida por estado, ninguna para una vendida", () => {
+  it("Inventario: una acción rápida por estado, ninguna para una vendida ni una entregada", () => {
     expect(
       STATUSES.map((status) => [status, stockTransitionFor(status)]),
     ).toEqual([
@@ -308,6 +361,7 @@ describe("acciones de cada vista", () => {
       ["available", "reserve"],
       ["reserved", "release"],
       ["sold", null],
+      ["delivered", null],
     ]);
   });
 
@@ -319,6 +373,7 @@ describe("acciones de cada vista", () => {
       ["available", "reserve"],
       ["reserved", "release"],
       ["sold", null],
+      ["delivered", null],
     ]);
   });
 
@@ -391,6 +446,7 @@ describe("copy es-PY", () => {
       "disponible",
       "reservada",
       "vendida",
+      "entregada",
     ]);
   });
 
@@ -429,11 +485,15 @@ describe("copy es-PY", () => {
     expect(transitionConflictMessage("release", "available", UNIT)).toBe(
       "No se pudo liberar la reserva: Toyota Hilux 2025 está disponible. No se hizo ningún cambio.",
     );
+    expect(transitionConflictMessage("reserve", "delivered", UNIT)).toBe(
+      "No se pudo reservar: Toyota Hilux 2025 ya se entregó y salió del salón. No se hizo ningún cambio.",
+    );
   });
 
   it("los avisos de falla nunca exponen la base y dicen que no cambió nada", () => {
     for (const message of [
       SALE_REQUIRES_CLOSURE_MESSAGE,
+      DELIVERY_REQUIRES_COMPLETION_MESSAGE,
       VEHICLE_NOT_FOUND_MESSAGE,
       VEHICLE_CHANGE_FAILED_MESSAGE,
     ]) {
