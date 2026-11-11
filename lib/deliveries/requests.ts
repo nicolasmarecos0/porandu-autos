@@ -11,6 +11,7 @@ import {
   type DeliveryScheduledAtError,
   type DeliveryVehicleConflictReason,
 } from "@/domains/opportunities/deliveries";
+import type { UnauthorizedRoleState } from "@/lib/auth/roles";
 
 /*
  * Pedidos y respuestas de las Server Actions de la logística de entregas
@@ -47,6 +48,16 @@ export type DeliveryChecklistState =
   | Readonly<{ status: "changed"; checklist: DeliveryChecklist }>
   | Readonly<{ status: "unchanged"; checklist: DeliveryChecklist }>
   | Readonly<{ status: "already_completed" }>
+  | Readonly<{ status: "not_found" }>
+  | Readonly<{ status: "failed" }>
+  | null;
+
+/** Respuesta de cancelDelivery() (Hito 22, DEC-054 §4). */
+export type CancelDeliveryState =
+  | Readonly<{ status: "cancelled" }>
+  | Readonly<{ status: "already_completed" }>
+  /** Anular es de un admin (UNAUTHORIZED_ROLE). */
+  | UnauthorizedRoleState
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "failed" }>
   | null;
@@ -145,6 +156,10 @@ export function parseDeliveryChecklistRequest(
   }
   return { kind: "ok", deliveryId, item, checked: checked === "true" };
 }
+
+/** Anular: solo la entrega, como completar. */
+export const parseCancelDeliveryRequest = (formData: FormData) =>
+  parseCompleteDeliveryRequest(formData);
 
 /** Completar: solo la entrega. El checklist es el guardado, no el del pedido. */
 export function parseCompleteDeliveryRequest(

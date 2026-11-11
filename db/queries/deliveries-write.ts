@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 
 import {
+  planDeliveryCancellation,
   planDeliveryChecklistChange,
   planDeliveryCompletion,
   planDeliveryReschedule,
@@ -370,6 +371,50 @@ export async function writeDeliveryChecklistItem(
       );
     }
     return { outcome: "changed", opportunityId, checklist: plan.checklist };
+  });
+}
+
+/* ── Anular (Hito 22, DEC-054 §4) ───────────────────────────────────────── */
+
+export type CancelDeliveryOutcome =
+  | Readonly<{ outcome: "cancelled"; opportunityId: string }>
+  | Readonly<{ outcome: "already_completed"; opportunityId: string }>
+  /** La base no borró la fila: la policy de DELETE exige un admin. */
+  | Readonly<{ outcome: "unauthorized_role"; opportunityId: string }>
+  | Readonly<{ outcome: "not_found" }>;
+
+/**
+ * Anula una entrega pendiente: bloquea la entrega (el mismo orden que
+ * tildar o completar), decide con el estado guardado y borra el remito con
+ * compare-and-set sobre `pending`. La unidad sigue Vendida y la oportunidad
+ * Ganada: se puede programar otra entrega. La única puerta es la Server
+ * Action cancelDelivery(), que exige `delivery.cancel` antes de llegar acá.
+ * La policy deliveries_delete_admin filtra el DELETE de quien no es admin
+ * (0 filas, defensa en profundidad) y el trigger deliveries_delete_guard
+ * rechaza borrar una completada, también al rol dueño.
+ */
+export async function deleteDelivery(
+  ctx: TenantContext,
+  deliveryId: string,
+): Promise<CancelDeliveryOutcome> {
+  return withTenant(ctx, async (tx) => {
+    const { organizationId } = ctx;
+    const locked = await lockDelivery(tx, organizationId, deliveryId);
+    if (!locked) return { outcome: "not_found" };
+    const { opportunityId } = locked;
+
+    const plan = planDeliveryCancellation(locked.target);
+    if (plan.kind === "already_completed") {
+      return { outcome: "already_completed", opportunityId };
+    }
+    const deleted = await tx
+      .delete(deliveries)
+      .where(deliveryRow(organizationId, deliveryId))
+      .returning({ id: deliveries.id });
+    if (deleted.length === 0) {
+      return { outcome: "unauthorized_role", opportunityId };
+    }
+    return { outcome: "cancelled", opportunityId };
   });
 }
 

@@ -22,7 +22,7 @@ import type { Stage } from "./stages";
  * `trade_ins_change_guard` de 0021_trade_ins, que espeja esta matriz; un
  * test cruza los 16 pares, y los CHECKs de la tabla).
  *
- *   pending ──(tasar, admin)──► appraised ──(el cliente aprobó)──► accepted
+ *   pending ──(tasar, admin)──► appraised ──(aprobar, admin)──► accepted
  *      │                       │   ▲  (retasar, admin)               │
  *      │                       └───┘                                 │
  *      └──(descartar)──► rejected ◄──(el cliente rechazó)  ◄──(desistió)
@@ -495,8 +495,9 @@ export type TradeInDecisionId = (typeof TRADE_IN_DECISION_IDS)[number];
 
 /**
  * Cada decisión dice de qué estado parte (lo que vio quien la pide) y a
- * cuál lleva. Las cuatro las pide cualquier miembro: registran lo que dijo
- * el cliente o que la toma no sigue.
+ * cuál lleva. Rechazar, descartar y desistir las pide cualquier miembro:
+ * registran lo que dijo el cliente o que la toma no sigue. Aprobar la toma
+ * es de un admin (DEC-054 §2).
  */
 export const TRADE_IN_DECISIONS: Readonly<
   Record<
@@ -634,23 +635,32 @@ export type TradeInDecisionPlan =
   | Readonly<{ kind: "conflict"; current: TradeInStatus }>
   /** Aceptar sin una tasación: la regla del fundador. */
   | Readonly<{ kind: "offer_price_required" }>
-  | Readonly<{ kind: "opportunity_closed"; stage: Stage }>;
+  | Readonly<{ kind: "opportunity_closed"; stage: Stage }>
+  /** Aprobar la toma es de un admin (el gerente, DEC-054 §2). */
+  | Readonly<{ kind: "requires_admin" }>;
 
 /**
  * Decide, sin tocar nada, qué pasa con una decisión: la oportunidad
  * abierta, lo que ya está (idempotente), el valor de toma para aceptar (la
  * regla del fundador: una pendiente todavía no se tasó) y el origen de la
  * decisión (compare-and-set: un pedido viejo no deshace lo que hizo otro).
- * La base vuelve a exigir las mismas reglas con su trigger.
+ * Aprobar la toma (`accept`) es de un admin (DEC-054 §2): un seller
+ * registra el usado y las respuestas que no la aprueban, pero el pase a
+ * Aprobado lo confirma la gerencia. La base vuelve a exigir las mismas
+ * reglas con su trigger (`trade_ins_acceptance_requires_admin`).
  */
 export function planTradeInDecision(
   target: TradeInTarget,
   decision: TradeInDecisionId,
+  actor: TradeInActor,
 ): TradeInDecisionPlan {
   if (!isTradeInOpenStage(target.opportunityStage)) {
     return { kind: "opportunity_closed", stage: target.opportunityStage };
   }
   const { from, to } = TRADE_IN_DECISIONS[decision];
+  if (decision === "accept" && !actor.isAdmin) {
+    return { kind: "requires_admin" };
+  }
   if (target.status === to) return { kind: "unchanged", status: to };
   if (to === "accepted" && target.status === "pending") {
     return { kind: "offer_price_required" };

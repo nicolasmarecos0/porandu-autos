@@ -4,9 +4,13 @@ import { revalidatePath } from "next/cache";
 
 import {
   transitionVehicleStatus,
+  writeVehiclePrice,
   type StatusChangeVehicle,
+  type VehiclePriceChangeOutcome,
   type VehicleStatusChangeOutcome,
 } from "@/db/queries/change-vehicle-status";
+import { formatMoney } from "@/domains/money";
+import { authorize, unauthorizedRole } from "@/lib/auth/roles";
 import {
   createVehicleInPreparation,
   type CreatedVehicle,
@@ -15,6 +19,11 @@ import { requireTenant } from "@/lib/tenant/session";
 
 import { parseNewVehicleForm, type CreateVehicleState } from "./new-vehicle";
 import { STOCK_PATH, VEHICLE_LIFECYCLE_PATHS } from "./paths";
+import {
+  parseVehiclePriceChange,
+  priceValuesOf,
+  type ChangeVehiclePriceState,
+} from "./price-change";
 import {
   parseVehicleStatusChange,
   type ChangeVehicleStatusState,
@@ -53,7 +62,10 @@ import {
  * SQLSTATE. El mensaje de Drizzle incluye la query y sus parámetros, así que
  * nunca se registra.
  */
-function logFailure(operation: "create" | "change status", error: unknown) {
+function logFailure(
+  operation: "create" | "change status" | "change price",
+  error: unknown,
+) {
   const { name, cause } =
     error instanceof Error ? error : { name: undefined, cause: undefined };
   // Drizzle deja el error del driver en `cause`; uno del COMMIT (el
@@ -188,4 +200,71 @@ export async function changeVehicleStatus(
 
 function unitOf({ id, brand, model, year }: StatusChangeVehicle) {
   return { vehicleId: id, brand, model, year };
+}
+
+/*
+ * Precio publicado de una unidad (Hito 22, DEC-054 §3), changeVehiclePrice():
+ *
+ *   requireTenant() → authorize(rol, "vehicle.edit_price") → leer y validar
+ *   el precio → writeVehiclePrice() (withTenant(), fila bloqueada, plan del
+ *   dominio, UPDATE price y currency, trigger) → revalidar Stock, Catálogo,
+ *   Oportunidades, Embudo, Cockpit y Métricas
+ *
+ * 1. Solo la gerencia (admin) cambia precios. El rol es el de la membership
+ *    en la base (TenantContext), nunca del pedido: un seller recibe
+ *    UNAUTHORIZED_ROLE antes de leer el precio, sin tocar la base. La base
+ *    lo vuelve a exigir (vehicles_price_requires_admin): si el rol cambió
+ *    entre la lectura del contexto y la escritura, la respuesta es la misma.
+ * 2. Una unidad vendida o entregada no cambia de precio (`locked`): el
+ *    precio de la venta quedó en el cierre (DEC-034).
+ * 3. Cambiar el precio no toca ninguna cotización ya emitida (cada una
+ *    guarda su precio de lista, DEC-042) ni el estado de la unidad.
+ */
+export async function changeVehiclePrice(
+  _previous: ChangeVehiclePriceState,
+  formData: FormData,
+): Promise<ChangeVehiclePriceState> {
+  const ctx = await requireTenant();
+  const denied = authorize(ctx.role, "vehicle.edit_price");
+  if (denied) return denied;
+
+  const parsed = parseVehiclePriceChange(formData);
+  if (parsed.kind === "not_found") return { status: "not_found" };
+  if (parsed.kind === "invalid") {
+    return { status: "invalid", errors: parsed.errors, values: parsed.values };
+  }
+
+  let outcome: VehiclePriceChangeOutcome;
+  try {
+    outcome = await writeVehiclePrice(ctx, {
+      vehicleId: parsed.vehicleId,
+      price: parsed.price,
+    });
+  } catch (error) {
+    logFailure("change price", error);
+    return { status: "failed", values: priceValuesOf(formData) };
+  }
+
+  switch (outcome.outcome) {
+    case "changed":
+      for (const path of VEHICLE_LIFECYCLE_PATHS) revalidatePath(path);
+      return {
+        status: "changed",
+        ...unitOf(outcome.vehicle),
+        priceLabel: formatMoney(outcome.to),
+      };
+    case "unchanged":
+      return { status: "unchanged", ...unitOf(outcome.vehicle) };
+    case "locked":
+      for (const path of VEHICLE_LIFECYCLE_PATHS) revalidatePath(path);
+      return {
+        status: "locked",
+        ...unitOf(outcome.vehicle),
+        current: outcome.status,
+      };
+    case "unauthorized_role":
+      return unauthorizedRole("vehicle.edit_price");
+    case "not_found":
+      return { status: "not_found" };
+  }
 }

@@ -41,6 +41,7 @@ import {
   linkedVehicleCard,
   type LinkedVehicleCard,
 } from "@/domains/opportunities/vehicle-link";
+import { can } from "@/lib/auth/roles";
 import { requireTenant } from "@/lib/tenant/session";
 
 import { contacts, opportunities } from "../schema";
@@ -125,6 +126,8 @@ export type OpportunityDetail = Readonly<{
   tradeIns: TradeInPanelData;
   /** Panel "Coordinación de Entrega" (Hito 21, DEC-053): solo Ganada. */
   delivery: DeliveryPanelData;
+  /** El rol anula entregas (`delivery.cancel`, Hito 22, DEC-054 §4). */
+  canCancelDelivery: boolean;
 }>;
 
 /** Texto opcional del legado: vacío o en blanco no cuenta. */
@@ -278,7 +281,7 @@ export async function getOpportunityDetail(
     }),
     tradeIns: tradeInPanelData(tradeInRows, {
       viewerUserId: ctx.userId,
-      viewerIsAdmin: ctx.role === "admin",
+      viewerIsAdmin: can(ctx.role, "trade_in.view_financials"),
       opportunityStage: stage,
       tradeInIntent: snapshot.trade_in_intent.value,
     }),
@@ -296,5 +299,6 @@ export async function getOpportunityDetail(
       closureDeliveryDate: opportunity.deliveryDate,
       now,
     }),
+    canCancelDelivery: can(ctx.role, "delivery.cancel"),
   };
 }

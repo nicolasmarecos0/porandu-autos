@@ -1083,7 +1083,7 @@ async function activeOf(
 }
 
 describe("Server Actions: requireTenant() → pedido → withTenant() → trade_ins", () => {
-  it("seller registra, admin tasa y el cliente aprueba: pendiente → tasado → aprobado, con sus sellos", async () => {
+  it("seller registra, admin tasa y admin aprueba: pendiente → tasado → aprobado, con sus sellos (DEC-054 §2)", async () => {
     const { id: opportunityId } = await opportunity(ORG_1);
     const paths = [
       `/opportunities/${opportunityId}`,
@@ -1125,7 +1125,11 @@ describe("Server Actions: requireTenant() → pedido → withTenant() → trade_
         null,
         form({ tradeInId: registered.id, from: "pending", ...OFFER }),
       ),
-    ).toEqual({ status: "requires_admin" });
+    ).toEqual({
+      status: "unauthorized_role",
+      code: "UNAUTHORIZED_ROLE",
+      capability: "trade_in.appraise",
+    });
     expect((await rowOf(registered.id)).status).toBe("pending");
 
     request(USER_A);
@@ -1147,7 +1151,21 @@ describe("Server Actions: requireTenant() → pedido → withTenant() → trade_
       appraisedBy: USER_A,
     });
 
+    // El seller tampoco aprueba la toma: UNAUTHORIZED_ROLE, nada cambia.
     request(USER_C, ORG_1);
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: registered.id, decision: "accept" }),
+      ),
+    ).toEqual({
+      status: "unauthorized_role",
+      code: "UNAUTHORIZED_ROLE",
+      capability: "trade_in.approve",
+    });
+    expect((await rowOf(registered.id)).status).toBe("appraised");
+
+    request(USER_A);
     expect(
       await changeTradeInStatus(
         null,
@@ -1177,12 +1195,16 @@ describe("Server Actions: requireTenant() → pedido → withTenant() → trade_
     });
   });
 
-  it("un seller no puede colar la tasación en el alta: requires_admin y nada se registra", async () => {
+  it("un seller no puede colar la tasación en el alta: UNAUTHORIZED_ROLE y nada se registra", async () => {
     const { id: opportunityId } = await opportunity(ORG_1);
     request(USER_C, ORG_1);
     expect(
       await registerTradeIn(null, form({ opportunityId, ...USED, ...OFFER })),
-    ).toMatchObject({ status: "requires_admin" });
+    ).toMatchObject({
+      status: "unauthorized_role",
+      code: "UNAUTHORIZED_ROLE",
+      capability: "trade_in.appraise",
+    });
     const [{ count } = { count: -1 }] = await db.admin<{ count: number }[]>`
       SELECT count(*)::int AS count FROM public.trade_ins
       WHERE opportunity_id = ${opportunityId}
@@ -1196,6 +1218,9 @@ describe("Server Actions: requireTenant() → pedido → withTenant() → trade_
     await registerTradeIn(null, form({ opportunityId, ...USED }));
     const { id } = await activeOf(opportunityId);
 
+    // Aprobar es del admin (DEC-054 §2): las reglas de la toma se prueban
+    // con A.
+    request(USER_A);
     expect(
       await changeTradeInStatus(
         null,
@@ -1378,8 +1403,13 @@ describe("la regla de oro: closeOpportunity() ganada hace entrar la toma aceptad
       ),
     ).toMatchObject({ status: "appraised", offerPriceLabel: "USD 8.000" });
 
-    // 3. El cliente aprueba el valor de toma.
+    // 3. El cliente acepta el valor de toma y el admin aprueba la toma
+    //    (DEC-054 §2: el seller no la aprueba).
     request(USER_C, ORG_1);
+    expect(
+      await changeTradeInStatus(null, form({ tradeInId, decision: "accept" })),
+    ).toMatchObject({ status: "unauthorized_role", code: "UNAUTHORIZED_ROLE" });
+    request(USER_A);
     expect(
       await changeTradeInStatus(null, form({ tradeInId, decision: "accept" })),
     ).toMatchObject({ status: "changed", to: "accepted" });

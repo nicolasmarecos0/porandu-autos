@@ -4,24 +4,29 @@ import { revalidatePath } from "next/cache";
 
 import {
   completeDeliveryWithExit,
+  deleteDelivery,
   insertDelivery,
   writeDeliveryChecklistItem,
   writeDeliverySchedule,
+  type CancelDeliveryOutcome,
   type CompleteDeliveryOutcome,
   type DeliveryChecklistOutcome,
   type RescheduleDeliveryOutcome,
   type ScheduleDeliveryOutcome,
 } from "@/db/queries/deliveries-write";
+import { authorize, unauthorizedRole } from "@/lib/auth/roles";
 import { PIPELINE_PATH } from "@/lib/opportunities/paths";
 import { opportunityPath } from "@/lib/quotes/paths";
 import { requireTenant } from "@/lib/tenant/session";
 import { VEHICLE_LIFECYCLE_PATHS } from "@/lib/vehicles/paths";
 
 import {
+  parseCancelDeliveryRequest,
   parseCompleteDeliveryRequest,
   parseDeliveryChecklistRequest,
   parseRescheduleDeliveryRequest,
   parseScheduleDeliveryRequest,
+  type CancelDeliveryState,
   type CompleteDeliveryState,
   type DeliveryChecklistState,
   type ScheduleDeliveryState,
@@ -43,6 +48,10 @@ import {
  *   completa la entrega y pasa la unidad a Entregada en una sola
  *   transacción (DEC-053 §4). Es irreversible: la UI lo confirma antes con
  *   un alertdialog (CLAUDE.md §2: aprobación humana).
+ * - cancelDelivery() (Hito 22, DEC-054 §4): anula una entrega pendiente.
+ *   Solo un admin (`delivery.cancel`, lib/auth/roles.ts): un seller recibe
+ *   UNAUTHORIZED_ROLE sin tocar la base. Una completada no se anula nunca.
+ *   También pide confirmación en la UI.
  *
  * 1. El TenantContext sale de requireTenant() (DEC-021): sin sesión →
  *    /login, sin membership activa → /no-access. Nada del payload elige
@@ -71,7 +80,7 @@ function revalidateDelivery(opportunityId: string): void {
  * SQLSTATE y la constraint.
  */
 function logFailure(
-  operation: "schedule" | "reschedule" | "checklist" | "complete",
+  operation: "schedule" | "reschedule" | "checklist" | "complete" | "cancel",
   error: unknown,
 ): void {
   const { name, cause } =
@@ -238,6 +247,39 @@ export async function completeDelivery(
     case "vehicle_conflict":
       revalidateDelivery(outcome.opportunityId);
       return { status: "vehicle_conflict", reason: outcome.reason };
+    case "not_found":
+      return { status: "not_found" };
+  }
+}
+
+export async function cancelDelivery(
+  _previous: CancelDeliveryState,
+  formData: FormData,
+): Promise<CancelDeliveryState> {
+  const ctx = await requireTenant();
+  const denied = authorize(ctx.role, "delivery.cancel");
+  if (denied) return denied;
+
+  const parsed = parseCancelDeliveryRequest(formData);
+  if (parsed.kind === "not_found") return { status: "not_found" };
+
+  let outcome: CancelDeliveryOutcome;
+  try {
+    outcome = await deleteDelivery(ctx, parsed.deliveryId);
+  } catch (error) {
+    logFailure("cancel", error);
+    return { status: "failed" };
+  }
+
+  switch (outcome.outcome) {
+    case "cancelled":
+      revalidateDelivery(outcome.opportunityId);
+      return { status: "cancelled" };
+    case "already_completed":
+      revalidateDelivery(outcome.opportunityId);
+      return { status: "already_completed" };
+    case "unauthorized_role":
+      return unauthorizedRole("delivery.cancel");
     case "not_found":
       return { status: "not_found" };
   }

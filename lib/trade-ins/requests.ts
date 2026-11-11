@@ -14,6 +14,7 @@ import {
   type TradeInVehicle,
   type TradeInVehicleField,
 } from "@/domains/opportunities/trade-ins";
+import type { UnauthorizedRoleState } from "@/lib/auth/roles";
 
 /*
  * Pedidos y respuestas de las Server Actions de la toma de usados (Hito 20,
@@ -72,7 +73,8 @@ export type RegisterTradeInState =
     }>
   | Readonly<{ status: "opportunity_closed"; values: TradeInFormValues }>
   | Readonly<{ status: "already_registered"; values: TradeInFormValues }>
-  | Readonly<{ status: "requires_admin"; values: TradeInFormValues }>
+  /** Un seller mandó la tasación con el alta (UNAUTHORIZED_ROLE). */
+  | (UnauthorizedRoleState & Readonly<{ values: TradeInFormValues }>)
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "failed"; values: TradeInFormValues }>
   | null;
@@ -88,7 +90,8 @@ export type AppraiseTradeInState =
       values: TradeInFormValues;
     }>
   | Readonly<{ status: "opportunity_closed" }>
-  | Readonly<{ status: "requires_admin" }>
+  /** Tasar es de un admin (UNAUTHORIZED_ROLE). */
+  | UnauthorizedRoleState
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "failed"; values: TradeInFormValues }>
   | null;
@@ -105,6 +108,8 @@ export type ChangeTradeInStatusState =
   | Readonly<{ status: "conflict"; current: TradeInStatus; label: string }>
   | Readonly<{ status: "offer_price_required" }>
   | Readonly<{ status: "opportunity_closed" }>
+  /** Aprobar la toma es de un admin (UNAUTHORIZED_ROLE, DEC-054 §2). */
+  | UnauthorizedRoleState
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "failed" }>
   | null;

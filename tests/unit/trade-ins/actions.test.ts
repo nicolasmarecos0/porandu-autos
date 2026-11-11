@@ -211,7 +211,6 @@ describe("registerTradeIn()", () => {
   it.each([
     ["opportunity_closed", true],
     ["already_registered", true],
-    ["requires_admin", false],
   ] as const)(
     "%s vuelve con lo cargado (revalida: %s)",
     async (outcome, revalidates) => {
@@ -227,6 +226,21 @@ describe("registerTradeIn()", () => {
       expect(mocks.revalidatePath).toHaveBeenCalledTimes(revalidates ? 2 : 0);
     },
   );
+
+  it("un seller con la tasación en el alta recibe UNAUTHORIZED_ROLE con lo cargado, sin revalidar", async () => {
+    mocks.insertTradeIn.mockResolvedValue({
+      outcome: "requires_admin",
+      opportunityId: OPPORTUNITY,
+    });
+    const state = await registerTradeIn(null, form(REGISTER));
+    expect(state).toMatchObject({
+      status: "unauthorized_role",
+      code: "UNAUTHORIZED_ROLE",
+      capability: "trade_in.appraise",
+      values: { brand: "Toyota" },
+    });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
 
   it("una falla inesperada no expone la base ni registra lo cargado", async () => {
     mocks.insertTradeIn.mockRejectedValue(
@@ -289,16 +303,25 @@ describe("appraiseTradeIn()", () => {
     expect(actor).toEqual({ isAdmin: true });
   });
 
-  it("un seller llega con su rol: la escritura y la base lo rechazan", async () => {
+  it("un seller recibe UNAUTHORIZED_ROLE sin leer la tasación ni llegar a la base (DEC-054 §6)", async () => {
+    expect(await appraiseTradeIn(null, form(APPRAISE))).toEqual({
+      status: "unauthorized_role",
+      code: "UNAUTHORIZED_ROLE",
+      capability: "trade_in.appraise",
+    });
+    expect(mocks.writeTradeInAppraisal).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("si la base rechaza la tasación por rol (el rol cambió en el medio), también es UNAUTHORIZED_ROLE", async () => {
+    role = "admin";
     mocks.writeTradeInAppraisal.mockResolvedValue({
       outcome: "requires_admin",
       opportunityId: OPPORTUNITY,
     });
-    expect(await appraiseTradeIn(null, form(APPRAISE))).toEqual({
-      status: "requires_admin",
-    });
-    expect(mocks.writeTradeInAppraisal.mock.calls[0]![2]).toEqual({
-      isAdmin: false,
+    expect(await appraiseTradeIn(null, form(APPRAISE))).toMatchObject({
+      status: "unauthorized_role",
+      code: "UNAUTHORIZED_ROLE",
     });
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
@@ -318,6 +341,7 @@ describe("appraiseTradeIn()", () => {
   });
 
   it("un estado de origen desconocido o un id malformado es not_found", async () => {
+    role = "admin";
     for (const fields of [
       { ...APPRAISE, from: "approved" },
       { ...APPRAISE, tradeInId: "x" },
@@ -347,7 +371,43 @@ describe("appraiseTradeIn()", () => {
 });
 
 describe("changeTradeInStatus()", () => {
+  it("aprobar la toma como seller es UNAUTHORIZED_ROLE, sin llegar a la base (DEC-054 §2)", async () => {
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: TRADE_IN, decision: "accept" }),
+      ),
+    ).toEqual({
+      status: "unauthorized_role",
+      code: "UNAUTHORIZED_ROLE",
+      capability: "trade_in.approve",
+    });
+    expect(mocks.writeTradeInDecision).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("un seller sí registra que el cliente rechazó, con su rol en el actor", async () => {
+    mocks.writeTradeInDecision.mockResolvedValue({
+      outcome: "changed",
+      opportunityId: OPPORTUNITY,
+      identity: VITZ,
+      decision: "reject",
+      from: "appraised",
+      to: "rejected",
+    });
+    expect(
+      await changeTradeInStatus(
+        null,
+        form({ tradeInId: TRADE_IN, decision: "reject" }),
+      ),
+    ).toMatchObject({ status: "changed", to: "rejected" });
+    expect(mocks.writeTradeInDecision.mock.calls[0]![2]).toEqual({
+      isAdmin: false,
+    });
+  });
+
   it("requireTenant() → la decisión → escritura → revalidar", async () => {
+    role = "admin";
     mocks.writeTradeInDecision.mockImplementation(async () => {
       mocks.calls.push("decide");
       return {
@@ -375,6 +435,9 @@ describe("changeTradeInStatus()", () => {
     expect(mocks.writeTradeInDecision.mock.calls[0]![1]).toEqual({
       tradeInId: TRADE_IN,
       decision: "accept",
+    });
+    expect(mocks.writeTradeInDecision.mock.calls[0]![2]).toEqual({
+      isAdmin: true,
     });
   });
 
@@ -412,7 +475,17 @@ describe("changeTradeInStatus()", () => {
       2,
     ],
     [{ outcome: "not_found" }, { status: "not_found" }, 0],
+    [
+      { outcome: "requires_admin", opportunityId: OPPORTUNITY },
+      {
+        status: "unauthorized_role",
+        code: "UNAUTHORIZED_ROLE",
+        capability: "trade_in.approve",
+      },
+      0,
+    ],
   ] as const)("%o → %o", async (outcome, state, revalidations) => {
+    role = "admin";
     mocks.writeTradeInDecision.mockResolvedValue(outcome);
     expect(
       await changeTradeInStatus(
