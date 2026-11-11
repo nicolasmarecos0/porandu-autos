@@ -29,6 +29,10 @@ import {
 } from "@/domains/demand/resolver";
 import { CURRENCIES } from "@/domains/money";
 import {
+  DELIVERY_CHECKLIST_ITEMS,
+  DELIVERY_RECORD_STATUSES,
+} from "@/domains/opportunities/deliveries";
+import {
   DELIVERY_DATE_RANGE,
   DELIVERY_STATUSES,
   LOSS_NOTES_MAX_LENGTH,
@@ -1503,6 +1507,14 @@ describe("db/schema", () => {
       ["created_at", "PgTimestamp", true, true],
       ["updated_at", "PgTimestamp", true, true],
     ]);
+    // Los estados y los ítems del checklist de la base son los del dominio
+    // (DEC-053 §1; el dominio nombra el auxilio en camelCase).
+    expect(schema.deliveryStatuses).toEqual(DELIVERY_RECORD_STATUSES);
+    expect(schema.deliveryChecklistItems).toEqual(
+      DELIVERY_CHECKLIST_ITEMS.map((item) =>
+        item.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`),
+      ),
+    );
     // Nace pendiente; el sello y el reloj los pone la base.
     expect(column("deliveries", "status").default).toBe("pending");
     expect(column("deliveries", "created_at").defaultFn).toBeUndefined();
