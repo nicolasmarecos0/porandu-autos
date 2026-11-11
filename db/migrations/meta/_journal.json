@@ -148,6 +148,13 @@
       "when": 1793970802918,
       "tag": "0020_vehicle_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794274591275,
+      "tag": "0021_trade_ins",
+      "breakpoints": true
     }
   ]
 }

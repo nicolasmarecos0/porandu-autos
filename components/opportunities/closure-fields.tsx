@@ -2,6 +2,7 @@
 
 import { useId, useState, type ReactNode } from "react";
 import { StatusChip } from "@/components/stock/stock-status";
+import { TradeInStatusChip } from "@/components/trade-ins/trade-in-status";
 import { cn } from "@/components/ui/cn";
 import { FormField, inputClassName } from "@/components/ui/form-field";
 import { ChevronRightIcon } from "@/components/ui/icons";
@@ -20,6 +21,10 @@ import {
   type DeliveryStatus,
 } from "@/domains/opportunities/closure";
 import { noteLength, normalizeNoteBody } from "@/domains/opportunities/notes";
+import {
+  TRADE_IN_STOCK_NOTICE_TEXT,
+  type TradeInClosureNotice,
+} from "@/domains/opportunities/trade-in-presentation";
 import { SALE_NOTICE_TEXT, saleNoticeFor } from "@/domains/vehicles/lifecycle";
 import type { VehicleStatus } from "@/domains/vehicles/stock";
 
@@ -43,6 +48,11 @@ import type { VehicleStatus } from "@/domains/vehicles/stock";
  * «Vendida» en el stock. Si ya está vendida o en preparación, no ofrece los
  * campos: dice el conflicto y qué hacer (saleNoticeFor(), el mismo plan que
  * aplica el servidor sobre la fila bloqueada).
+ *
+ * Ganar hace entrar al stock la toma aceptada (Hito 20, DEC-052 §5): la
+ * confirmación lo dice junto al usado (Aprobado por el cliente → En
+ * preparación). Una toma sin la aprobación del cliente es solo un aviso: el
+ * cierre se puede confirmar y el usado no entra.
  */
 
 /** La unidad que se vende: la vinculada a la negociación, con su estado. */
@@ -95,6 +105,8 @@ type ClosureFieldsProps = Readonly<{
   values?: Partial<ClosureValues>;
   /** La unidad vinculada; ganar sin ella no se ofrece. */
   saleVehicle: SaleVehicle | null;
+  /** La toma vigente: qué le pasa con el cierre Ganada (DEC-052 §5). */
+  tradeIn?: TradeInClosureNotice | null;
   disabled: boolean;
 }>;
 
@@ -136,6 +148,7 @@ function WonFields({
   errors,
   values,
   saleVehicle,
+  tradeIn = null,
   disabled,
 }: ClosureFieldsProps) {
   const prefix = useId();
@@ -186,6 +199,7 @@ function WonFields({
           {SALE_NOTICE_TEXT}
         </p>
       </SaleUnit>
+      {tradeIn ? <TradeInIntake notice={tradeIn} /> : null}
       <div className="grid grid-cols-[1fr_9rem] gap-3">
         <FormField
           label="Precio final"
@@ -435,6 +449,48 @@ function SaleUnit({
         </p>
       </div>
       {children}
+    </div>
+  );
+}
+
+/**
+ * La toma vigente en la confirmación de Ganada: aprobada por el cliente,
+ * ingresa al stock En preparación al confirmar; sin aprobar, un aviso.
+ */
+function TradeInIntake({ notice }: { notice: TradeInClosureNotice }) {
+  if (notice.kind === "undecided") {
+    return (
+      <p className="rounded-md border border-warning-border bg-warning-soft px-3 py-2.5 text-label text-warning">
+        {notice.message}
+      </p>
+    );
+  }
+  return (
+    <div className="rounded-md border border-border-subtle bg-surface-2 px-3 py-2.5">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <p className="text-caption text-text-muted">
+            Vehículo en parte de pago
+          </p>
+          <p className="text-label font-semibold text-text-primary">
+            {notice.name}
+          </p>
+          <p className="text-caption text-text-secondary">{notice.detail}</p>
+        </div>
+        <p className="flex shrink-0 flex-wrap items-center gap-1">
+          <span className="sr-only">Toma:</span>
+          <TradeInStatusChip status="accepted" />
+          <span className="sr-only">ingresa al stock como</span>
+          <ChevronRightIcon
+            aria-hidden="true"
+            className="size-3.5 text-text-muted"
+          />
+          <StatusChip status="inPreparation" />
+        </p>
+      </div>
+      <p className="mt-2 border-t border-border-subtle pt-2 text-caption text-text-secondary">
+        {TRADE_IN_STOCK_NOTICE_TEXT}
+      </p>
     </div>
   );
 }

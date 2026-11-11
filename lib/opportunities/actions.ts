@@ -27,6 +27,7 @@ import {
   type NoteWriteOutcome,
 } from "@/db/queries/record-opportunity-note";
 import { todayInAsuncion } from "@/domains/opportunities/closure";
+import { tradeInLabel } from "@/domains/opportunities/trade-in-presentation";
 import { requireTenant } from "@/lib/tenant/session";
 import { VEHICLE_LIFECYCLE_PATHS } from "@/lib/vehicles/paths";
 
@@ -303,7 +304,9 @@ export async function changeOpportunityStage(
 /*
  * Cierre comercial (DEC-034), closeOpportunity(): la única puerta para
  * marcar una oportunidad ganada o perdida, con sus metadatos. Ganada vende
- * la unidad vinculada en la misma transacción (Hito 19, DEC-051).
+ * la unidad vinculada en la misma transacción (Hito 19, DEC-051) y, si el
+ * cliente aprobó la toma de su usado, lo hace entrar al stock como unidad
+ * En preparación (Hito 20, DEC-052 §5, la regla de oro).
  *
  *   requireTenant() → leer y validar el pedido (Zod) →
  *   closeOpportunityWithMetadata() (withTenant(), filas bloqueadas,
@@ -333,10 +336,11 @@ export async function changeOpportunityStage(
  *    logs no registran valores) y lo devuelve para reintentar.
  *
  * Cerrar no modifica `last_activity_at` (DEC-034 §9). Ganar deja la unidad
- * vinculada Vendida; perder no toca el stock. Un cierre cambia el Inventario,
- * el Catálogo y las Métricas (stock y conversión), así que se revalidan
- * todas las vistas del ciclo de vida de la unidad. El estado previo
- * (`_previous`) lo envía el cliente: no se usa.
+ * vinculada Vendida y la toma aceptada en el stock, En preparación; perder
+ * no toca el stock ni la toma. Un cierre cambia el Inventario, el Catálogo
+ * y las Métricas (stock y conversión), así que se revalidan todas las
+ * vistas del ciclo de vida de la unidad. El estado previo (`_previous`) lo
+ * envía el cliente: no se usa.
  */
 export async function closeOpportunity(
   _previous: CloseOpportunityState,
@@ -382,6 +386,12 @@ export async function closeOpportunity(
         opportunityId,
         from: outcome.from,
         to: outcome.to,
+        stockedTradeIn: outcome.stockedTradeIn
+          ? {
+              vehicleId: outcome.stockedTradeIn.vehicleId,
+              label: tradeInLabel(outcome.stockedTradeIn),
+            }
+          : null,
       };
     case "vehicle_conflict":
       // La unidad cambió desde que se abrió el formulario (otra oportunidad

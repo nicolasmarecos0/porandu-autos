@@ -113,6 +113,7 @@ const BOARD = pipelineBoard(
       [id(2), { toApprove: 1, latestDraftId: id(50), accepted: null }],
     ]),
     testDrives: new Map(),
+    tradeIns: new Map(),
   },
   pipelineWindow(NOW),
 );

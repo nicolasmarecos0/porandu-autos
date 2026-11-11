@@ -13,10 +13,11 @@ import { finding, type Finding } from "./report.mts";
  * 0010_opportunity_closure_metadata, 0011_conversations_and_activity_trigger,
  * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
  * 0015_test_drives, 0016_quotes, 0017_dashboard_indexes,
- * 0018_conversation_reads y 0019_whatsapp_delivery_status, leído del
- * catálogo real (DEC-018, DEC-019,
- * ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033, DEC-034, DEC-036,
- * DEC-038, DEC-039, DEC-040, DEC-041, DEC-042, DEC-044).
+ * 0018_conversation_reads, 0019_whatsapp_delivery_status,
+ * 0020_vehicle_lifecycle y 0021_trade_ins, leído del catálogo real
+ * (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033,
+ * DEC-034, DEC-036, DEC-038, DEC-039, DEC-040, DEC-041, DEC-042, DEC-044,
+ * DEC-051, DEC-052).
  * Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
@@ -36,6 +37,7 @@ const APP_TABLES = [
   "profiles",
   "quotes",
   "test_drives",
+  "trade_ins",
   "vehicles",
   "whatsapp_lines",
 ];
@@ -97,7 +99,10 @@ type Policy = {
  * filas propias (`user_id = auth.uid()`) de una organización con membership
  * activa; la escribe la función de marcar visto (EXPECTED_CONVERSATION_READS).
  * El Hito 12C (DEC-044) suma la lectura de message_statuses; la escribe la
- * función de ingesta de estados (EXPECTED_MESSAGE_STATUSES).
+ * función de ingesta de estados (EXPECTED_MESSAGE_STATUSES). El Hito 20
+ * (DEC-052) suma la lectura, el alta (pendiente, sin tasación ni ingreso,
+ * de una oportunidad abierta) y la edición de trade_ins: qué cambio vale lo
+ * decide su trigger (EXPECTED_TRADE_INS).
  * Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
@@ -365,6 +370,37 @@ export const EXPECTED_POLICIES: Policy[] = [
       "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
   },
   {
+    table: "trade_ins",
+    name: "trade_ins_insert_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "INSERT",
+    using: null,
+    withCheck:
+      "((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (created_by = ( SELECT auth.uid() AS uid)) AND (status = 'pending'::text) AND (currency IS NULL) AND (estimated_repair_cost IS NULL) AND (offer_price IS NULL) AND (appraised_by IS NULL) AND (appraised_at IS NULL) AND (converted_vehicle_id IS NULL) AND (created_at = now()) AND (updated_at = now()) AND (EXISTS ( SELECT\n   FROM opportunities\n  WHERE ((opportunities.organization_id = trade_ins.organization_id) AND (opportunities.id = trade_ins.opportunity_id) AND (opportunities.stage = ANY (ARRAY['new'::text, 'qualifying'::text, 'negotiating'::text]))))))",
+  },
+  {
+    table: "trade_ins",
+    name: "trade_ins_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "trade_ins",
+    name: "trade_ins_update_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "UPDATE",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+  },
+  {
     table: "vehicles",
     name: "vehicles_insert_member",
     permissive: "PERMISSIVE",
@@ -449,7 +485,9 @@ export const EXPECTED_DEMAND_CHAIN = {
  * vacío, sin EXECUTE para nadie (DEC-028 §6, DEC-032 §4, DEC-033 §3, DEC-034
  * §5, DEC-036 §3). Desde 0020 (DEC-051 §4), también el constraint
  * trigger diferido que exige la unidad vendida al ganar
- * (EXPECTED_VEHICLE_LIFECYCLE verifica su función).
+ * (EXPECTED_VEHICLE_LIFECYCLE verifica su función), y desde 0021 (DEC-052
+ * §5), el que exige el ingreso al stock de la toma aceptada
+ * (EXPECTED_TRADE_INS verifica su función).
  */
 export const EXPECTED_OPPORTUNITY_STAGES = {
   checks: [
@@ -469,6 +507,7 @@ export const EXPECTED_OPPORTUNITY_STAGES = {
   ],
   triggers: [
     "O CREATE TRIGGER opportunities_stage_transition BEFORE UPDATE ON public.opportunities FOR EACH ROW EXECUTE FUNCTION private.enforce_opportunity_stage_transition()",
+    "O CREATE CONSTRAINT TRIGGER opportunities_won_trade_in_stocked AFTER UPDATE ON public.opportunities DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (((new.stage = 'won'::text) AND (old.stage IS DISTINCT FROM 'won'::text))) EXECUTE FUNCTION private.enforce_won_trade_in_stocked()",
     "O CREATE CONSTRAINT TRIGGER opportunities_won_vehicle_sold AFTER UPDATE ON public.opportunities DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (((new.stage = 'won'::text) AND (old.stage IS DISTINCT FROM 'won'::text))) EXECUTE FUNCTION private.enforce_won_vehicle_sold()",
   ],
   function: {
@@ -654,6 +693,51 @@ export const EXPECTED_VEHICLE_LIFECYCLE = {
 };
 
 /**
+ * Tomas de usados y tasaciones (Hito 20, 0021, DEC-052 §2, §3 y §5): los
+ * CHECKs (usado, tasación, aceptación e ingreso), las FKs (compuestas a la
+ * oportunidad y a la unidad en la que se convirtió) y la unique de esa
+ * unidad, el índice único parcial de la toma vigente, el trigger BEFORE
+ * UPDATE de cambios, habilitado, y las funciones de ese trigger y del
+ * constraint trigger diferido de opportunities que exige el ingreso al
+ * ganar (el trigger mismo lo verifica schema.opportunity-stages). Las dos
+ * funciones son invoker, de search_path vacío y sin EXECUTE para nadie.
+ */
+export const EXPECTED_TRADE_INS = {
+  constraints: [
+    "trade_ins_accepted_offer_check CHECK (((status <> 'accepted'::text) OR (offer_price IS NOT NULL)))",
+    "trade_ins_appraisal_check CHECK ((((currency IS NULL) = (offer_price IS NULL)) AND ((estimated_repair_cost IS NULL) = (offer_price IS NULL)) AND ((appraised_by IS NULL) = (offer_price IS NULL)) AND ((appraised_at IS NULL) = (offer_price IS NULL)) AND\nCASE\n    WHEN (status = 'pending'::text) THEN (offer_price IS NULL)\n    WHEN (status = ANY (ARRAY['appraised'::text, 'accepted'::text])) THEN (offer_price IS NOT NULL)\n    ELSE true\nEND))",
+    "trade_ins_appraised_by_profiles_id_fk FOREIGN KEY (appraised_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    "trade_ins_brand_check CHECK ((((char_length(brand) >= 1) AND (char_length(brand) <= 40)) AND (brand = btrim(brand)) AND (brand !~ '[[:cntrl:]]'::text)))",
+    "trade_ins_converted_check CHECK (((converted_vehicle_id IS NULL) OR (status = 'accepted'::text)))",
+    "trade_ins_converted_vehicle_fk FOREIGN KEY (organization_id, converted_vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
+    "trade_ins_created_by_profiles_id_fk FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    "trade_ins_currency_check CHECK ((currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
+    "trade_ins_km_check CHECK (((km IS NULL) OR (km >= 0)))",
+    "trade_ins_model_check CHECK ((((char_length(model) >= 1) AND (char_length(model) <= 80)) AND (model = btrim(model)) AND (model !~ '[[:cntrl:]]'::text)))",
+    "trade_ins_offer_price_check CHECK (((offer_price > (0)::numeric) AND ((currency <> 'PYG'::text) OR (offer_price = trunc(offer_price)))))",
+    "trade_ins_opportunity_fk FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+    "trade_ins_organization_id_converted_vehicle_id_key UNIQUE (organization_id, converted_vehicle_id)",
+    "trade_ins_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "trade_ins_plate_check CHECK ((((char_length(plate) >= 2) AND (char_length(plate) <= 12)) AND (plate ~ '^[A-Z0-9]+( [A-Z0-9]+)*$'::text)))",
+    "trade_ins_repair_cost_check CHECK (((estimated_repair_cost >= (0)::numeric) AND ((currency <> 'PYG'::text) OR (estimated_repair_cost = trunc(estimated_repair_cost)))))",
+    "trade_ins_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'appraised'::text, 'accepted'::text, 'rejected'::text])))",
+    "trade_ins_version_check CHECK ((((char_length(version) >= 1) AND (char_length(version) <= 80)) AND (version = btrim(version)) AND (version !~ '[[:cntrl:]]'::text)))",
+    "trade_ins_year_check CHECK (((year >= 1900) AND (year <= 2100)))",
+  ],
+  uniqueIndexes: [
+    "trade_ins_active_opportunity_key CREATE UNIQUE INDEX trade_ins_active_opportunity_key ON public.trade_ins USING btree (organization_id, opportunity_id) WHERE (status = ANY (ARRAY['pending'::text, 'appraised'::text, 'accepted'::text]))",
+    "trade_ins_organization_id_converted_vehicle_id_key CREATE UNIQUE INDEX trade_ins_organization_id_converted_vehicle_id_key ON public.trade_ins USING btree (organization_id, converted_vehicle_id)",
+  ],
+  triggers: [
+    "O CREATE TRIGGER trade_ins_change_guard BEFORE UPDATE ON public.trade_ins FOR EACH ROW EXECUTE FUNCTION private.enforce_trade_in_change()",
+  ],
+  functions: [
+    'private.enforce_trade_in_change() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+    'private.enforce_won_trade_in_stocked() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+  ],
+};
+
+/**
  * Cotizaciones (Hito 10, 0016, DEC-042 §5): los CHECKs, las FKs (compuestas
  * a la oportunidad y a la unidad) y la unique del número de quotes, el
  * índice único parcial de la cotización aceptada, los triggers de número
@@ -761,6 +845,7 @@ const AUTHENTICATED_PRIVILEGES = [
   "INSERT opportunity_notes",
   "INSERT quotes",
   "INSERT test_drives",
+  "INSERT trade_ins",
   "INSERT vehicles",
   ...MEMBER_READABLE_TABLES.map((table) => `SELECT ${table}`),
   "UPDATE memberships",
@@ -768,6 +853,7 @@ const AUTHENTICATED_PRIVILEGES = [
   "UPDATE organizations",
   "UPDATE quotes",
   "UPDATE test_drives",
+  "UPDATE trade_ins",
   "UPDATE vehicles",
 ];
 
@@ -796,6 +882,12 @@ const AUTHENTICATED_UPDATE_COLUMNS = [
   "quotes.updated_at",
   "test_drives.status",
   "test_drives.updated_at",
+  "trade_ins.converted_vehicle_id",
+  "trade_ins.currency",
+  "trade_ins.estimated_repair_cost",
+  "trade_ins.offer_price",
+  "trade_ins.status",
+  "trade_ins.updated_at",
   "vehicles.status",
   "vehicles.updated_at",
 ];
@@ -1491,6 +1583,84 @@ export async function verifyCatalog(
     ),
   );
 
+  // Tomas de usados (Hito 20): constraints, índices únicos, el trigger de
+  // cambios y las funciones de los dos triggers.
+  const [tradeInCatalog] = await tx<
+    {
+      constraints: string[] | null;
+      uniqueIndexes: string[] | null;
+      triggers: string[] | null;
+      functions: string[] | null;
+    }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.trade_ins')
+          AND contype IN ('c', 'f', 'u')
+      ) AS constraints,
+      (
+        SELECT array_agg(c.relname || ' ' || pg_get_indexdef(i.indexrelid) ORDER BY c.relname)
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE i.indrelid = to_regclass('public.trade_ins')
+          AND i.indisunique
+          AND NOT i.indisprimary
+      ) AS "uniqueIndexes",
+      (
+        SELECT array_agg(t.tgenabled::text || ' ' || pg_get_triggerdef(t.oid) ORDER BY t.tgname)
+        FROM pg_trigger t
+        WHERE t.tgrelid = to_regclass('public.trade_ins') AND NOT t.tgisinternal
+      ) AS triggers,
+      (
+        SELECT array_agg(
+          p.oid::regprocedure::text
+            || ' SECURITY DEFINER=' || p.prosecdef
+            || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+            || ' EXECUTE authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+            || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+            || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+            || ' guards=' || (
+              (
+                p.oid = to_regprocedure('private.enforce_trade_in_change()')
+                AND position('trade_ins_immutable' in p.prosrc) > 0
+                AND position('trade_ins_intake' in p.prosrc) > 0
+                AND position('trade_ins_opportunity_closed' in p.prosrc) > 0
+                AND position('trade_ins_offer_required' in p.prosrc) > 0
+                AND position('trade_ins_status_transition' in p.prosrc) > 0
+                AND position('trade_ins_appraisal_requires_user' in p.prosrc) > 0
+                AND position('trade_ins_appraisal_requires_admin' in p.prosrc) > 0
+                AND position('FOR SHARE' in p.prosrc) > 0
+              )
+              OR (
+                p.oid = to_regprocedure('private.enforce_won_trade_in_stocked()')
+                AND position('opportunities_won_trade_in_stocked' in p.prosrc) > 0
+              )
+            )
+          ORDER BY p.proname
+        )
+        FROM pg_proc p
+        WHERE p.oid IN (
+          to_regprocedure('private.enforce_trade_in_change()'),
+          to_regprocedure('private.enforce_won_trade_in_stocked()')
+        )
+      ) AS functions
+  `;
+  const tradeInsFound = {
+    constraints: tradeInCatalog?.constraints ?? [],
+    uniqueIndexes: tradeInCatalog?.uniqueIndexes ?? [],
+    triggers: tradeInCatalog?.triggers ?? [],
+    functions: tradeInCatalog?.functions ?? [],
+  };
+  findings.push(
+    finding(
+      "schema.trade-ins",
+      equal(tradeInsFound, EXPECTED_TRADE_INS),
+      `trade_ins: ${tradeInsFound.constraints.length} constraints (expected: ${EXPECTED_TRADE_INS.constraints.length}, exact definitions); unique indexes: ${tradeInsFound.uniqueIndexes.length} (expected: ${EXPECTED_TRADE_INS.uniqueIndexes.length}); triggers: ${list(tradeInsFound.triggers)}; functions: ${list(tradeInsFound.functions)}`,
+    ),
+  );
+
   // Envío de WhatsApp (Hito 8): la función de registro.
   const [outboundFn] = await tx<{ function: string | null }[]>`
     SELECT (
@@ -2002,6 +2172,7 @@ const DATA_API_TABLES = [
   "test_drives",
   "conversation_reads",
   "message_statuses",
+  "trade_ins",
 ];
 /** Nombres que pg_graphql daría a los tipos de la app. */
 const GRAPHQL_APP_TYPES = [
@@ -2020,6 +2191,7 @@ const GRAPHQL_APP_TYPES = [
   "TestDrives",
   "ConversationReads",
   "MessageStatuses",
+  "TradeIns",
 ];
 
 /** Campo de colección de pg_graphql con nombres inflectados. */

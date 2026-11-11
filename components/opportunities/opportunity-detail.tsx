@@ -18,8 +18,10 @@ import type { ActivityEntry } from "@/domains/conversations/timeline";
 import type { ClosureSummary } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
 import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
+import type { TradeInPanelData } from "@/domains/opportunities/trade-in-presentation";
 import type { QuotesPanelData } from "@/domains/quotes/presentation";
 import { QuotesPanel } from "@/components/quotes/quotes-panel";
+import { TradeInPanel } from "@/components/trade-ins/trade-in-panel";
 
 import { ClosureSummaryCard } from "./closure-summary";
 import { LinkedVehicle } from "./linked-vehicle";
@@ -37,7 +39,10 @@ import { VehicleLinkButton, VehicleLinkProvider } from "./vehicle-link";
  * cerró (DEC-034). Desde el Hito 4 (DEC-036), las notas y los mensajes
  * registrados conviven en el muro "Actividad". Desde el Hito 10 (DEC-042),
  * el panel "Cotizaciones" muestra los presupuestos formales, con su alta y
- * sus cambios de estado.
+ * sus cambios de estado. Desde el Hito 20 (DEC-052), el panel "Vehículo en
+ * parte de pago / Toma" registra el usado del cliente, su tasación
+ * (exclusiva del admin) y la decisión del cliente; aprobado, el cierre
+ * Ganada lo hace entrar al stock En preparación.
  *
  *   ┌ contacto · etapa ──────────────────────────── Volver · Editar ┐
  *   │ Etapa                                 │ Unidad en negociación  │
@@ -155,6 +160,8 @@ type OpportunityDetailViewProps = Readonly<{
   activity: readonly ActivityEntry[];
   /** Panel "Cotizaciones" (Hito 10, DEC-042 §9). */
   quotes: QuotesPanelData;
+  /** Panel "Vehículo en parte de pago / Toma" (Hito 20, DEC-052 §4). */
+  tradeIns: TradeInPanelData;
   /** Unidad del atajo "Cotizar" del catálogo (`?quote=`, propuesta DEC-049). */
   quoteVehicleId?: string;
 }>;
@@ -218,6 +225,7 @@ export function OpportunityDetailView({
   vehicleLink,
   activity,
   quotes,
+  tradeIns,
   quoteVehicleId,
 }: OpportunityDetailViewProps) {
   const { linked } = vehicleLink;
@@ -259,6 +267,7 @@ export function OpportunityDetailView({
             : null
         }
         acceptedQuoteTotal={quotes.acceptedTotal}
+        tradeIn={tradeIns.closure}
       />
       {closure ? (
         <ClosureSummaryCard
@@ -271,6 +280,7 @@ export function OpportunityDetailView({
         data={quotes}
         initialVehicleId={quoteVehicleId}
       />
+      <TradeInPanel opportunityId={id} data={tradeIns} />
       <OpportunityActivity opportunityId={id} activity={activity} />
       <section aria-labelledby="demand-heading" className="max-w-3xl">
         <Panel>

@@ -321,6 +321,7 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
       opportunityId: id,
       from: "negotiating",
       to: "won",
+      stockedTradeIn: null,
     });
     // El detalle, y las vistas del stock: ganar vende la unidad (DEC-051).
     expect(mocks.revalidated).toEqual([
@@ -400,7 +401,13 @@ describe("Server Action: requireTenant() → validación → withTenant() → UP
           lossNotes:
             "  Compró en   la agencia de enfrente.\r\n\r\n\r\nPagó contado. ",
         }),
-      ).toEqual({ status: "closed", opportunityId: id, from, to: "lost" });
+      ).toEqual({
+        status: "closed",
+        opportunityId: id,
+        from,
+        to: "lost",
+        stockedTradeIn: null,
+      });
       expect(await row(id)).toMatchObject({
         stage: "lost",
         lossReason: "competitor",

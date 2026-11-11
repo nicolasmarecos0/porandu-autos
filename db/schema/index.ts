@@ -28,7 +28,11 @@
  * solo SELECT de conversation_reads (las filas propias): la escribe
  * `private.mark_conversation_read()`, también SQL custom. 0019 da solo
  * SELECT de message_statuses: la escribe `private.ingest_whatsapp_status()`,
- * la ingesta de los estados de entrega, también SQL custom.
+ * la ingesta de los estados de entrega, también SQL custom. 0021 da SELECT
+ * e INSERT de trade_ins y su UPDATE de la tasación, el estado, el ingreso
+ * al stock y `updated_at`, por columna; su trigger de cambios y el
+ * constraint trigger diferido de opportunities que exige el ingreso de la
+ * toma aceptada al ganar son SQL custom.
  */
 export * from "./organizations";
 export * from "./profiles";
@@ -45,3 +49,4 @@ export * from "./test-drives";
 export * from "./quotes";
 export * from "./conversation-reads";
 export * from "./message-statuses";
+export * from "./trade-ins";

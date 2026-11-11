@@ -154,6 +154,46 @@ describe("closeOpportunity()", () => {
       opportunityId: ID,
       from: "negotiating",
       to: "won",
+      stockedTradeIn: null,
+    });
+  });
+
+  it("ganar con la toma aceptada: devuelve el usado que entró al stock (DEC-052 §5)", async () => {
+    mocks.close.mockImplementation(async () => ({
+      outcome: "closed",
+      opportunityId: ID,
+      from: "negotiating",
+      to: "won",
+      stockedTradeIn: {
+        tradeInId: "00000000-0000-4000-8000-0000000000aa",
+        vehicleId: "00000000-0000-4000-8000-0000000000bb",
+        brand: "Toyota",
+        model: "Vitz",
+        year: 2015,
+      },
+    }));
+    const state = await closeOpportunity(null, form(WON_FIELDS));
+    // El ingreso del usado cambia el Inventario: las mismas vistas del
+    // ciclo de vida que ya revalida toda venta.
+    expect(mocks.revalidatePath.mock.calls).toEqual([
+      [`/opportunities/${ID}`],
+      ["/stock"],
+      ["/stock/catalog"],
+      ["/opportunities"],
+      ["/opportunities/pipeline"],
+      ["/cockpit"],
+      ["/cockpit/metrics"],
+    ]);
+    // Solo la unidad nueva y su nombre: ni la toma ni sus importes.
+    expect(state).toEqual({
+      status: "closed",
+      opportunityId: ID,
+      from: "negotiating",
+      to: "won",
+      stockedTradeIn: {
+        vehicleId: "00000000-0000-4000-8000-0000000000bb",
+        label: "Toyota Vitz 2015",
+      },
     });
   });
 
@@ -398,6 +438,7 @@ describe("closeOpportunity()", () => {
       opportunityId: "x",
       from: "new",
       to: "won",
+      stockedTradeIn: null,
     } as const;
     expect(await closeOpportunity(forgedPrevious, form({}))).toEqual({
       status: "not_found",

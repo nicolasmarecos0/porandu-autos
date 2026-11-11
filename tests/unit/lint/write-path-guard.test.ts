@@ -37,6 +37,8 @@ import { describe, expect, it } from "vitest";
  *   también: las Server Actions de lib/calendar/actions.ts;
  * - las cotizaciones (Hito 10) (db/queries/quotes-write), también: las
  *   Server Actions de lib/quotes/actions.ts;
+ * - la toma de usados (Hito 20) (db/queries/trade-ins-write), también: las
+ *   Server Actions de lib/trade-ins/actions.ts;
  * - el cursor de leído de la bandeja (Hito 12B) (recordConversationRead()
  *   de db/queries/conversation-reads), también: la Server Action
  *   markConversationRead() (lib/conversations/read.ts). Las lecturas del
@@ -1028,6 +1030,73 @@ describe(
         await restrictedBy(
           "lib/quotes/requests.ts",
           `import type { CreateQuoteOutcome } from "@/db/queries/quotes-write";\nexport type S = CreateQuoteOutcome;\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importTradeInsWrite = `import { insertTradeIn } from "@/db/queries/trade-ins-write";\nexport const use = insertTradeIn;\n`;
+
+describe(
+  "una sola puerta para la toma de usados (Hito 20)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/opportunities/[id]/page.tsx",
+      "components/trade-ins/trade-in-panel.tsx",
+      "components/trade-ins/trade-in-drawer.tsx",
+      "lib/trade-ins/requests.ts",
+      "lib/opportunities/actions.ts",
+      "lib/quotes/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/calendar/actions.ts",
+      "lib/tenant/session.ts",
+      "db/queries/trade-ins.ts",
+      "db/queries/close-opportunity.ts",
+      "db/queries/opportunity-detail.ts",
+      "db/queries/memberships.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importTradeInsWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/trade-ins.ts",
+          `import { insertTradeIn } from "./trade-ins-write";\nexport const use = insertTradeIn;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en las Server Actions de lib/trade-ins/actions.ts", async () => {
+      expect(
+        await restrictedBy("lib/trade-ins/actions.ts", importTradeInsWrite),
+      ).toEqual([]);
+    });
+
+    it("las Server Actions de la toma no importan otras escrituras ni el cliente", async () => {
+      for (const code of [
+        importWrite,
+        importQuotesWrite,
+        importTestDrivesWrite,
+        `import { closeOpportunityWithMetadata } from "@/db/queries/close-opportunity";\nexport const use = closeOpportunityWithMetadata;\n`,
+        `import { db } from "@/db/client";\nexport const use = db;\n`,
+      ]) {
+        expect(await restrictedBy("lib/trade-ins/actions.ts", code)).toContain(
+          "no-restricted-imports",
+        );
+      }
+    });
+
+    it("los tipos de los resultados sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/trade-ins/requests.ts",
+          `import type { RegisterTradeInOutcome } from "@/db/queries/trade-ins-write";\nexport type S = RegisterTradeInOutcome;\n`,
         ),
       ).toEqual([]);
     });

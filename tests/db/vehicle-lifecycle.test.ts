@@ -966,6 +966,7 @@ describe("cierre Ganada → unidad Vendida, en la misma transacción", () => {
         opportunityId: id,
         from: "negotiating",
         to: "won",
+        stockedTradeIn: null,
       });
       expect(mocks.revalidated).toEqual([
         `/opportunities/${id}`,

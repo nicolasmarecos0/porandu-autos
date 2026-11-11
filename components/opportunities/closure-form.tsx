@@ -15,6 +15,7 @@ import {
 } from "@/domains/opportunities/closure";
 import { STAGE_ACTION_LABELS } from "@/domains/opportunities/labels";
 import type { Stage } from "@/domains/opportunities/stages";
+import type { TradeInClosureNotice } from "@/domains/opportunities/trade-in-presentation";
 import { saleNoticeFor } from "@/domains/vehicles/lifecycle";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 
@@ -102,6 +103,8 @@ type ClosureFormProps = Readonly<{
   saleVehicle: SaleVehicle | null;
   /** Total de la cotización aceptada: precarga el precio al ganar. */
   acceptedQuoteTotal?: Money | null;
+  /** La toma vigente: entra al stock al ganar si el cliente la aprobó. */
+  tradeIn?: TradeInClosureNotice | null;
   /** Día de Asunción con que se abrió: acota la fecha de entrega. */
   today: string;
   /** Mientras guarda: nada se edita ni se reenvía. */
@@ -122,6 +125,7 @@ export function ClosureForm({
   stage,
   saleVehicle,
   acceptedQuoteTotal = null,
+  tradeIn = null,
   today,
   pending,
   state,
@@ -205,6 +209,7 @@ export function ClosureForm({
           errors={errors}
           values={echo}
           saleVehicle={unit}
+          tradeIn={tradeIn}
           disabled={pending}
         />
         {blocked && blockedHint ? blockedHint : null}

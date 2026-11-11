@@ -335,6 +335,10 @@ describe("opportunities (H1.1)", () => {
       // DEC-051 §4: ganar vende la unidad vinculada en la misma
       // transacción (constraint trigger diferido al COMMIT).
       opportunities_won_vehicle_sold: "TRIGGER DEFERRABLE INITIALLY DEFERRED",
+      // DEC-052 §5: ganar con una toma aceptada la hace entrar al stock en
+      // la misma transacción (constraint trigger diferido al COMMIT).
+      opportunities_won_trade_in_stocked:
+        "TRIGGER DEFERRABLE INITIALLY DEFERRED",
     });
   });
 
@@ -1026,6 +1030,111 @@ describe("conversation_reads (Hito 12B)", () => {
   });
 });
 
+describe("trade_ins (Hito 20)", () => {
+  it("columnas: la oportunidad, el usado, la tasación con su moneda, el estado, los sellos y la unidad en la que se convirtió", async () => {
+    expect(await columns(db.admin, "trade_ins")).toEqual([
+      { name: "id", type: "uuid", notNull: true, default: "gen_random_uuid()" },
+      { name: "organization_id", type: "uuid", notNull: true, default: null },
+      { name: "opportunity_id", type: "uuid", notNull: true, default: null },
+      { name: "brand", type: "text", notNull: true, default: null },
+      { name: "model", type: "text", notNull: true, default: null },
+      { name: "version", type: "text", notNull: false, default: null },
+      { name: "year", type: "smallint", notNull: true, default: null },
+      { name: "km", type: "integer", notNull: false, default: null },
+      { name: "plate", type: "text", notNull: false, default: null },
+      { name: "currency", type: "text", notNull: false, default: null },
+      {
+        name: "estimated_repair_cost",
+        type: "numeric(14,2)",
+        notNull: false,
+        default: null,
+      },
+      {
+        name: "offer_price",
+        type: "numeric(14,2)",
+        notNull: false,
+        default: null,
+      },
+      {
+        name: "status",
+        type: "text",
+        notNull: true,
+        default: "'pending'::text",
+      },
+      { name: "created_by", type: "uuid", notNull: true, default: null },
+      { name: "appraised_by", type: "uuid", notNull: false, default: null },
+      {
+        name: "appraised_at",
+        type: "timestamp with time zone",
+        notNull: false,
+        default: null,
+      },
+      {
+        name: "converted_vehicle_id",
+        type: "uuid",
+        notNull: false,
+        default: null,
+      },
+      ...TIMESTAMPS,
+    ]);
+  });
+
+  it("PK, FKs RESTRICT (organización, oportunidad y unidad de la misma organización, autores), CHECKs del usado, de la tasación y del ingreso, y la unique de la unidad", async () => {
+    expect(await constraints(db.admin, "trade_ins")).toEqual({
+      trade_ins_accepted_offer_check:
+        "CHECK (((status <> 'accepted'::text) OR (offer_price IS NOT NULL)))",
+      trade_ins_appraisal_check:
+        "CHECK ((((currency IS NULL) = (offer_price IS NULL)) AND ((estimated_repair_cost IS NULL) = (offer_price IS NULL)) AND ((appraised_by IS NULL) = (offer_price IS NULL)) AND ((appraised_at IS NULL) = (offer_price IS NULL)) AND\nCASE\n    WHEN (status = 'pending'::text) THEN (offer_price IS NULL)\n    WHEN (status = ANY (ARRAY['appraised'::text, 'accepted'::text])) THEN (offer_price IS NOT NULL)\n    ELSE true\nEND))",
+      trade_ins_appraised_by_profiles_id_fk:
+        "FOREIGN KEY (appraised_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+      trade_ins_brand_check:
+        "CHECK ((((char_length(brand) >= 1) AND (char_length(brand) <= 40)) AND (brand = btrim(brand)) AND (brand !~ '[[:cntrl:]]'::text)))",
+      trade_ins_converted_check:
+        "CHECK (((converted_vehicle_id IS NULL) OR (status = 'accepted'::text)))",
+      trade_ins_converted_vehicle_fk:
+        "FOREIGN KEY (organization_id, converted_vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
+      trade_ins_created_by_profiles_id_fk:
+        "FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+      trade_ins_currency_check:
+        "CHECK ((currency = ANY (ARRAY['PYG'::text, 'USD'::text])))",
+      trade_ins_km_check: "CHECK (((km IS NULL) OR (km >= 0)))",
+      trade_ins_model_check:
+        "CHECK ((((char_length(model) >= 1) AND (char_length(model) <= 80)) AND (model = btrim(model)) AND (model !~ '[[:cntrl:]]'::text)))",
+      trade_ins_offer_price_check:
+        "CHECK (((offer_price > (0)::numeric) AND ((currency <> 'PYG'::text) OR (offer_price = trunc(offer_price)))))",
+      trade_ins_opportunity_fk:
+        "FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+      trade_ins_organization_id_converted_vehicle_id_key:
+        "UNIQUE (organization_id, converted_vehicle_id)",
+      trade_ins_organization_id_organizations_id_fk:
+        "FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+      trade_ins_pkey: "PRIMARY KEY (id)",
+      trade_ins_plate_check:
+        "CHECK ((((char_length(plate) >= 2) AND (char_length(plate) <= 12)) AND (plate ~ '^[A-Z0-9]+( [A-Z0-9]+)*$'::text)))",
+      trade_ins_repair_cost_check:
+        "CHECK (((estimated_repair_cost >= (0)::numeric) AND ((currency <> 'PYG'::text) OR (estimated_repair_cost = trunc(estimated_repair_cost)))))",
+      trade_ins_status_check:
+        "CHECK ((status = ANY (ARRAY['pending'::text, 'appraised'::text, 'accepted'::text, 'rejected'::text])))",
+      trade_ins_version_check:
+        "CHECK ((((char_length(version) >= 1) AND (char_length(version) <= 80)) AND (version = btrim(version)) AND (version !~ '[[:cntrl:]]'::text)))",
+      trade_ins_year_check: "CHECK (((year >= 1900) AND (year <= 2100)))",
+    });
+  });
+
+  it("índices: las tomas de una oportunidad, a lo sumo una vigente por oportunidad y una por unidad del stock", async () => {
+    expect(await indexes(db.admin, "trade_ins")).toEqual({
+      trade_ins_active_opportunity_key:
+        "CREATE UNIQUE INDEX trade_ins_active_opportunity_key ON public.trade_ins USING btree (organization_id, opportunity_id) WHERE (status = ANY (ARRAY['pending'::text, 'appraised'::text, 'accepted'::text]))",
+      trade_ins_organization_id_converted_vehicle_id_key:
+        "CREATE UNIQUE INDEX trade_ins_organization_id_converted_vehicle_id_key ON public.trade_ins USING btree (organization_id, converted_vehicle_id)",
+      trade_ins_organization_id_opportunity_id_idx:
+        "CREATE INDEX trade_ins_organization_id_opportunity_id_idx ON public.trade_ins USING btree (organization_id, opportunity_id)",
+      trade_ins_pkey:
+        "CREATE UNIQUE INDEX trade_ins_pkey ON public.trade_ins USING btree (id)",
+    });
+  });
+});
+
 describe("constraints de opportunity_demand_facts con datos (H1.4)", () => {
   const OPP_1 = "30000000-0000-4000-8000-000000000001";
   const OPP_1B = "30000000-0000-4000-8000-000000000002";
@@ -1411,6 +1520,7 @@ describe("invariantes de tenancy (ADR-001 §3.6)", () => {
       "opportunity_notes",
       "quotes",
       "test_drives",
+      "trade_ins",
       "vehicles",
       "whatsapp_lines",
     ]);

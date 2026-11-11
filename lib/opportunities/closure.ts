@@ -31,6 +31,11 @@ export type CloseOpportunityState =
       opportunityId: string;
       from: Stage;
       to: ClosureOutcome;
+      /**
+       * Ganada con una toma aceptada (Hito 20, DEC-052 §5): el usado que
+       * entró al stock En preparación. Null si no había toma aceptada.
+       */
+      stockedTradeIn: Readonly<{ vehicleId: string; label: string }> | null;
     }>
   /** Ya estaba cerrada así: los metadatos no se reescribieron. */
   | Readonly<{

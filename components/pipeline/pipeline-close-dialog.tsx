@@ -78,6 +78,7 @@ export function PipelineCloseDialog({
             stage={closing.card.stage}
             saleVehicle={closing.card.saleVehicle}
             acceptedQuoteTotal={closing.card.acceptedQuoteTotal}
+            tradeIn={closing.card.tradeIn}
             today={closing.today}
             pending={false}
             state={closing.state}

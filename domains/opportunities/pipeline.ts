@@ -44,6 +44,11 @@ import {
 } from "./pipeline-moves";
 import { initialsOf } from "./prospect";
 import { isTerminalStage, OPPORTUNITY_STAGES, type Stage } from "./stages";
+import {
+  tradeInClosureNotice,
+  type TradeInClosureNotice,
+  type TradeInClosureRow,
+} from "./trade-in-presentation";
 import type { NextBestAction } from "./types";
 
 /*
@@ -179,6 +184,12 @@ export type QuoteSignals = Readonly<{
   accepted: Money | null;
 }>;
 
+/**
+ * La toma vigente de una abierta (Hito 20, DEC-052 §5): lo que la
+ * confirmación de Ganada avisa sobre el usado en parte de pago.
+ */
+export type PipelineTradeIn = TradeInClosureRow;
+
 /** Pruebas de manejo vencidas de una oportunidad (DEC-047 §3.3). */
 export type TestDriveSignals = Readonly<{
   overdue: number;
@@ -205,6 +216,8 @@ export type PipelineSource = Readonly<{
   lastNotes: ReadonlyMap<string, Date>;
   quotes: ReadonlyMap<string, QuoteSignals>;
   testDrives: ReadonlyMap<string, TestDriveSignals>;
+  /** La toma vigente de cada abierta, si tiene (DEC-052). */
+  tradeIns: ReadonlyMap<string, PipelineTradeIn>;
 }>;
 
 /* ── ViewModel ──────────────────────────────────────────────────────── */
@@ -287,6 +300,11 @@ export type PipelineCard = Readonly<{
   saleVehicle: SaleVehicleSummary | null;
   /** Precarga el precio final al ganarla (DEC-042 §7). */
   acceptedQuoteTotal: Money | null;
+  /**
+   * Para "Marcar como ganada": la toma aceptada entra al stock al confirmar;
+   * una sin decidir, no (DEC-052 §5). Solo abiertas.
+   */
+  tradeIn: TradeInClosureNotice | null;
 }>;
 
 export type PipelineColumn = Readonly<{
@@ -527,6 +545,7 @@ function openCard(
     closure: null,
     saleVehicle: saleVehicleOf(row.vehicle),
     acceptedQuoteTotal: quotes?.accepted ?? null,
+    tradeIn: tradeInClosureNotice(source.tradeIns.get(row.id) ?? null),
   };
 }
 
@@ -551,6 +570,7 @@ function closedCard(
     ),
     saleVehicle: null,
     acceptedQuoteTotal: null,
+    tradeIn: null,
   };
 }
 

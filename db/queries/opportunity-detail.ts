@@ -25,6 +25,10 @@ import {
 } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
 import {
+  tradeInPanelData,
+  type TradeInPanelData,
+} from "@/domains/opportunities/trade-in-presentation";
+import {
   quotesPanelData,
   type QuotesPanelData,
 } from "@/domains/quotes/presentation";
@@ -42,6 +46,7 @@ import { selectOpportunityMessages } from "./messages";
 import { selectOpportunityNotes } from "./opportunity-notes";
 import { stageFromDb } from "./opportunities";
 import { selectOpportunityQuotes, selectQuotableVehicles } from "./quotes";
+import { selectOpportunityTradeIns } from "./trade-ins";
 import { selectMatchCandidates, selectVehicleById } from "./vehicles";
 
 /*
@@ -78,8 +83,13 @@ import { selectMatchCandidates, selectVehicleById } from "./vehicles";
  *   pueden cotizar (en stock y con precio publicado). Las acciones de cada
  *   cotización las decide el dominio con el rol de la membership del que
  *   mira; el servidor y la base las vuelven a exigir.
+ * - Toma de usados (Hito 20, DEC-052 §4): en la misma transacción lee las
+ *   tomas de la oportunidad (la vigente y las rechazadas). La sección
+ *   financiera (reacondicionamiento y costo total de ingreso) solo se arma
+ *   para un admin: a un seller no le llega. El `trade_in_intent` de la
+ *   demanda vigente da la pista del panel vacío.
  * - Solo lee: no toca `last_activity_at`, el ledger, las notas, los
- *   mensajes ni el stock.
+ *   mensajes, las tomas ni el stock.
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -106,6 +116,8 @@ export type OpportunityDetail = Readonly<{
   activity: readonly ActivityEntry[];
   /** Panel "Cotizaciones" (Hito 10) y lo que necesita el drawer de alta. */
   quotes: QuotesPanelData;
+  /** Panel "Vehículo en parte de pago / Toma" (Hito 20, DEC-052). */
+  tradeIns: TradeInPanelData;
 }>;
 
 /** Texto opcional del legado: vacío o en blanco no cuenta. */
@@ -183,6 +195,11 @@ export async function getOpportunityDetail(
       tx,
       ctx.organizationId,
     );
+    const tradeInRows = await selectOpportunityTradeIns(
+      tx,
+      ctx.organizationId,
+      opportunity.id,
+    );
     return {
       opportunity,
       rows,
@@ -192,6 +209,7 @@ export async function getOpportunityDetail(
       messages,
       quoteRows,
       quotableVehicles,
+      tradeInRows,
     };
   });
   if (!found) return null;
@@ -205,6 +223,7 @@ export async function getOpportunityDetail(
     messages,
     quoteRows,
     quotableVehicles,
+    tradeInRows,
   } = found;
   const stage = stageFromDb[opportunity.stage];
   const closure = closureFromRow({ ...opportunity, stage });
@@ -240,6 +259,12 @@ export async function getOpportunityDetail(
       opportunityStage: stage,
       linkedVehicleId: opportunity.vehicleId,
       today: todayInAsuncion(new Date()),
+    }),
+    tradeIns: tradeInPanelData(tradeInRows, {
+      viewerUserId: ctx.userId,
+      viewerIsAdmin: ctx.role === "admin",
+      opportunityStage: stage,
+      tradeInIntent: snapshot.trade_in_intent.value,
     }),
   };
 }

@@ -319,6 +319,20 @@ const quotesWriteImport = {
   message: QUOTES_WRITE_MESSAGE,
 };
 
+// Hito 20 (DEC-052 §3): la toma de usados tiene una sola puerta, las
+// Server Actions de lib/trade-ins/actions.ts (registerTradeIn(),
+// appraiseTradeIn() y changeTradeInStatus()), que obtienen el contexto con
+// requireTenant() y validan el pedido antes de escribir. El ingreso al stock
+// no pasa por acá: lo escribe el cierre Ganada (closeOpportunity()).
+const TRADE_INS_WRITE_MESSAGE =
+  "Trade-ins are written only through the Server Actions in lib/trade-ins/actions.ts: requireTenant(), server-side validation, then withTenant(). The stock intake happens only when the opportunity is closed as won (closeOpportunity()).";
+const tradeInsWriteImport = {
+  regex: "(^|/)db/queries/trade-ins-write$|^\\.{1,2}/trade-ins-write$",
+  // Los tipos de los resultados no escriben nada.
+  allowTypeImports: true,
+  message: TRADE_INS_WRITE_MESSAGE,
+};
+
 // Hito 12B (DEC-044 §2.7): el cursor de leído de la bandeja tiene una sola
 // puerta, la Server Action markConversationRead() (lib/conversations/read.ts),
 // que obtiene el contexto con requireTenant() y valida el pedido antes de
@@ -410,6 +424,7 @@ const basePatterns = [
   phoneLibraryImport,
   testDrivesWriteImport,
   quotesWriteImport,
+  tradeInsWriteImport,
   conversationReadImport,
   pdfLibraryImport,
   dndLibraryImport,
@@ -614,6 +629,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            tradeInsWriteImport,
             conversationReadImport,
           ],
         },
@@ -648,6 +664,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            tradeInsWriteImport,
             conversationReadImport,
           ],
         },
@@ -678,6 +695,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            tradeInsWriteImport,
             conversationReadImport,
           ],
         },
@@ -707,6 +725,20 @@ const eslintConfig = defineConfig([
         {
           patterns: basePatterns.filter(
             (pattern) => pattern !== quotesWriteImport,
+          ),
+        },
+      ],
+    },
+  },
+  // Única puerta de la toma de usados (Hito 20, DEC-052 §3).
+  {
+    files: ["lib/trade-ins/actions.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== tradeInsWriteImport,
           ),
         },
       ],
@@ -782,6 +814,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            tradeInsWriteImport,
             conversationReadImport,
             stockMockImport,
           ],
@@ -914,6 +947,7 @@ const eslintConfig = defineConfig([
             phoneLibraryImport,
             testDrivesWriteImport,
             quotesWriteImport,
+            tradeInsWriteImport,
             conversationReadImport,
           ],
         },

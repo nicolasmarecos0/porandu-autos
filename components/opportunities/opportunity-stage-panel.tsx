@@ -15,6 +15,10 @@ import {
   STAGE_CHANGE_FIELDS,
   type Stage,
 } from "@/domains/opportunities/stages";
+import {
+  stockedTradeInText,
+  type TradeInClosureNotice,
+} from "@/domains/opportunities/trade-in-presentation";
 import { changeOpportunityStage } from "@/lib/opportunities/actions";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 import type { ChangeStageState } from "@/lib/opportunities/stage-change";
@@ -61,6 +65,11 @@ type OpportunityStagePanelProps = Readonly<{
    * cotización aceptada (Hito 10, DEC-042 §7), si hay. Editable.
    */
   acceptedQuoteTotal?: Money | null;
+  /**
+   * La toma vigente (Hito 20, DEC-052 §5): "Marcar como ganada" avisa si
+   * entra al stock o por qué no.
+   */
+  tradeIn?: TradeInClosureNotice | null;
 }>;
 
 type Notice = { text: string; tone: "info" | "error" };
@@ -109,7 +118,9 @@ function closureNoticeOf(
   switch (state.status) {
     case "closed":
       return {
-        text: `Oportunidad cerrada: ${stageLabel(state.to)}.`,
+        text: state.stockedTradeIn
+          ? `Oportunidad cerrada: ${stageLabel(state.to)}. ${stockedTradeInText(state.stockedTradeIn.label)}`
+          : `Oportunidad cerrada: ${stageLabel(state.to)}.`,
         tone: "info",
       };
     case "unchanged":
@@ -195,6 +206,7 @@ export function OpportunityStagePanel({
   stage,
   saleVehicle,
   acceptedQuoteTotal = null,
+  tradeIn = null,
 }: OpportunityStagePanelProps) {
   const [dialog, setDialog] = useState<"won" | "lost" | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -225,6 +237,7 @@ export function OpportunityStagePanel({
     stage,
     saleVehicle,
     acceptedQuoteTotal,
+    tradeIn,
     onSettled: (result: Exclude<CloseOpportunityState, null>) => {
       settled.current = true;
       setNotice(closureNoticeOf(result));

@@ -1,5 +1,6 @@
 import type { RetryableClosure } from "@/components/opportunities/closure-form";
 import { stageLabel } from "@/domains/opportunities/labels";
+import { stockedTradeInText } from "@/domains/opportunities/trade-in-presentation";
 import type { AdvanceStage } from "@/domains/opportunities/pipeline-moves";
 import type { CloseOpportunityState } from "@/lib/opportunities/closure";
 import type { ChangeStageState } from "@/lib/opportunities/stage-change";
@@ -105,7 +106,9 @@ export function closeOutcome(
       return {
         notice: {
           tone: "info",
-          text: `Oportunidad de ${name} cerrada: ${stageLabel(state.to)}.`,
+          text: state.stockedTradeIn
+            ? `Oportunidad de ${name} cerrada: ${stageLabel(state.to)}. ${stockedTradeInText(state.stockedTradeIn.label)}`
+            : `Oportunidad de ${name} cerrada: ${stageLabel(state.to)}.`,
         },
         refresh: false,
       };

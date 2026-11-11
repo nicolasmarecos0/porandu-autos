@@ -66,6 +66,7 @@ function source(overrides: Partial<PipelineSource> = {}): PipelineSource {
     lastNotes: new Map(),
     quotes: new Map(),
     testDrives: new Map(),
+    tradeIns: new Map(),
     ...overrides,
   };
 }
@@ -435,6 +436,53 @@ describe("pipelineBoard: tarjeta abierta", () => {
       ["test_drive_result", "2 pruebas sin resultado"],
       ["link_vehicle", "Vincular unidad"],
     ]);
+  });
+});
+
+describe("pipelineBoard: la toma vigente al ganar (Hito 20, DEC-052 §5)", () => {
+  const VITZ = {
+    brand: "Toyota",
+    model: "Vitz",
+    version: "1.0 F",
+    year: 2015,
+    convertedVehicleId: null,
+  } as const;
+
+  it("aceptada: «Marcar como ganada» avisa que el usado entra al stock", () => {
+    const result = card("negotiating", row(1, "negotiating"), {
+      tradeIns: new Map([[id(1), { ...VITZ, status: "accepted" as const }]]),
+    });
+    expect(result.tradeIn).toEqual({
+      kind: "will_stock",
+      name: "Toyota Vitz",
+      detail: "1.0 F · 2015",
+    });
+  });
+
+  it.each(["pending", "appraised"] as const)(
+    "%s: sin la aprobación del cliente, avisa que no entra",
+    (status) => {
+      const result = card("negotiating", row(1, "negotiating"), {
+        tradeIns: new Map([[id(1), { ...VITZ, status }]]),
+      });
+      expect(result.tradeIn).toMatchObject({ kind: "undecided", status });
+    },
+  );
+
+  it("sin toma, o con la toma de otra oportunidad: nada que avisar", () => {
+    expect(card("negotiating", row(1, "negotiating")).tradeIn).toBeNull();
+    expect(
+      card("negotiating", row(1, "negotiating"), {
+        tradeIns: new Map([[id(2), { ...VITZ, status: "accepted" as const }]]),
+      }).tradeIn,
+    ).toBeNull();
+  });
+
+  it("las cerradas no avisan: la toma ya no cambia", () => {
+    const result = card("won", row(1, "won", { updatedAt: minutesAgo(60) }), {
+      tradeIns: new Map([[id(1), { ...VITZ, status: "accepted" as const }]]),
+    });
+    expect(result.tradeIn).toBeNull();
   });
 });
 
