@@ -249,6 +249,16 @@ describe("db/schema", () => {
       },
       {
         table: "deliveries",
+        name: "deliveries_delete_admin",
+        as: "permissive",
+        for: "delete",
+        to: ["authenticated"],
+        using:
+          '"deliveries"."organization_id" IN (SELECT private.user_admin_org_ids()) AND "deliveries"."status" = \'pending\'',
+        withCheck: undefined,
+      },
+      {
+        table: "deliveries",
         name: "deliveries_insert_member",
         as: "permissive",
         for: "insert",
@@ -1532,13 +1542,15 @@ describe("db/schema", () => {
       "deliveries_scheduled_at_check",
     ]);
     // Lectura, alta y una sola edición: qué cambio vale lo decide el
-    // trigger de 0022 (DEC-028 §5).
+    // trigger de 0022 (DEC-028 §5). Y el único borrado del producto: anular
+    // una pendiente, solo un admin (Hito 22, DEC-054 §4).
     expect(
       table("deliveries").policies.map((p) => `${p.name} ${p.for}`),
     ).toEqual([
       "deliveries_select_member select",
       "deliveries_insert_member insert",
       "deliveries_update_member update",
+      "deliveries_delete_admin delete",
     ]);
     expect(
       table("deliveries").uniqueConstraints.map((u) => ({

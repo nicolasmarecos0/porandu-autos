@@ -162,6 +162,13 @@
       "when": 1794358602311,
       "tag": "0022_deliveries",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794364708478,
+      "tag": "0023_security_roles",
+      "breakpoints": true
     }
   ]
 }

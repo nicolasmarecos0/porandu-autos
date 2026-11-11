@@ -144,6 +144,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ]);
   });
 
@@ -1361,9 +1362,10 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (Hito 21, DEC-053): 0022 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 20 (0000 a 0021, el
- * último bloque con migración: DEC-052) si 0021 ya se aplicó; si no, en el
+ * El próximo rollout real (Hito 22, DEC-054): 0023 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 21 (0000 a 0022, el
+ * último bloque con migración: DEC-053) si 0022 ya se aplicó; si no, en el
+ * Hito 20 (0000 a 0021, DEC-052), en el
  * Hito 19 (0000 a 0020, DEC-051), en el Hito 18 (0000 a 0019, DEC-044 §3.3), en el Hito 12B (0000 a 0018), en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
@@ -1393,6 +1395,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1415,6 +1418,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1436,6 +1440,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1456,6 +1461,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1475,6 +1481,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1493,6 +1500,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1510,6 +1518,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1526,6 +1535,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1541,6 +1551,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1555,6 +1566,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1568,6 +1580,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1580,6 +1593,7 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
@@ -1591,28 +1605,40 @@ describe.each([
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
       "0022_deliveries",
+      "0023_security_roles",
     ],
   },
   {
     stagingAt: "0019_whatsapp_delivery_status",
     label: "Hito 18",
     applied: 20,
-    expected: ["0020_vehicle_lifecycle", "0021_trade_ins", "0022_deliveries"],
+    expected: [
+      "0020_vehicle_lifecycle",
+      "0021_trade_ins",
+      "0022_deliveries",
+      "0023_security_roles",
+    ],
   },
   {
     stagingAt: "0020_vehicle_lifecycle",
     label: "Hito 19",
     applied: 21,
-    expected: ["0021_trade_ins", "0022_deliveries"],
+    expected: ["0021_trade_ins", "0022_deliveries", "0023_security_roles"],
   },
   {
     stagingAt: "0021_trade_ins",
     label: "Hito 20",
     applied: 22,
-    expected: ["0022_deliveries"],
+    expected: ["0022_deliveries", "0023_security_roles"],
+  },
+  {
+    stagingAt: "0022_deliveries",
+    label: "Hito 21",
+    applied: 23,
+    expected: ["0023_security_roles"],
   },
 ])(
-  "staging en $label: rollout hasta 0022",
+  "staging en $label: rollout hasta 0023",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

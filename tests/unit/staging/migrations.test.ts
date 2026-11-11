@@ -54,6 +54,7 @@ describe("readRepoMigrations", () => {
       [20, "0020_vehicle_lifecycle"],
       [21, "0021_trade_ins"],
       [22, "0022_deliveries"],
+      [23, "0023_security_roles"],
     ]);
   });
 
@@ -85,20 +86,21 @@ describe("compareHistory", () => {
     // Cada etapa de staging: lo aplicado es un prefijo y lo pendiente, el
     // resto del journal, en orden.
     for (const [count, stage] of [
-      [8, "H1.4/H1.5: 0008 a 0022 pendientes"],
-      [9, "H1.6: 0009 a 0022 pendientes"],
-      [10, "Hito 2: 0010 a 0022 pendientes"],
-      [11, "Hito 2A: 0011 a 0022 pendientes"],
-      [12, "Hito 4/5: 0012 a 0022 pendientes"],
-      [13, "Hito 6: 0013 a 0022 pendientes"],
-      [14, "Hito 7: 0014 a 0022 pendientes"],
-      [15, "Hito 8: 0015 a 0022 pendientes"],
-      [16, "Hito 9: 0016 a 0022 pendientes"],
-      [17, "Hito 10: 0017 a 0022 pendientes"],
-      [18, "Hito 11: 0018 a 0022 pendientes"],
-      [19, "Hito 12B: 0019 a 0022 pendientes"],
-      [20, "Hito 18: 0020 a 0022 pendientes"],
-      [21, "Hito 19: 0021 y 0022 pendientes"],
+      [8, "H1.4/H1.5: 0008 a 0023 pendientes"],
+      [9, "H1.6: 0009 a 0023 pendientes"],
+      [10, "Hito 2: 0010 a 0023 pendientes"],
+      [11, "Hito 2A: 0011 a 0023 pendientes"],
+      [12, "Hito 4/5: 0012 a 0023 pendientes"],
+      [13, "Hito 6: 0013 a 0023 pendientes"],
+      [14, "Hito 7: 0014 a 0023 pendientes"],
+      [15, "Hito 8: 0015 a 0023 pendientes"],
+      [16, "Hito 9: 0016 a 0023 pendientes"],
+      [17, "Hito 10: 0017 a 0023 pendientes"],
+      [18, "Hito 11: 0018 a 0023 pendientes"],
+      [19, "Hito 12B: 0019 a 0023 pendientes"],
+      [20, "Hito 18: 0020 a 0023 pendientes"],
+      [21, "Hito 19: 0021 a 0023 pendientes"],
+      [22, "Hito 20: 0022 y 0023 pendientes"],
     ] as const) {
       expect(compareHistory(REPO, applied(count)), stage).toEqual({
         kind: "consistent",
@@ -106,15 +108,15 @@ describe("compareHistory", () => {
         pending: REPO.slice(count),
       });
     }
-    expect(REPO.slice(8)).toHaveLength(15);
-    // Staging con el Hito 20 (0021 aplicada): solo 0022 pendiente (DEC-053).
-    expect(compareHistory(REPO, applied(22))).toEqual({
+    expect(REPO.slice(8)).toHaveLength(16);
+    // Staging con el Hito 21 (0022 aplicada): solo 0023 pendiente (DEC-054).
+    expect(compareHistory(REPO, applied(23))).toEqual({
       kind: "consistent",
-      applied: REPO.slice(0, 22),
-      pending: [REPO[22]],
+      applied: REPO.slice(0, 23),
+      pending: [REPO[23]],
     });
-    expect(REPO[22]?.tag).toBe("0022_deliveries");
-    expect(compareHistory(REPO, [...applied(23)].reverse())).toMatchObject({
+    expect(REPO[23]?.tag).toBe("0023_security_roles");
+    expect(compareHistory(REPO, [...applied(24)].reverse())).toMatchObject({
       kind: "consistent",
       pending: [],
     });
@@ -134,8 +136,8 @@ describe("compareHistory", () => {
     ["un hueco", [applied(2)[1]!], "is not 0000_saas_core_schema"],
     [
       "más filas que el repositorio",
-      [...applied(23), { id: 24, hash: "x", createdAt: 9_999_999_999_999 }],
-      "the repository only 23",
+      [...applied(24), { id: 25, hash: "x", createdAt: 9_999_999_999_999 }],
+      "the repository only 24",
     ],
   ])("inconsistente con %s", (_, rows, reason) => {
     const status = compareHistory(REPO, rows);
@@ -174,7 +176,7 @@ describe("expectedFootprint", () => {
     });
   });
 
-  it("con 0000 a 0022: tablas, enum y policies de su snapshot", () => {
+  it("con 0000 a 0023: tablas, enum y policies de su snapshot", () => {
     expect(expectedFootprint(REPO.slice(0, 1))).toEqual({
       tables: ["memberships", "organizations", "profiles"],
       enums: ["membership_role"],
@@ -439,6 +441,16 @@ describe("expectedFootprint", () => {
         "deliveries.deliveries_update_member",
       ].sort(),
     };
-    expect(expectedFootprint(REPO)).toEqual(hito21);
+    expect(expectedFootprint(REPO.slice(0, 23))).toEqual(hito21);
+    // 0023 (DEC-054) suma el único borrado: anular una entrega pendiente,
+    // solo un admin. Los triggers y los grants son SQL custom.
+    const hito22 = {
+      ...hito21,
+      policies: [
+        ...hito21.policies,
+        "deliveries.deliveries_delete_admin",
+      ].sort(),
+    };
+    expect(expectedFootprint(REPO)).toEqual(hito22);
   });
 });

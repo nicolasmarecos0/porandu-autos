@@ -234,6 +234,16 @@ describe("policies (ADR-001 §4)", () => {
       },
       {
         table: "deliveries",
+        name: "deliveries_delete_admin",
+        permissive: "PERMISSIVE",
+        roles: ["authenticated"],
+        command: "DELETE",
+        using:
+          "((organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids)) AND (status = 'pending'::text))",
+        withCheck: null,
+      },
+      {
+        table: "deliveries",
         name: "deliveries_insert_member",
         permissive: "PERMISSIVE",
         roles: ["authenticated"],
@@ -575,6 +585,8 @@ describe("policies (ADR-001 §4)", () => {
 describe("grants (ADR-001 §3.6)", () => {
   it("authenticated tiene SELECT sobre las tablas de la app, INSERT solo sobre contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships, test_drives, quotes, trade_ins y deliveries, y UPDATE solo sobre opportunities, vehicles, organizations, memberships, test_drives, quotes, trade_ins y deliveries", async () => {
     expect(await tablePrivileges(db.admin, ["authenticated"])).toEqual([
+      // El único borrado: anular una entrega pendiente (Hito 22, DEC-054 §4).
+      "authenticated DELETE deliveries",
       "authenticated INSERT contacts",
       "authenticated INSERT deliveries",
       "authenticated INSERT memberships",
@@ -598,11 +610,12 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
   });
 
-  it("authenticated no puede borrar ni vaciar ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id, updated_at y los metadatos del cierre (H1.6, Hito 2, DEC-034), vehicles.status y updated_at (H1.3C), organizations.name, default_currency y updated_at memberships.role, active y updated_at (Hito 6), test_drives.status y updated_at (Hito 9), quotes.status y updated_at (Hito 10) la tasación, el estado, el ingreso al stock y updated_at de trade_ins (Hito 20) y el checklist, la fecha pactada, el estado y updated_at de deliveries (Hito 21), por columna, nunca la tabla", async () => {
+  it("authenticated solo borra entregas (pendientes, como admin: DEC-054 §4), no vacía ninguna tabla, y solo actualiza opportunities.stage, loss_reason, vehicle_id, updated_at y los metadatos del cierre (H1.6, Hito 2, DEC-034), vehicles.status y updated_at (H1.3C), organizations.name, default_currency y updated_at memberships.role, active y updated_at (Hito 6), test_drives.status y updated_at (Hito 9), quotes.status y updated_at (Hito 10) la tasación, el estado, el ingreso al stock y updated_at de trade_ins (Hito 20) y el checklist, la fecha pactada, el estado y updated_at de deliveries (Hito 21) y el precio publicado de vehicles (Hito 22), por columna, nunca la tabla", async () => {
     const writes = (await tablePrivileges(db.admin, ["authenticated"])).filter(
       (grant) => !/^authenticated (SELECT|INSERT) /.test(grant),
     );
     expect(writes).toEqual([
+      "authenticated DELETE deliveries",
       "authenticated UPDATE deliveries",
       "authenticated UPDATE memberships",
       "authenticated UPDATE opportunities",
@@ -667,6 +680,8 @@ describe("grants (ADR-001 §3.6)", () => {
       "trade_ins.offer_price",
       "trade_ins.status",
       "trade_ins.updated_at",
+      "vehicles.currency",
+      "vehicles.price",
       "vehicles.status",
       "vehicles.updated_at",
     ]);
@@ -973,7 +988,7 @@ describe("grants (ADR-001 §3.6)", () => {
     ]);
   });
 
-  it("deliveries (Hito 21, DEC-053): SELECT, INSERT y UPDATE del checklist, la fecha pactada y el estado por columna para authenticated; policies de lectura, alta y edición; sin DELETE; trigger de cambios BEFORE UPDATE de fila y constraint trigger diferido de la salida, habilitados, invoker y con search_path vacío", async () => {
+  it("deliveries (Hito 21, DEC-053; Hito 22, DEC-054): SELECT, INSERT y UPDATE del checklist, la fecha pactada y el estado por columna para authenticated; policies de lectura, alta, edición y la de anular del admin; DELETE solo por esa policy; trigger de cambios BEFORE UPDATE de fila y constraint trigger diferido de la salida, habilitados, invoker y con search_path vacío", async () => {
     expect(
       (
         await tablePrivileges(db.admin, [
@@ -983,6 +998,7 @@ describe("grants (ADR-001 §3.6)", () => {
         ])
       ).filter((grant) => grant.endsWith(" deliveries")),
     ).toEqual([
+      "authenticated DELETE deliveries",
       "authenticated INSERT deliveries",
       "authenticated SELECT deliveries",
       "authenticated UPDATE deliveries",
@@ -992,6 +1008,7 @@ describe("grants (ADR-001 §3.6)", () => {
         .filter((policy) => policy.table === "deliveries")
         .map((policy) => `${policy.name} ${policy.command}`),
     ).toEqual([
+      "deliveries_delete_admin DELETE",
       "deliveries_insert_member INSERT",
       "deliveries_select_member SELECT",
       "deliveries_update_member UPDATE",
@@ -1021,7 +1038,8 @@ describe("grants (ADR-001 §3.6)", () => {
       FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
       WHERE p.oid IN (
           to_regprocedure('private.enforce_delivery_change()'),
-          to_regprocedure('private.enforce_completed_delivery_vehicle_delivered()')
+          to_regprocedure('private.enforce_completed_delivery_vehicle_delivered()'),
+          to_regprocedure('private.enforce_delivery_delete()')
         )
         AND NOT t.tgisinternal
       ORDER BY t.tgname
@@ -1046,6 +1064,14 @@ describe("grants (ADR-001 §3.6)", () => {
         name: "deliveries_completed_vehicle_delivered",
         type: 17,
         deferred: true,
+        ...invoker,
+      },
+      // Hito 22 (DEC-054 §4): BEFORE DELETE de fila, conserva las completadas.
+      {
+        table: "deliveries",
+        name: "deliveries_delete_guard",
+        type: 11,
+        deferred: false,
         ...invoker,
       },
     ]);

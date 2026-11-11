@@ -16,7 +16,7 @@ import { oneOf } from "./checks";
 import { timestamps } from "./columns";
 import { opportunities } from "./opportunities";
 import { organizations } from "./organizations";
-import { userOrgIds } from "./policies";
+import { userAdminOrgIds, userOrgIds } from "./policies";
 import { profiles } from "./profiles";
 import { vehicles } from "./vehicles";
 
@@ -183,6 +183,15 @@ export const deliveries = pgTable(
       to: authenticatedRole,
       using: sql`${t.organizationId} IN ${userOrgIds}`,
       withCheck: sql`${t.organizationId} IN ${userOrgIds}`,
+    }),
+    // Anular (Hito 22, DEC-054 §4): solo un admin de la organización y solo
+    // una entrega pendiente. Una completada no se borra nunca (además, el
+    // trigger deliveries_delete_guard de 0023 lo rechaza para cualquier
+    // rol, también el dueño). Es el único DELETE del producto.
+    pgPolicy("deliveries_delete_admin", {
+      for: "delete",
+      to: authenticatedRole,
+      using: sql`${t.organizationId} IN ${userAdminOrgIds} AND ${t.status} = 'pending'`,
     }),
   ],
 ).enableRLS();

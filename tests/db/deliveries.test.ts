@@ -477,14 +477,16 @@ describe("RLS de deliveries: lectura y alta pendiente de la unidad vendida de un
     expect(await deliveriesOf(own.opportunityId)).toBe(1);
   });
 
-  it("sin DELETE y sin UPDATE de otras columnas para authenticated (42501)", async () => {
+  it("un seller no borra (la policy de DELETE de 0023 es solo de admin, DEC-054 §4) y nadie edita otras columnas (42501)", async () => {
     const own = await delivery(ORG_1);
-    await expectSqlError(
-      withTenant(ctxA(), (tx) =>
-        tx.delete(deliveries).where(eq(deliveries.id, own.id)),
+    expect(
+      await withTenant(ctxC(), (tx) =>
+        tx
+          .delete(deliveries)
+          .where(eq(deliveries.id, own.id))
+          .returning({ id: deliveries.id }),
       ),
-      "42501",
-    );
+    ).toEqual([]);
     for (const set of [
       { completedAt: new Date() },
       { completedBy: USER_A },
