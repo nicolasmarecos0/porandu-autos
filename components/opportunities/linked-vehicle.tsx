@@ -41,11 +41,20 @@ const NEGOTIATING_NOTES = {
 
 const WON_NOTE = "Con el cierre, la unidad quedó Vendida en el stock.";
 
+/** Con la entrega completada (DEC-053), la unidad ya salió del salón. */
+const DELIVERED_NOTE =
+  "Se entregó al cliente: la unidad salió del salón y ya no figura en el stock.";
+
 type Note = Readonly<{ text: string; warning: boolean }>;
 
 /** Qué dice la tarjeta debajo de la unidad, según la etapa y su estado. */
 function noteFor(stage: Stage, linked: LinkedVehicleCard): Note | null {
-  if (stage === "won") return { text: WON_NOTE, warning: false };
+  if (stage === "won") {
+    return {
+      text: linked.status === "delivered" ? DELIVERED_NOTE : WON_NOTE,
+      warning: false,
+    };
+  }
   if (stage !== "negotiating") return null;
   const sale = saleNoticeFor(linked.status);
   if (sale.kind === "conflict") return { text: sale.message, warning: true };

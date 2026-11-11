@@ -22,6 +22,8 @@ import type { TradeInPanelData } from "@/domains/opportunities/trade-in-presenta
 import type { QuotesPanelData } from "@/domains/quotes/presentation";
 import { QuotesPanel } from "@/components/quotes/quotes-panel";
 import { TradeInPanel } from "@/components/trade-ins/trade-in-panel";
+import { DeliveryPanel } from "@/components/deliveries/delivery-panel";
+import type { DeliveryPanelData } from "@/domains/opportunities/delivery-presentation";
 
 import { ClosureSummaryCard } from "./closure-summary";
 import { LinkedVehicle } from "./linked-vehicle";
@@ -162,6 +164,8 @@ type OpportunityDetailViewProps = Readonly<{
   quotes: QuotesPanelData;
   /** Panel "Vehículo en parte de pago / Toma" (Hito 20, DEC-052 §4). */
   tradeIns: TradeInPanelData;
+  /** Panel "Coordinación de Entrega" (Hito 21, DEC-053): solo Ganada. */
+  delivery: DeliveryPanelData;
   /** Unidad del atajo "Cotizar" del catálogo (`?quote=`, propuesta DEC-049). */
   quoteVehicleId?: string;
 }>;
@@ -226,6 +230,7 @@ export function OpportunityDetailView({
   activity,
   quotes,
   tradeIns,
+  delivery,
   quoteVehicleId,
 }: OpportunityDetailViewProps) {
   const { linked } = vehicleLink;
@@ -275,6 +280,8 @@ export function OpportunityDetailView({
           vehicleName={linked?.name ?? null}
         />
       ) : null}
+      {/* Ganada: la logística de la entrega va junto al cierre (DEC-053). */}
+      <DeliveryPanel opportunityId={id} data={delivery} />
       <QuotesPanel
         opportunityId={id}
         data={quotes}
