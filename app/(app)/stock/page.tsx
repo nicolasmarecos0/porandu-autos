@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { getNavItem } from "@/components/shell/navigation";
 import { StockView } from "@/components/stock/stock-view";
 import { getStockList } from "@/db/queries/vehicles";
+import { getViewerCapabilities } from "@/lib/auth/viewer";
 
 const { label } = getNavItem("stock");
 
@@ -13,6 +14,15 @@ export const metadata: Metadata = { title: label };
  * fixtures.
  */
 export default async function StockPage() {
-  const vehicles = await getStockList();
-  return <StockView title={label} vehicles={vehicles} />;
+  const [vehicles, viewer] = await Promise.all([
+    getStockList(),
+    getViewerCapabilities(),
+  ]);
+  return (
+    <StockView
+      title={label}
+      vehicles={vehicles}
+      canEditPrice={viewer["vehicle.edit_price"]}
+    />
+  );
 }

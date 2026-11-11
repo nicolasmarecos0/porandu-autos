@@ -101,11 +101,15 @@ const SOURCES: CockpitSources = {
   },
 };
 
-function render(sources: CockpitSources = SOURCES): string {
+function render(
+  sources: CockpitSources = SOURCES,
+  canViewMetrics = true,
+): string {
   return renderToStaticMarkup(
     createElement(CockpitView, {
       title: "Cockpit",
       feed: cockpitFeed(sources, WINDOW),
+      canViewMetrics,
     }),
   );
 }
@@ -144,6 +148,16 @@ describe("CockpitView", () => {
     ]);
     // El feed no repite las métricas de la gerencia.
     expect(html).not.toContain("Tasa de conversión");
+  });
+
+  it("para un seller, «Métricas» queda sin enlace, con candado y quién la ve (DEC-054 §5)", () => {
+    const html = render(SOURCES, false);
+    const header = html.slice(0, html.indexOf("</header>"));
+    expect(header).not.toContain('href="/cockpit/metrics"');
+    expect(header).toMatch(/role="link"[^>]*aria-disabled="true"/);
+    expect(text(header)).toContain(
+      "Las Métricas del salón son la vista de la gerencia",
+    );
   });
 
   it("muestra la franja con los cuatro totales y su alcance", () => {

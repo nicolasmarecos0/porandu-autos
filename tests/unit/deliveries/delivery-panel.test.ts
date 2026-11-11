@@ -78,14 +78,44 @@ function row(overrides: Partial<DeliveryRow> = {}): DeliveryRow {
 function render(
   delivery: DeliveryRow | null,
   overrides: Parameters<typeof context>[0] = {},
+  canCancel = true,
 ): string {
   return renderToStaticMarkup(
     createElement(DeliveryPanel, {
       opportunityId: OPPORTUNITY,
       data: deliveryPanelData(delivery, context(overrides)),
+      canCancel,
     }),
   );
 }
+
+describe("anular una entrega según el rol (Hito 22, DEC-054 §4)", () => {
+  it("un admin ve «Anular entrega» en una pendiente", () => {
+    const html = render(row());
+    expect(html).toMatch(/<button[^>]*>Anular entrega<\/button>/);
+  });
+
+  it("un seller la ve bloqueada, con quién la anula", () => {
+    const html = render(row(), {}, false);
+    expect(html).not.toMatch(/<button[^>]*>Anular entrega<\/button>/);
+    expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>/);
+    expect(html).toContain(
+      "Solo un administrador (gerente) anula una entrega.",
+    );
+  });
+
+  it("una completada no se anula: no hay acción para ningún rol", () => {
+    const completed = row({
+      status: "completed",
+      checklist: VERIFIED_DELIVERY_CHECKLIST,
+      completedBy: VIEWER,
+      completedAt: new Date("2026-11-13T14:00:00.000Z"),
+    });
+    for (const canCancel of [true, false]) {
+      expect(render(completed, {}, canCancel)).not.toContain("Anular entrega");
+    }
+  });
+});
 
 describe("deliveryPanelData(): solo con la oportunidad Ganada", () => {
   it.each(["new", "qualifying", "negotiating", "lost"] as Stage[])(

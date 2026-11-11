@@ -71,9 +71,25 @@ function render(
 }
 
 function buttons(html: string): string[] {
-  return [...html.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map((match) =>
-    match[1]!.replace(/<[^>]+>/g, "").trim(),
-  );
+  return [...html.matchAll(/<button([^>]*)>([\s\S]*?)<\/button>/g)]
+    .filter((match) => !match[1]!.includes('aria-disabled="true"'))
+    .map((match) => match[2]!.replace(/<[^>]+>/g, "").trim());
+}
+
+/**
+ * Las acciones que el rol no puede hacer (DEC-054 §6): botones
+ * `aria-disabled` con el candado, su etiqueta visible y el motivo para
+ * lectores de pantalla.
+ */
+function locked(html: string): string[] {
+  return [...html.matchAll(/<button([^>]*)>([\s\S]*?)<\/button>/g)]
+    .filter((match) => match[1]!.includes('aria-disabled="true"'))
+    .map((match) =>
+      match[2]!
+        .replace(/<span class="sr-only">[\s\S]*?<\/span>/g, "")
+        .replace(/<[^>]+>/g, "")
+        .trim(),
+    );
 }
 
 /** El texto visible, sin etiquetas. */
@@ -138,6 +154,10 @@ describe("TradeInPanel", () => {
     expect(text(seller)).toContain("98.000 km");
     expect(text(seller)).toContain("la carga un admin (tasador o gerente)");
     expect(buttons(seller)).toEqual(["Descartar toma"]);
+    expect(locked(seller)).toEqual(["Tasar"]);
+    expect(text(seller)).toContain(
+      "Solo un administrador (tasador o gerente) tasa el usado.",
+    );
 
     const admin = render([row("pending")], { admin: true });
     expect(buttons(admin)).toEqual(["Tasar", "Descartar toma"]);
@@ -154,7 +174,12 @@ describe("TradeInPanel", () => {
     // Ni el costo de reacondicionamiento ni el total llegan al HTML.
     expect(visible).not.toContain("USD 800 ");
     expect(visible).not.toContain("USD 8.800");
-    expect(buttons(html)).toEqual(["Cliente aprobó", "Cliente rechazó"]);
+    // Aprobar la toma es del admin (DEC-054 §2): bloqueada, con quién la hace.
+    expect(buttons(html)).toEqual(["Cliente rechazó"]);
+    expect(locked(html)).toEqual(["Aprobar toma"]);
+    expect(text(html)).toContain(
+      "Solo un administrador (gerente) aprueba la toma.",
+    );
   });
 
   it("tasado para un admin: la sección financiera completa y retasar", () => {
@@ -166,10 +191,11 @@ describe("TradeInPanel", () => {
     expect(visible).toContain("USD 8.800");
     expect(visible).toContain("Tasó: Vos");
     expect(buttons(html)).toEqual([
-      "Cliente aprobó",
+      "Aprobar toma",
       "Cliente rechazó",
       "Retasar",
     ]);
+    expect(locked(html)).toEqual([]);
   });
 
   it("aprobado por el cliente: avisa que entra al stock al ganar y deja desistir", () => {

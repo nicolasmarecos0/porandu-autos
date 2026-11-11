@@ -11,6 +11,11 @@ import {
   SwapIcon,
 } from "@/components/ui/icons";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { RestrictedAction } from "@/components/ui/restricted-action";
+import {
+  CAPABILITY_REQUIREMENTS,
+  unauthorizedRoleMessage,
+} from "@/lib/auth/roles";
 import { STOCK_PATH } from "@/lib/vehicles/paths";
 import {
   optimisticTradeInPanel,
@@ -68,7 +73,7 @@ import { TRADE_IN_EDGE, TradeInStatusChip } from "./trade-in-status";
  *   │ ┃ Costo de reacondicionamiento (admin)                  USD 800   │
  *   │ ┃ Costo total de ingreso (admin)                      USD 8.800   │
  *   │ ┃ Comunicale al cliente el valor de toma y registrá su respuesta. │
- *   │ ┃ [Cliente aprobó] [Cliente rechazó] [Retasar]                    │
+ *   │ ┃ [Aprobar toma] [Cliente rechazó] [Retasar]                      │
  *   │ ▸ Tomas anteriores (1)                                            │
  *   └──────────────────────────────────────────────────────────────────┘
  *
@@ -218,7 +223,10 @@ function TradeInCard({
   const primaryDecision = view.decisions.find((id) => id === "accept");
   const otherDecisions = view.decisions.filter((id) => id !== "accept");
   const hasActions =
-    !saving && (view.appraise !== null || view.decisions.length > 0);
+    !saving &&
+    (view.appraise !== null ||
+      view.decisions.length > 0 ||
+      view.locked.length > 0);
   return (
     <article
       aria-label={`Usado en parte de pago: ${view.name}`}
@@ -344,6 +352,21 @@ function TradeInCard({
               {TRADE_IN_APPRAISE_LABELS.appraise}
             </Button>
           ) : null}
+          {/* Lo que el rol no hace (DEC-054 §6): visible y bloqueado. */}
+          {view.locked.includes("appraise") ? (
+            <RestrictedAction
+              label={TRADE_IN_APPRAISE_LABELS.appraise}
+              reason={CAPABILITY_REQUIREMENTS["trade_in.appraise"]}
+              className="h-10 sm:h-8"
+            />
+          ) : null}
+          {view.locked.includes("accept") ? (
+            <RestrictedAction
+              label={TRADE_IN_DECISION_LABELS.accept}
+              reason={CAPABILITY_REQUIREMENTS["trade_in.approve"]}
+              className="h-10 sm:h-8"
+            />
+          ) : null}
           {primaryDecision ? (
             <Button
               variant="primary"
@@ -415,8 +438,11 @@ function appraiseNotice(result: AppraiseTradeInState): Notice | null {
       return { tone: "error", text: tradeInConflictMessage(result.current) };
     case "opportunity_closed":
       return { tone: "error", text: TRADE_IN_MESSAGES.opportunity_closed };
-    case "requires_admin":
-      return { tone: "error", text: TRADE_IN_MESSAGES.requires_admin };
+    case "unauthorized_role":
+      return {
+        tone: "error",
+        text: unauthorizedRoleMessage(result.capability),
+      };
     case "not_found":
       return { tone: "error", text: TRADE_IN_MESSAGES.not_found };
     default:
@@ -442,6 +468,11 @@ function decisionNotice(result: ChangeTradeInStatusState): Notice {
       return { tone: "error", text: TRADE_IN_MESSAGES.offer_price_required };
     case "opportunity_closed":
       return { tone: "error", text: TRADE_IN_MESSAGES.opportunity_closed };
+    case "unauthorized_role":
+      return {
+        tone: "error",
+        text: unauthorizedRoleMessage(result.capability),
+      };
     case "not_found":
       return { tone: "error", text: TRADE_IN_MESSAGES.not_found };
     case "failed":
@@ -453,7 +484,7 @@ function decisionNotice(result: ChangeTradeInStatusState): Notice {
 const RETRY_MESSAGES = {
   invalid: "Revisá los datos marcados. No se guardó nada.",
   failed: TRADE_IN_MESSAGES.failed,
-  requires_admin: TRADE_IN_MESSAGES.requires_admin,
+  unauthorized_role: unauthorizedRoleMessage("trade_in.appraise"),
 } as const;
 
 export function TradeInPanel({
@@ -499,7 +530,7 @@ export function TradeInPanel({
         if (
           result?.status === "invalid" ||
           result?.status === "failed" ||
-          result?.status === "requires_admin"
+          result?.status === "unauthorized_role"
         ) {
           setDrawer({
             mode,

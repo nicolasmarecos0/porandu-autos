@@ -35,6 +35,7 @@ import {
 } from "@/domains/cockpit/metrics-period";
 import { QUOTABLE_STAGES } from "@/domains/quotes/statuses";
 import { recencyCutoffs, type RecencyCutoffs } from "@/domains/scoring/engine";
+import { can } from "@/lib/auth/roles";
 import { requireTenant } from "@/lib/tenant/session";
 
 import { opportunities, quotes, testDrives, vehicles } from "../schema";
@@ -308,6 +309,14 @@ async function selectStockGroups(
 }
 
 /**
+ * Lo que recibe la página: las métricas, o `restricted` si el rol de la
+ * membership activa no tiene `metrics.view` (Hito 22, DEC-054 §5).
+ */
+export type CockpitMetricsResult =
+  | Readonly<{ kind: "ready"; metrics: CockpitMetrics }>
+  | Readonly<{ kind: "restricted" }>;
+
+/**
  * Loader de /cockpit/metrics: las Métricas del salón de la organización
  * activa para el período que piden los `searchParams` (input no confiable:
  * un período inválido cae a los últimos 30 días con un aviso, nunca a un
@@ -318,13 +327,16 @@ async function selectStockGroups(
 export async function getCockpitMetrics(
   params: MetricsSearchParams = {},
   now: Date = new Date(),
-): Promise<CockpitMetrics> {
+): Promise<CockpitMetricsResult> {
   const { period, notice } = resolveMetricsPeriod(
     params,
     now,
     METRICS_TIME_ZONE,
   );
   const ctx = await requireTenant();
+  // La vista directiva es de la gerencia (Hito 22, DEC-054 §5): un seller
+  // no la lee, ni agregada. Se decide antes de abrir la transacción.
+  if (!can(ctx.role, "metrics.view")) return { kind: "restricted" };
   const cutoffs = recencyCutoffs(now);
   const overdueBefore = overdueTestDriveCutoff(now);
 
@@ -355,5 +367,8 @@ export async function getCockpitMetrics(
     };
   });
 
-  return buildCockpitMetrics({ period, notice, now, ...reads });
+  return {
+    kind: "ready",
+    metrics: buildCockpitMetrics({ period, notice, now, ...reads }),
+  };
 }

@@ -166,6 +166,7 @@ type OpportunityDetailViewProps = Readonly<{
   tradeIns: TradeInPanelData;
   /** Panel "Coordinación de Entrega" (Hito 21, DEC-053): solo Ganada. */
   delivery: DeliveryPanelData;
+  canCancelDelivery: boolean;
   /** Unidad del atajo "Cotizar" del catálogo (`?quote=`, propuesta DEC-049). */
   quoteVehicleId?: string;
 }>;
@@ -231,6 +232,7 @@ export function OpportunityDetailView({
   quotes,
   tradeIns,
   delivery,
+  canCancelDelivery,
   quoteVehicleId,
 }: OpportunityDetailViewProps) {
   const { linked } = vehicleLink;
@@ -281,7 +283,11 @@ export function OpportunityDetailView({
         />
       ) : null}
       {/* Ganada: la logística de la entrega va junto al cierre (DEC-053). */}
-      <DeliveryPanel opportunityId={id} data={delivery} />
+      <DeliveryPanel
+        opportunityId={id}
+        data={delivery}
+        canCancel={canCancelDelivery}
+      />
       <QuotesPanel
         opportunityId={id}
         data={quotes}

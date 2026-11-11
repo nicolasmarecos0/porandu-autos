@@ -131,6 +131,26 @@ describe("la tarjeta de la toma", () => {
     });
   });
 
+  it("aprobar la toma es del admin: al seller no se le ofrece, se le muestra bloqueada (DEC-054 §2 y §6)", () => {
+    expect(view("pending")).toMatchObject({
+      decisions: ["discard"],
+      locked: ["appraise"],
+    });
+    expect(view("appraised")).toMatchObject({
+      appraise: null,
+      decisions: ["reject"],
+      locked: ["accept"],
+    });
+    expect(view("accepted")).toMatchObject({
+      decisions: ["withdraw"],
+      locked: [],
+    });
+    for (const status of ["pending", "appraised", "accepted"] as const) {
+      expect(view(status, { admin: true }).locked).toEqual([]);
+      expect(view(status, { stage: "won" }).locked).toEqual([]);
+    }
+  });
+
   it.each(["won", "lost"] as const)(
     "con la oportunidad %s no ofrece nada",
     (stage) => {
@@ -146,7 +166,8 @@ describe("la tarjeta de la toma", () => {
   it.each([
     ["pending", "negotiating", false, "info", /la carga un admin/],
     ["pending", "negotiating", true, "info", /Cargá el costo/],
-    ["appraised", "negotiating", false, "info", /registrá su respuesta/],
+    ["appraised", "negotiating", true, "info", /registrá su respuesta/],
+    ["appraised", "negotiating", false, "info", /la confirma un admin/],
     [
       "accepted",
       "negotiating",
