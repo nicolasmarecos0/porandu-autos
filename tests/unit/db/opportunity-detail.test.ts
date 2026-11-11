@@ -251,6 +251,7 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
       "quotes",
       "vehicles",
       "trade_ins",
+      "deliveries",
     ]);
   });
 
@@ -273,7 +274,7 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
     await getOpportunityDetail(OPPORTUNITY);
 
     expect(mocks.withTenant).toHaveBeenCalledTimes(1);
-    const [quotes, vehicles] = mocks.queries.slice(-3, -1);
+    const [quotes, vehicles] = mocks.queries.slice(-4, -2);
     expect(quotes?.sql).toMatch(/from "quotes" inner join "vehicles"/);
     expect(quotes?.sql).toMatch(
       /where \("quotes"\."organization_id" = \$1 and "quotes"\."opportunity_id" = \$2\) order by "quotes"\."number" desc limit \$3$/,
@@ -291,7 +292,7 @@ describe("getOpportunityDetail: requireTenant() → withTenant()", () => {
     const detail = await getOpportunityDetail(OPPORTUNITY);
 
     expect(mocks.withTenant).toHaveBeenCalledTimes(1);
-    const tradeIns = mocks.queries.at(-1);
+    const tradeIns = mocks.queries.at(-2);
     expect(tradeIns?.sql).toMatch(
       /from "trade_ins" where \("trade_ins"\."organization_id" = \$1 and "trade_ins"\."opportunity_id" = \$2\) order by "trade_ins"\."created_at" desc, "trade_ins"\."id" desc limit \$3$/,
     );

@@ -16,8 +16,9 @@ export const STOCK_CATALOG_PATH = "/stock/catalog";
 
 /*
  * Vistas que leen `vehicles.status` (Hito 19, DEC-051): las
- * revalidan los pases de estado de una unidad (changeVehicleStatus()) y el
- * cierre Ganada que la vende (closeOpportunity()). El Inventario y el
+ * revalidan los pases de estado de una unidad (changeVehicleStatus()), el
+ * cierre Ganada que la vende (closeOpportunity()) y la entrega completada
+ * que le da salida del salón (completeDelivery(), DEC-053). El Inventario y el
  * Catálogo la muestran; la cola y el embudo la usan para Match v0 y para el
  * cierre; el Cockpit y sus Métricas, para la salud del stock.
  */
