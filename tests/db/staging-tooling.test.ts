@@ -511,12 +511,14 @@ describe("migración oficial y verificación post-migración", () => {
         "privileges.authenticated-update-columns",
       ]);
     } finally {
-      // Revocar el UPDATE de tabla revoca también el de columna: se repone.
+      // Revocar el UPDATE de tabla revoca también el de columna: se repone
+      // tal como lo dejan las migraciones (status y updated_at de 0006, y el
+      // precio publicado de 0023, DEC-054 §3).
       await migrated.admin.unsafe(`
         ALTER POLICY vehicles_insert_member ON public.vehicles
           WITH CHECK (organization_id IN (SELECT private.user_org_ids()) AND status = 'in_preparation');
         REVOKE UPDATE ON public.vehicles FROM authenticated;
-        GRANT UPDATE (status, updated_at) ON public.vehicles TO authenticated;
+        GRANT UPDATE (status, price, currency, updated_at) ON public.vehicles TO authenticated;
       `);
     }
     const sql = connect(migrated.migrationUrl);
