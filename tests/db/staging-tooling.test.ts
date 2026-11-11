@@ -143,6 +143,7 @@ describe("preflight del primer rollout (base sin migraciones)", () => {
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ]);
   });
 
@@ -373,6 +374,7 @@ describe("migración oficial y verificación post-migración", () => {
         "schema.vehicle-lifecycle",
         "schema.quotes",
         "schema.trade-ins",
+        "schema.deliveries",
         "schema.whatsapp-outbound",
         "schema.conversation-reads",
         "schema.message-statuses",
@@ -1257,6 +1259,98 @@ describe("migración oficial y verificación post-migración", () => {
     }
   });
 
+  it("la verificación detecta el trigger de cambios de las entregas deshabilitado o sin sus reglas, la salida de la unidad, un índice o un CHECK cambiado (Hito 21, DEC-053)", async () => {
+    const changeFn = "private.enforce_delivery_change()";
+    const deliveredFn =
+      "private.enforce_completed_delivery_vehicle_delivered()";
+    const vehicleFn = "private.enforce_vehicle_status_transition()";
+    const [current] = await migrated.admin<
+      { change: string; delivered: string; vehicle: string }[]
+    >`
+      SELECT pg_get_functiondef(${changeFn}::regprocedure) AS change,
+        pg_get_functiondef(${deliveredFn}::regprocedure) AS delivered,
+        pg_get_functiondef(${vehicleFn}::regprocedure) AS vehicle
+    `;
+    for (const [broken, restore, checks] of [
+      [
+        "ALTER TABLE public.deliveries DISABLE TRIGGER deliveries_change_guard",
+        "ALTER TABLE public.deliveries ENABLE TRIGGER deliveries_change_guard",
+        ["schema.deliveries"],
+      ],
+      [
+        current!.change.replace(/deliveries_checklist_incomplete/g, "no guard"),
+        current!.change,
+        ["schema.deliveries"],
+      ],
+      [
+        current!.change.replace(/FOR SHARE/g, ""),
+        current!.change,
+        ["schema.deliveries"],
+      ],
+      [
+        current!.delivered.replace(
+          /deliveries_completed_vehicle_delivered/g,
+          "no guard",
+        ),
+        current!.delivered,
+        ["schema.deliveries"],
+      ],
+      [
+        "ALTER TABLE public.deliveries DISABLE TRIGGER deliveries_completed_vehicle_delivered",
+        "ALTER TABLE public.deliveries ENABLE TRIGGER deliveries_completed_vehicle_delivered",
+        ["schema.deliveries"],
+      ],
+      [
+        current!.vehicle.replace(
+          /vehicles_delivery_requires_completed/g,
+          "no guard",
+        ),
+        current!.vehicle,
+        ["schema.vehicle-lifecycle"],
+      ],
+      [
+        "ALTER TABLE public.deliveries DROP CONSTRAINT deliveries_organization_id_vehicle_id_key",
+        "ALTER TABLE public.deliveries ADD CONSTRAINT deliveries_organization_id_vehicle_id_key UNIQUE (organization_id, vehicle_id)",
+        ["schema.deliveries"],
+      ],
+      [
+        "ALTER TABLE public.deliveries DROP CONSTRAINT deliveries_completion_check; ALTER TABLE public.deliveries ADD CONSTRAINT deliveries_completion_check CHECK (true)",
+        'ALTER TABLE public.deliveries DROP CONSTRAINT deliveries_completion_check; ALTER TABLE public.deliveries ADD CONSTRAINT deliveries_completion_check CHECK ((((status = \'completed\'::text) = (completed_at IS NOT NULL)) AND ((completed_at IS NULL) = (completed_by IS NULL)) AND ((status <> \'completed\'::text) OR (checklist = \'{"keys": true, "manuals": true, "cleaning": true, "documents": true, "spare_tire": true}\'::jsonb))))',
+        ["schema.deliveries"],
+      ],
+      [
+        "CREATE POLICY probe_update ON public.deliveries FOR UPDATE TO authenticated USING (true) WITH CHECK (true)",
+        "DROP POLICY probe_update ON public.deliveries",
+        ["rls.policies"],
+      ],
+      [
+        "GRANT UPDATE (completed_at) ON public.deliveries TO authenticated",
+        "REVOKE UPDATE (completed_at) ON public.deliveries FROM authenticated",
+        ["privileges.authenticated-update-columns"],
+      ],
+    ] as const) {
+      await migrated.admin.unsafe(broken);
+      try {
+        const sql = connect(migrated.migrationUrl);
+        const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+        await sql.end({ timeout: 5 });
+        expect(
+          findings.filter((f) => !f.ok).map((f) => f.check),
+          broken.slice(0, 60),
+        ).toEqual(checks);
+      } finally {
+        await migrated.admin.unsafe(restore);
+      }
+    }
+    const sql = connect(migrated.migrationUrl);
+    try {
+      const findings = await readOnly(sql, (tx) => verifyCatalog(tx, REPO));
+      expect(findings.filter((f) => !f.ok)).toEqual([]);
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  });
+
   it("en una base sin historial, app_runtime ya existente es un residuo", async () => {
     const fresh = await server.createDatabase();
     expect(failures(await preflightOf(fresh, "migrate", ALL_TAGS))).toEqual([
@@ -1267,10 +1361,10 @@ describe("migración oficial y verificación post-migración", () => {
 });
 
 /*
- * El próximo rollout real (Hito 20, DEC-052): 0021 después del merge, con
- * preflight → migrate → verify. Staging está en el Hito 19 (0000 a 0020, el
- * último bloque con migración: DEC-051) si 0020 ya se aplicó; si no, en el
- * Hito 18 (0000 a 0019, DEC-044 §3.3), en el Hito 12B (0000 a 0018), en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
+ * El próximo rollout real (Hito 21, DEC-053): 0022 después del merge, con
+ * preflight → migrate → verify. Staging está en el Hito 20 (0000 a 0021, el
+ * último bloque con migración: DEC-052) si 0021 ya se aplicó; si no, en el
+ * Hito 19 (0000 a 0020, DEC-051), en el Hito 18 (0000 a 0019, DEC-044 §3.3), en el Hito 12B (0000 a 0018), en el Hito 11 (0000 a 0017), en el Hito 10 (0000 a 0016), en el Hito 9 (0000 a 0015), en el Hito 8 (0000 a 0014), en el Hito 7 (0000 a 0013), el Hito 6 (0000 a 0012), el Hito 4/5 (0000 a
  * 0011), el Hito 2A (0000
  * a 0010), el Hito 2 (0000 a 0009), H1.6 (0000 a 0008), H1.4 (0000 a 0007)
  * o todavía en H1.3C (0000 a 0006, DEC-028): expected_migrations declara
@@ -1298,6 +1392,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1319,6 +1414,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1339,6 +1435,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1358,6 +1455,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1376,6 +1474,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1393,6 +1492,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1409,6 +1509,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1424,6 +1525,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1438,6 +1540,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1451,6 +1554,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1463,6 +1567,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1474,6 +1579,7 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
@@ -1484,22 +1590,29 @@ describe.each([
       "0019_whatsapp_delivery_status",
       "0020_vehicle_lifecycle",
       "0021_trade_ins",
+      "0022_deliveries",
     ],
   },
   {
     stagingAt: "0019_whatsapp_delivery_status",
     label: "Hito 18",
     applied: 20,
-    expected: ["0020_vehicle_lifecycle", "0021_trade_ins"],
+    expected: ["0020_vehicle_lifecycle", "0021_trade_ins", "0022_deliveries"],
   },
   {
     stagingAt: "0020_vehicle_lifecycle",
     label: "Hito 19",
     applied: 21,
-    expected: ["0021_trade_ins"],
+    expected: ["0021_trade_ins", "0022_deliveries"],
+  },
+  {
+    stagingAt: "0021_trade_ins",
+    label: "Hito 20",
+    applied: 22,
+    expected: ["0022_deliveries"],
   },
 ])(
-  "staging en $label: rollout hasta 0021",
+  "staging en $label: rollout hasta 0022",
   ({ stagingAt, applied, expected }) => {
     let staging: TestDatabase;
 

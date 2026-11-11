@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, ne } from "drizzle-orm";
 
 import type { MatchCandidate } from "@/domains/match/presentation";
 import type { StockVehicle, VehicleStatus } from "@/domains/vehicles/stock";
@@ -36,6 +36,7 @@ export const statusFromDb: Record<VehicleRecord["status"], VehicleStatus> = {
   available: "available",
   reserved: "reserved",
   sold: "sold",
+  delivered: "delivered",
 };
 
 /** El estado del dominio como lo guarda la base (DEC-051). */
@@ -44,6 +45,7 @@ export const statusToDb: Record<VehicleStatus, VehicleRecord["status"]> = {
   available: "available",
   reserved: "reserved",
   sold: "sold",
+  delivered: "delivered",
 };
 
 /** Lo que la lista lee de la base: solo lo persistido que muestra la UI. */
@@ -66,21 +68,29 @@ function selectStock(
   tx: ScopedTransaction,
   organizationId: string,
 ): Promise<StockRow[]> {
-  return tx
-    .select({
-      id: vehicles.id,
-      brand: vehicles.brand,
-      model: vehicles.model,
-      version: vehicles.version,
-      year: vehicles.year,
-      km: vehicles.km,
-      price: vehicles.price,
-      currency: vehicles.currency,
-      status: vehicles.status,
-    })
-    .from(vehicles)
-    .where(eq(vehicles.organizationId, organizationId))
-    .orderBy(desc(vehicles.createdAt), asc(vehicles.id));
+  return (
+    tx
+      .select({
+        id: vehicles.id,
+        brand: vehicles.brand,
+        model: vehicles.model,
+        version: vehicles.version,
+        year: vehicles.year,
+        km: vehicles.km,
+        price: vehicles.price,
+        currency: vehicles.currency,
+        status: vehicles.status,
+      })
+      .from(vehicles)
+      // Una unidad entregada (DEC-053) salió del salón: deja el Inventario.
+      .where(
+        and(
+          eq(vehicles.organizationId, organizationId),
+          ne(vehicles.status, "delivered"),
+        ),
+      )
+      .orderBy(desc(vehicles.createdAt), asc(vehicles.id))
+  );
 }
 
 /** Texto opcional: vacío o en blanco es "sin dato". */
@@ -111,8 +121,9 @@ export function toStockVehicle(row: StockRow): StockVehicle {
 }
 
 /**
- * Loader de la página /stock: las unidades de la organización activa, del
- * ingreso más reciente al más viejo (a igual ingreso, por id).
+ * Loader de la página /stock: las unidades de la organización activa que
+ * siguen en el salón (todas menos las entregadas, DEC-053), del ingreso más
+ * reciente al más viejo (a igual ingreso, por id).
  */
 export async function getStockList(): Promise<readonly StockVehicle[]> {
   const ctx = await requireTenant();

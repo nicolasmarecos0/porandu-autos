@@ -155,6 +155,13 @@
       "when": 1794274591275,
       "tag": "0021_trade_ins",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794358602311,
+      "tag": "0022_deliveries",
+      "breakpoints": true
     }
   ]
 }

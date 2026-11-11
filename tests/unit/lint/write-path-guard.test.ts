@@ -37,6 +37,8 @@ import { describe, expect, it } from "vitest";
  *   también: las Server Actions de lib/calendar/actions.ts;
  * - las cotizaciones (Hito 10) (db/queries/quotes-write), también: las
  *   Server Actions de lib/quotes/actions.ts;
+ * - la logística de entregas (Hito 21) (db/queries/deliveries-write),
+ *   también: las Server Actions de lib/deliveries/actions.ts;
  * - la toma de usados (Hito 20) (db/queries/trade-ins-write), también: las
  *   Server Actions de lib/trade-ins/actions.ts;
  * - el cursor de leído de la bandeja (Hito 12B) (recordConversationRead()
@@ -1179,6 +1181,72 @@ describe(
         await restrictedBy(
           "db/schema/index.ts",
           `export * from "./conversation-reads";\n`,
+        ),
+      ).toEqual([]);
+    });
+  },
+);
+
+const importDeliveriesWrite = `import { completeDeliveryWithExit } from "@/db/queries/deliveries-write";\nexport const use = completeDeliveryWithExit;\n`;
+
+describe(
+  "una sola puerta para la logística de entregas (Hito 21)",
+  { timeout: 30_000 },
+  () => {
+    it.each([
+      "app/(app)/opportunities/[id]/page.tsx",
+      "components/deliveries/delivery-panel.tsx",
+      "lib/deliveries/requests.ts",
+      "lib/opportunities/actions.ts",
+      "lib/trade-ins/actions.ts",
+      "lib/vehicles/actions.ts",
+      "lib/quotes/actions.ts",
+      "db/queries/deliveries.ts",
+      "db/queries/close-opportunity.ts",
+      "db/queries/change-vehicle-status.ts",
+      "db/queries/opportunity-detail.ts",
+      "db/tenant.ts",
+    ])("falla en %s", async (filePath) => {
+      expect(await restrictedBy(filePath, importDeliveriesWrite)).toContain(
+        "no-restricted-imports",
+      );
+    });
+
+    it("también por ruta relativa dentro de db/queries", async () => {
+      expect(
+        await restrictedBy(
+          "db/queries/deliveries.ts",
+          `import { insertDelivery } from "./deliveries-write";\nexport const use = insertDelivery;\n`,
+        ),
+      ).toContain("no-restricted-imports");
+    });
+
+    it("se permite en las Server Actions de lib/deliveries/actions.ts", async () => {
+      expect(
+        await restrictedBy("lib/deliveries/actions.ts", importDeliveriesWrite),
+      ).toEqual([]);
+    });
+
+    it("las Server Actions de la entrega no importan otras escrituras ni el cliente", async () => {
+      for (const code of [
+        importWrite,
+        importQuotesWrite,
+        importTestDrivesWrite,
+        `import { transitionVehicleStatus } from "@/db/queries/change-vehicle-status";\nexport const use = transitionVehicleStatus;\n`,
+        `import { closeOpportunityWithMetadata } from "@/db/queries/close-opportunity";\nexport const use = closeOpportunityWithMetadata;\n`,
+        `import { db } from "@/db/client";\nexport const use = db;\n`,
+      ]) {
+        expect(await restrictedBy("lib/deliveries/actions.ts", code)).toContain(
+          "no-restricted-imports",
+        );
+      }
+    });
+
+    it("los tipos de los resultados sí se pueden importar (no escriben)", async () => {
+      expect(
+        await restrictedBy(
+          "lib/deliveries/requests.ts",
+          `import type { CompleteDeliveryOutcome } from "@/db/queries/deliveries-write";\nexport type S = CompleteDeliveryOutcome;\n`,
         ),
       ).toEqual([]);
     });

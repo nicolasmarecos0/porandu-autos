@@ -11,6 +11,7 @@ import type { MatchCard, MatchRail } from "@/domains/match/presentation";
 import type { ClosureSummary } from "@/domains/opportunities/closure";
 import type { Stage } from "@/domains/opportunities/stages";
 import { tradeInPanelData } from "@/domains/opportunities/trade-in-presentation";
+import { deliveryPanelData } from "@/domains/opportunities/delivery-presentation";
 import type { LinkedVehicleCard } from "@/domains/opportunities/vehicle-link";
 
 /*
@@ -40,6 +41,12 @@ vi.mock("@/lib/conversations/actions", () => ({ addMessage: vi.fn() }));
 vi.mock("@/lib/quotes/actions", () => ({
   createQuote: vi.fn(),
   changeQuoteStatus: vi.fn(),
+}));
+vi.mock("@/lib/deliveries/actions", () => ({
+  scheduleDelivery: vi.fn(),
+  rescheduleDelivery: vi.fn(),
+  setDeliveryChecklistItem: vi.fn(),
+  completeDelivery: vi.fn(),
 }));
 vi.mock("@/lib/trade-ins/actions", () => ({
   registerTradeIn: vi.fn(),
@@ -153,6 +160,20 @@ function render({
         viewerIsAdmin: false,
         opportunityStage: stage,
         tradeInIntent: null,
+      }),
+      delivery: deliveryPanelData(null, {
+        viewerUserId: "u",
+        stage,
+        unit: linked
+          ? {
+              id: linked.vehicleId,
+              name: linked.name,
+              detail: linked.detail,
+              status: linked.status,
+            }
+          : null,
+        closureDeliveryDate: null,
+        now: new Date("2026-11-11T13:00:00Z"),
       }),
     }),
   );
@@ -318,6 +339,32 @@ describe("unidad vinculada desde las tarjetas de match", () => {
     expect(html).not.toContain("Quitar vínculo");
     expect(section(html, "Top Match")).toContain("Vinculada a la negociación");
   });
+
+  it("Ganada: el panel Coordinación de Entrega aparece con la unidad vendida (DEC-053)", () => {
+    const html = render({
+      stage: "won",
+      linked: { ...LINKED, status: "sold", statusLabel: "Vendida" },
+    });
+    expect(html).toContain("Coordinación de Entrega");
+    expect(html).toContain("Programar entrega");
+  });
+
+  it("Ganada y entregada: la unidad de la venta dice que salió del salón (DEC-053)", () => {
+    const html = render({
+      stage: "won",
+      linked: { ...LINKED, status: "delivered", statusLabel: "Entregada" },
+    });
+    expect(section(html, "Unidad de la venta")).toContain(
+      "Se entregó al cliente: la unidad salió del salón y ya no figura en el stock.",
+    );
+  });
+
+  it.each(["new", "qualifying", "negotiating", "lost"] as const)(
+    "en %s no hay panel de entrega",
+    (stage) => {
+      expect(render({ stage })).not.toContain("Coordinación de Entrega");
+    },
+  );
 
   it.each(["new", "qualifying"] as const)(
     "en %s no se ofrece vincular, y se avisa desde cuándo",

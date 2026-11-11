@@ -8,7 +8,10 @@ import { vehicleStatusLabel, type VehicleStatus } from "./stock";
  *    (preparación)        │   (salón)    │
  *                         └──────┬───────┘
  *                                ▼
- *                              sold   (terminal)
+ *                              sold   (vendida, todavía en el salón)
+ *                                │
+ *                                ▼
+ *                            delivered (terminal: salió del salón)
  *
  * - "Poner en salón" (in_preparation → available) es la transición de
  *   H1.3C (DEC-028), ahora una más de la máquina.
@@ -19,15 +22,19 @@ import { vehicleStatusLabel, type VehicleStatus } from "./stock";
  *   vinculada, en la misma transacción del cierre (DEC-034 §3: la unidad
  *   vinculada es la vendida). La venta nace de la oportunidad y sus
  *   metadatos; no se vuelve a cargar en Stock.
- * - `sold` es terminal: no se vuelve a vender, reservar ni preparar. Sin
- *   saltos (de preparación no se reserva ni se vende) y sin vuelta a
- *   preparación.
+ * - Entregar (sold → delivered, Hito 21, DEC-053) tampoco es una acción de
+ *   Stock: ocurre solo al completar la entrega de esa venta (el remito de
+ *   `deliveries`, con el checklist verificado), en la misma transacción.
+ * - `delivered` es terminal: una unidad vendida no se vuelve a vender,
+ *   reservar ni preparar, y una entregada ya no está en el salón. Sin
+ *   saltos (de preparación no se reserva ni se vende; sin vender no se
+ *   entrega) y sin vuelta a preparación.
  *
  * Módulo puro y apto para el navegador: la UI lo usa para ofrecer las
  * acciones y avisar antes de enviar, pero la regla la imponen el servidor
  * (planVehicleStatusChange() y planVehicleSale() sobre la fila bloqueada) y
  * la base (el trigger `vehicles_status_transition`, que espeja esta matriz;
- * un test cruza los 16 pares).
+ * un test cruza los 25 pares).
  */
 
 /** Destinos posibles desde cada estado, en el orden en que se ofrecen. */
@@ -37,7 +44,8 @@ export const VEHICLE_LIFECYCLE: Readonly<
   inPreparation: ["available"],
   available: ["reserved", "sold"],
   reserved: ["available", "sold"],
-  sold: [],
+  sold: ["delivered"],
+  delivered: [],
 };
 
 /** ¿Existe el pase `from → to` en la máquina? Pedir el mismo estado, no. */
@@ -48,7 +56,7 @@ export function canTransitionVehicle(
   return VEHICLE_LIFECYCLE[from].includes(to);
 }
 
-/** De una unidad vendida no se sale. */
+/** De una unidad entregada no se sale. */
 export function isTerminalVehicleStatus(status: VehicleStatus): boolean {
   return VEHICLE_LIFECYCLE[status].length === 0;
 }
@@ -60,6 +68,7 @@ export const VEHICLE_TRANSITION_IDS = [
   "reserve",
   "release",
   "sell",
+  "deliver",
 ] as const;
 
 export type VehicleTransitionId = (typeof VEHICLE_TRANSITION_IDS)[number];
@@ -67,9 +76,10 @@ export type VehicleTransitionId = (typeof VEHICLE_TRANSITION_IDS)[number];
 /**
  * Por dónde se pide cada transición: `stock` es la Server Action
  * changeVehicleStatus() (Inventario y catálogo); `closure`, el cierre Ganada
- * de closeOpportunity() (DEC-034), nunca una acción de Stock.
+ * de closeOpportunity() (DEC-034), y `delivery`, completeDelivery() (el
+ * remito de entrega, DEC-053), nunca una acción de Stock.
  */
-export type VehicleTransitionChannel = "stock" | "closure";
+export type VehicleTransitionChannel = "stock" | "closure" | "delivery";
 
 export type VehicleTransition = Readonly<{
   id: VehicleTransitionId;
@@ -105,9 +115,15 @@ export const VEHICLE_TRANSITIONS: Readonly<
     to: "sold",
     channel: "closure",
   },
+  deliver: {
+    id: "deliver",
+    from: ["sold"],
+    to: "delivered",
+    channel: "delivery",
+  },
 };
 
-/** Las que pide un miembro desde Stock: todas menos vender. */
+/** Las que pide un miembro desde Stock: todas menos vender y entregar. */
 export const STOCK_TRANSITION_IDS = [
   "put_on_floor",
   "reserve",
@@ -187,7 +203,12 @@ export type VehicleStatusChangePlan =
       current: VehicleStatus;
     }>
   /** Vender no es una acción de Stock: se registra al cerrar Ganada. */
-  | Readonly<{ kind: "sale_requires_closure"; current: VehicleStatus }>;
+  | Readonly<{ kind: "sale_requires_closure"; current: VehicleStatus }>
+  /** Entregar tampoco: se registra al completar la entrega (DEC-053). */
+  | Readonly<{
+      kind: "delivery_requires_completion";
+      current: VehicleStatus;
+    }>;
 
 /**
  * Decide, sin tocar nada, qué pasa con un pedido de Stock. Pedir lo que ya
@@ -199,6 +220,9 @@ export function planVehicleStatusChange(
 ): VehicleStatusChangePlan {
   if (transition === "sell") {
     return { kind: "sale_requires_closure", current };
+  }
+  if (transition === "deliver") {
+    return { kind: "delivery_requires_completion", current };
   }
   const { from, to } = VEHICLE_TRANSITIONS[transition];
   if (current === to) return { kind: "unchanged", transition, status: current };
@@ -226,8 +250,8 @@ export type VehicleSalePlan =
 
 /**
  * Decide, sin tocar nada, si la unidad vinculada se puede vender. Una
- * unidad ya vendida (p. ej. por otra oportunidad que la tenía vinculada) o
- * en preparación es un conflicto: ganar no la toma.
+ * unidad ya vendida (p. ej. por otra oportunidad que la tenía vinculada),
+ * ya entregada o en preparación es un conflicto: ganar no la toma.
  */
 export function planVehicleSale(current: VehicleStatus): VehicleSalePlan {
   if (SELLABLE_VEHICLE_STATUSES.includes(current)) {
@@ -236,7 +260,7 @@ export function planVehicleSale(current: VehicleStatus): VehicleSalePlan {
   return {
     kind: "conflict",
     current,
-    reason: current === "sold" ? "already_sold" : "in_preparation",
+    reason: current === "inPreparation" ? "in_preparation" : "already_sold",
   };
 }
 
@@ -367,9 +391,14 @@ export function transitionConflictMessage(
   const reason =
     current === "sold"
       ? `${unit} ya está vendida y una venta no se deshace`
-      : `${unit} está ${statusPhrase(current)}`;
+      : current === "delivered"
+        ? `${unit} ya se entregó y salió del salón`
+        : `${unit} está ${statusPhrase(current)}`;
   return `No se pudo ${ATTEMPT[transition]}: ${reason}. No se hizo ningún cambio.`;
 }
+
+export const DELIVERY_REQUIRES_COMPLETION_MESSAGE =
+  "La salida de una unidad vendida se registra al completar su entrega desde la oportunidad ganada. No se hizo ningún cambio.";
 
 export const SALE_REQUIRES_CLOSURE_MESSAGE =
   "La venta de una unidad se registra al cerrar como Ganada la oportunidad que la tiene vinculada. No se hizo ningún cambio.";

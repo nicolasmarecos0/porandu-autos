@@ -26,13 +26,16 @@ import { userOrgIds } from "./policies";
  * (DEC-051, domains/vehicles/lifecycle.ts): `in_preparation →
  * available`, `available ⇄ reserved` y `available | reserved → sold`, este
  * último solo al cerrar Ganada la oportunidad que tiene la unidad
- * vinculada. `sold` es terminal.
+ * vinculada. El Hito 21 (DEC-053) suma `sold → delivered`, solo al completar
+ * la entrega de esa venta (remito de `deliveries`): `delivered` es terminal
+ * y la unidad sale del salón (Inventario, Catálogo y Métricas del salón).
  */
 export const vehicleStatuses = [
   "in_preparation",
   "available",
   "reserved",
   "sold",
+  "delivered",
 ] as const;
 
 /*

@@ -29,6 +29,10 @@ import {
 } from "@/domains/demand/resolver";
 import { CURRENCIES } from "@/domains/money";
 import {
+  DELIVERY_CHECKLIST_ITEMS,
+  DELIVERY_RECORD_STATUSES,
+} from "@/domains/opportunities/deliveries";
+import {
   DELIVERY_DATE_RANGE,
   DELIVERY_STATUSES,
   LOSS_NOTES_MAX_LENGTH,
@@ -82,11 +86,12 @@ function foreignKeys(name: string): string[] {
 }
 
 describe("db/schema", () => {
-  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives), la del Hito 10 (quotes), la del Hito 12B (conversation_reads), la del Hito 12C (message_statuses) y la del Hito 20 (trade_ins)", () => {
+  it("define las tablas de H0, las de H1.1 (contacts, opportunities), la de H1.3A (vehicles), la de H1.4 (opportunity_demand_facts), la del Hito 2 (opportunity_notes), la del Hito 4 (messages), las del Hito 7 (conversations, whatsapp_lines), la del Hito 9 (test_drives), la del Hito 10 (quotes), la del Hito 12B (conversation_reads), la del Hito 12C (message_statuses), la del Hito 20 (trade_ins) y la del Hito 21 (deliveries)", () => {
     expect(tables.map((t) => t.name).sort()).toEqual([
       "contacts",
       "conversation_reads",
       "conversations",
+      "deliveries",
       "memberships",
       "message_statuses",
       "messages",
@@ -180,7 +185,7 @@ describe("db/schema", () => {
     });
   });
 
-  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4; conversation_reads, solo las filas propias, desde el Hito 12B; message_statuses desde el Hito 12C) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9), quotes (Hito 10) y trade_ins (Hito 20) la de alta con WITH CHECK (ADR-001 §4)", () => {
+  it("cada tabla declara su policy de lectura para authenticated (whatsapp_lines desde el Hito 8, DEC-040 §4; conversation_reads, solo las filas propias, desde el Hito 12B; message_statuses desde el Hito 12C) y solo contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships (admin), test_drives (Hito 9), quotes (Hito 10), trade_ins (Hito 20) y deliveries (Hito 21) la de alta con WITH CHECK (ADR-001 §4)", () => {
     const dialect = new PgDialect();
     const declared = tables
       .flatMap((t) =>
@@ -241,6 +246,37 @@ describe("db/schema", () => {
         using:
           '"conversations"."organization_id" IN (SELECT private.user_org_ids())',
         withCheck: undefined,
+      },
+      {
+        table: "deliveries",
+        name: "deliveries_insert_member",
+        as: "permissive",
+        for: "insert",
+        to: ["authenticated"],
+        using: undefined,
+        withCheck:
+          '"deliveries"."organization_id" IN (SELECT private.user_org_ids()) AND "deliveries"."created_by" = (select auth.uid()) AND "deliveries"."status" = \'pending\' AND "deliveries"."completed_at" IS NULL AND "deliveries"."completed_by" IS NULL AND "deliveries"."checklist" = \'{"keys":false,"manuals":false,"spare_tire":false,"cleaning":false,"documents":false}\'::jsonb AND "deliveries"."created_at" = now() AND "deliveries"."updated_at" = now() AND EXISTS (SELECT FROM "opportunities" WHERE "opportunities"."organization_id" = "deliveries"."organization_id" AND "opportunities"."id" = "deliveries"."opportunity_id" AND "opportunities"."stage" = \'won\' AND "opportunities"."vehicle_id" = "deliveries"."vehicle_id") AND EXISTS (SELECT FROM "vehicles" WHERE "vehicles"."organization_id" = "deliveries"."organization_id" AND "vehicles"."id" = "deliveries"."vehicle_id" AND "vehicles"."status" = \'sold\')',
+      },
+      {
+        table: "deliveries",
+        name: "deliveries_select_member",
+        as: "permissive",
+        for: "select",
+        to: ["authenticated"],
+        using:
+          '"deliveries"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck: undefined,
+      },
+      {
+        table: "deliveries",
+        name: "deliveries_update_member",
+        as: "permissive",
+        for: "update",
+        to: ["authenticated"],
+        using:
+          '"deliveries"."organization_id" IN (SELECT private.user_org_ids())',
+        withCheck:
+          '"deliveries"."organization_id" IN (SELECT private.user_org_ids())',
       },
       {
         table: "memberships",
@@ -793,7 +829,7 @@ describe("db/schema", () => {
     ).toEqual([
       {
         name: "vehicles_status_check",
-        sql: `"vehicles"."status" IN ('in_preparation', 'available', 'reserved', 'sold')`,
+        sql: `"vehicles"."status" IN ('in_preparation', 'available', 'reserved', 'sold', 'delivered')`,
       },
       {
         name: "vehicles_currency_check",
@@ -817,6 +853,7 @@ describe("db/schema", () => {
       "available",
       "reserved",
       "sold",
+      "delivered",
     ]);
     expect(schema.vehicleCurrencies).toEqual(["PYG", "USD"]);
     expect(
@@ -1448,6 +1485,78 @@ describe("db/schema", () => {
     ]);
   });
 
+  it("deliveries: la entrega de la unidad vendida de una oportunidad ganada, con su fecha pactada, el checklist físico, el estado, el autor y el sello (Hito 21)", () => {
+    expect(
+      table("deliveries").columns.map((c) => [
+        c.name,
+        c.columnType,
+        c.notNull,
+        c.hasDefault,
+      ]),
+    ).toEqual([
+      ["id", "PgUUID", true, true],
+      ["organization_id", "PgUUID", true, false],
+      ["opportunity_id", "PgUUID", true, false],
+      ["vehicle_id", "PgUUID", true, false],
+      ["scheduled_at", "PgTimestamp", true, false],
+      ["completed_at", "PgTimestamp", false, false],
+      ["checklist", "PgJsonb", true, true],
+      ["status", "PgText", true, true],
+      ["created_by", "PgUUID", true, false],
+      ["completed_by", "PgUUID", false, false],
+      ["created_at", "PgTimestamp", true, true],
+      ["updated_at", "PgTimestamp", true, true],
+    ]);
+    // Los estados y los ítems del checklist de la base son los del dominio
+    // (DEC-053 §1; el dominio nombra el auxilio en camelCase).
+    expect(schema.deliveryStatuses).toEqual(DELIVERY_RECORD_STATUSES);
+    expect(schema.deliveryChecklistItems).toEqual(
+      DELIVERY_CHECKLIST_ITEMS.map((item) =>
+        item.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`),
+      ),
+    );
+    // Nace pendiente; el sello y el reloj los pone la base.
+    expect(column("deliveries", "status").default).toBe("pending");
+    expect(column("deliveries", "created_at").defaultFn).toBeUndefined();
+    expect(foreignKeys("deliveries")).toEqual([
+      "completed_by -> public.profiles(id) ON DELETE restrict",
+      "created_by -> public.profiles(id) ON DELETE restrict",
+      "organization_id -> public.organizations(id) ON DELETE restrict",
+      "organization_id,opportunity_id -> public.opportunities(organization_id,id) ON DELETE restrict",
+      "organization_id,vehicle_id -> public.vehicles(organization_id,id) ON DELETE restrict",
+    ]);
+    expect(table("deliveries").checks.map((c) => c.name)).toEqual([
+      "deliveries_status_check",
+      "deliveries_checklist_check",
+      "deliveries_completion_check",
+      "deliveries_scheduled_at_check",
+    ]);
+    // Lectura, alta y una sola edición: qué cambio vale lo decide el
+    // trigger de 0022 (DEC-028 §5).
+    expect(
+      table("deliveries").policies.map((p) => `${p.name} ${p.for}`),
+    ).toEqual([
+      "deliveries_select_member select",
+      "deliveries_insert_member insert",
+      "deliveries_update_member update",
+    ]);
+    expect(
+      table("deliveries").uniqueConstraints.map((u) => ({
+        name: u.name,
+        columns: u.columns.map((c) => c.name),
+      })),
+    ).toEqual([
+      {
+        name: "deliveries_organization_id_opportunity_id_key",
+        columns: ["organization_id", "opportunity_id"],
+      },
+      {
+        name: "deliveries_organization_id_vehicle_id_key",
+        columns: ["organization_id", "vehicle_id"],
+      },
+    ]);
+  });
+
   it("whatsapp_lines: la línea receptora, única global, de una organización y de solo lectura para los miembros (Hito 7, Hito 8)", () => {
     expect(
       table("whatsapp_lines").columns.map((c) => [
@@ -1510,6 +1619,7 @@ describe("db/schema", () => {
       "contacts",
       "conversation_reads",
       "conversations",
+      "deliveries",
       "memberships",
       "message_statuses",
       "messages",

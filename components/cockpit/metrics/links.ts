@@ -49,7 +49,9 @@ export const CATALOG_HREF = STOCK_CATALOG_PATH;
  * métrica) o, para las que están en preparación, el Inventario: el
  * catálogo no las muestra (DEC-049 §2).
  */
-export function stockStatusHref(status: VehicleStatus): string {
+export function stockStatusHref(
+  status: Exclude<VehicleStatus, "delivered">,
+): string {
   if (status === "inPreparation") return STOCK_PATH;
   return `${STOCK_CATALOG_PATH}${catalogSearch({ ...DEFAULT_CATALOG_FILTERS, status })}`;
 }

@@ -178,13 +178,15 @@ const LIFECYCLE_PATHS = [
   "/cockpit/metrics",
 ];
 
-type DbStatus = "in_preparation" | "available" | "reserved" | "sold";
+type DbStatus =
+  "in_preparation" | "available" | "reserved" | "sold" | "delivered";
 
 const TO_DB: Record<VehicleStatus, DbStatus> = {
   inPreparation: "in_preparation",
   available: "available",
   reserved: "reserved",
   sold: "sold",
+  delivered: "delivered",
 };
 
 let sequence = 0;
@@ -567,12 +569,38 @@ const TO_DB_INVERSE: Record<DbStatus, VehicleStatus> = {
   available: "available",
   reserved: "reserved",
   sold: "sold",
+  delivered: "delivered",
+};
+
+/**
+ * La entrega completada de `vehicleId` (Hito 21, DEC-053), con su venta
+ * ganada: lo que exige la salida del salón. Un INSERT del superusuario no
+ * pasa por el trigger de cambios de deliveries.
+ */
+async function completedDelivery(vehicleId: string): Promise<void> {
+  const won = await opportunity(ORG_1, "won", vehicleId);
+  await db.admin`
+    INSERT INTO public.deliveries (organization_id, opportunity_id,
+      vehicle_id, scheduled_at, status, completed_at, completed_by,
+      checklist, created_by)
+    VALUES (${ORG_1}, ${won}, ${vehicleId}, now(), 'completed', now(),
+      ${USER_A}, ${db.admin.json(VERIFIED_CHECKLIST)}, ${USER_A})
+  `;
+}
+
+const VERIFIED_CHECKLIST = {
+  keys: true,
+  manuals: true,
+  spare_tire: true,
+  cleaning: true,
+  documents: true,
 };
 
 describe("la base exige la máquina del dominio (trigger vehicles_status_transition)", () => {
   /*
-   * Los 16 pares, como el rol dueño: el trigger no exime a nadie. Vender
-   * exige además una oportunidad ganada que la tenga vinculada.
+   * Los 25 pares, como el rol dueño: el trigger no exime a nadie. Vender
+   * exige además una oportunidad ganada que la tenga vinculada, y entregar
+   * (DEC-053) su entrega completada.
    */
   const STATUSES = VEHICLE_STATUSES.map(({ id }) => id);
   const PAIRS = STATUSES.flatMap((from) =>
@@ -586,6 +614,7 @@ describe("la base exige la máquina del dominio (trigger vehicles_status_transit
       // Para vender, una oportunidad ganada la tiene vinculada (en otro caso
       // de abajo, sin ella, se rechaza aunque el pase exista).
       if (to === "sold") await opportunity(ORG_1, "won", id);
+      if (to === "delivered") await completedDelivery(id);
       const update = asOwner(
         (sql) =>
           sql`UPDATE public.vehicles SET status = ${TO_DB[to]} WHERE id = ${id}`,

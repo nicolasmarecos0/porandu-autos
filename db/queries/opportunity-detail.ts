@@ -23,6 +23,10 @@ import {
   todayInAsuncion,
   type ClosureSummary,
 } from "@/domains/opportunities/closure";
+import {
+  deliveryPanelData,
+  type DeliveryPanelData,
+} from "@/domains/opportunities/delivery-presentation";
 import type { Stage } from "@/domains/opportunities/stages";
 import {
   tradeInPanelData,
@@ -41,6 +45,7 @@ import { requireTenant } from "@/lib/tenant/session";
 
 import { contacts, opportunities } from "../schema";
 import { withTenant } from "../tenant";
+import { selectOpportunityDelivery } from "./deliveries";
 import { selectDemandRows } from "./demand-rows";
 import { selectOpportunityMessages } from "./messages";
 import { selectOpportunityNotes } from "./opportunity-notes";
@@ -118,6 +123,8 @@ export type OpportunityDetail = Readonly<{
   quotes: QuotesPanelData;
   /** Panel "Vehículo en parte de pago / Toma" (Hito 20, DEC-052). */
   tradeIns: TradeInPanelData;
+  /** Panel "Coordinación de Entrega" (Hito 21, DEC-053): solo Ganada. */
+  delivery: DeliveryPanelData;
 }>;
 
 /** Texto opcional del legado: vacío o en blanco no cuenta. */
@@ -200,6 +207,11 @@ export async function getOpportunityDetail(
       ctx.organizationId,
       opportunity.id,
     );
+    const delivery = await selectOpportunityDelivery(
+      tx,
+      ctx.organizationId,
+      opportunity.id,
+    );
     return {
       opportunity,
       rows,
@@ -210,6 +222,7 @@ export async function getOpportunityDetail(
       quoteRows,
       quotableVehicles,
       tradeInRows,
+      delivery,
     };
   });
   if (!found) return null;
@@ -224,7 +237,10 @@ export async function getOpportunityDetail(
     quoteRows,
     quotableVehicles,
     tradeInRows,
+    delivery,
   } = found;
+  const now = new Date();
+  const linkedCard = linked ? linkedVehicleCard(linked) : null;
   const stage = stageFromDb[opportunity.stage];
   const closure = closureFromRow({ ...opportunity, stage });
   const truth = resolveDemand(rows);
@@ -250,7 +266,7 @@ export async function getOpportunityDetail(
     matches: matchRail(snapshot, candidates, matches),
     vehicleLink: {
       canChange: canChangeVehicleLink(stage),
-      linked: linked ? linkedVehicleCard(linked) : null,
+      linked: linkedCard,
     },
     activity: activityTimeline(notes, messages, ctx.userId),
     quotes: quotesPanelData(quoteRows, quotableVehicles, {
@@ -258,13 +274,27 @@ export async function getOpportunityDetail(
       viewerIsAdmin: ctx.role === "admin",
       opportunityStage: stage,
       linkedVehicleId: opportunity.vehicleId,
-      today: todayInAsuncion(new Date()),
+      today: todayInAsuncion(now),
     }),
     tradeIns: tradeInPanelData(tradeInRows, {
       viewerUserId: ctx.userId,
       viewerIsAdmin: ctx.role === "admin",
       opportunityStage: stage,
       tradeInIntent: snapshot.trade_in_intent.value,
+    }),
+    delivery: deliveryPanelData(delivery, {
+      viewerUserId: ctx.userId,
+      stage,
+      unit: linkedCard
+        ? {
+            id: linkedCard.vehicleId,
+            name: linkedCard.name,
+            detail: linkedCard.detail,
+            status: linkedCard.status,
+          }
+        : null,
+      closureDeliveryDate: opportunity.deliveryDate,
+      now,
     }),
   };
 }

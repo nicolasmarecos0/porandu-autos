@@ -333,6 +333,21 @@ const tradeInsWriteImport = {
   message: TRADE_INS_WRITE_MESSAGE,
 };
 
+// Hito 21 (DEC-053 §3 y §4): la logística de entregas tiene una sola
+// puerta, las Server Actions de lib/deliveries/actions.ts
+// (scheduleDelivery(), rescheduleDelivery(), setDeliveryChecklistItem() y
+// completeDelivery()), que obtienen el contexto con requireTenant() y
+// validan el pedido antes de escribir. Completar la entrega da salida a la
+// unidad (sold → delivered) en la misma transacción.
+const DELIVERIES_WRITE_MESSAGE =
+  "Deliveries are written only through the Server Actions in lib/deliveries/actions.ts: requireTenant(), server-side validation, then withTenant(). Completing a delivery is the only way a sold vehicle leaves the dealership.";
+const deliveriesWriteImport = {
+  regex: "(^|/)db/queries/deliveries-write$|^\\.{1,2}/deliveries-write$",
+  // Los tipos de los resultados no escriben nada.
+  allowTypeImports: true,
+  message: DELIVERIES_WRITE_MESSAGE,
+};
+
 // Hito 12B (DEC-044 §2.7): el cursor de leído de la bandeja tiene una sola
 // puerta, la Server Action markConversationRead() (lib/conversations/read.ts),
 // que obtiene el contexto con requireTenant() y valida el pedido antes de
@@ -425,6 +440,7 @@ const basePatterns = [
   testDrivesWriteImport,
   quotesWriteImport,
   tradeInsWriteImport,
+  deliveriesWriteImport,
   conversationReadImport,
   pdfLibraryImport,
   dndLibraryImport,
@@ -630,6 +646,7 @@ const eslintConfig = defineConfig([
             testDrivesWriteImport,
             quotesWriteImport,
             tradeInsWriteImport,
+            deliveriesWriteImport,
             conversationReadImport,
           ],
         },
@@ -665,6 +682,7 @@ const eslintConfig = defineConfig([
             testDrivesWriteImport,
             quotesWriteImport,
             tradeInsWriteImport,
+            deliveriesWriteImport,
             conversationReadImport,
           ],
         },
@@ -696,6 +714,7 @@ const eslintConfig = defineConfig([
             testDrivesWriteImport,
             quotesWriteImport,
             tradeInsWriteImport,
+            deliveriesWriteImport,
             conversationReadImport,
           ],
         },
@@ -739,6 +758,20 @@ const eslintConfig = defineConfig([
         {
           patterns: basePatterns.filter(
             (pattern) => pattern !== tradeInsWriteImport,
+          ),
+        },
+      ],
+    },
+  },
+  // Única puerta de la logística de entregas (Hito 21, DEC-053 §3).
+  {
+    files: ["lib/deliveries/actions.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: basePatterns.filter(
+            (pattern) => pattern !== deliveriesWriteImport,
           ),
         },
       ],
@@ -815,6 +848,7 @@ const eslintConfig = defineConfig([
             testDrivesWriteImport,
             quotesWriteImport,
             tradeInsWriteImport,
+            deliveriesWriteImport,
             conversationReadImport,
             stockMockImport,
           ],
@@ -948,6 +982,7 @@ const eslintConfig = defineConfig([
             testDrivesWriteImport,
             quotesWriteImport,
             tradeInsWriteImport,
+            deliveriesWriteImport,
             conversationReadImport,
           ],
         },

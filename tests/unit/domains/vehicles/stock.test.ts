@@ -68,12 +68,13 @@ describe("formatKm", () => {
 });
 
 describe("estados de stock", () => {
-  it("son los cuatro mínimos de P1, con su copy es-PY", () => {
+  it("son los cuatro mínimos de P1 y la entregada de DEC-053, con su copy es-PY", () => {
     expect(VEHICLE_STATUSES).toEqual([
       { id: "inPreparation", label: "En preparación" },
       { id: "available", label: "Disponible" },
       { id: "reserved", label: "Reservada" },
       { id: "sold", label: "Vendida" },
+      { id: "delivered", label: "Entregada" },
     ]);
     expect(vehicleStatusLabel("available")).toBe("Disponible");
   });
@@ -121,16 +122,23 @@ describe("Stock Surface v0.1: identidad, conteos y grupos", () => {
         unit("2", "sold"),
         unit("3", "available"),
       ]),
-    ).toEqual({ inPreparation: 0, available: 2, reserved: 0, sold: 1 });
+    ).toEqual({
+      inPreparation: 0,
+      available: 2,
+      reserved: 0,
+      sold: 1,
+      delivered: 0,
+    });
     expect(countByStatus([])).toEqual({
       inPreparation: 0,
       available: 0,
       reserved: 0,
       sold: 0,
+      delivered: 0,
     });
   });
 
-  it("los grupos van de lo vendible a lo cerrado y cubren los cuatro estados", () => {
+  it("los grupos van de lo vendible a lo cerrado y cubren los cuatro estados del salón (una entregada ya no está, DEC-053)", () => {
     expect(STOCK_GROUPS.map((group) => [group.status, group.title])).toEqual([
       ["available", "Disponibles"],
       ["inPreparation", "En preparación"],
@@ -138,7 +146,9 @@ describe("Stock Surface v0.1: identidad, conteos y grupos", () => {
       ["sold", "Vendidas"],
     ]);
     expect(STOCK_GROUPS.map((group) => group.status).sort()).toEqual(
-      VEHICLE_STATUSES.map((status) => status.id).sort(),
+      VEHICLE_STATUSES.map((status) => status.id)
+        .filter((status) => status !== "delivered")
+        .sort(),
     );
   });
 

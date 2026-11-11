@@ -9,6 +9,7 @@ import {
   inArray,
   lt,
   lte,
+  ne,
   sql,
   type SQL,
 } from "drizzle-orm";
@@ -288,7 +289,13 @@ async function selectStockGroups(
       ),
     })
     .from(vehicles)
-    .where(eq(vehicles.organizationId, organizationId))
+    // Una unidad entregada (DEC-053) salió del salón: no es stock de hoy.
+    .where(
+      and(
+        eq(vehicles.organizationId, organizationId),
+        ne(vehicles.status, "delivered"),
+      ),
+    )
     .groupBy(vehicles.status, vehicles.currency)
     .orderBy(asc(vehicles.status), asc(vehicles.currency));
   return rows.map((row) => ({

@@ -14,10 +14,10 @@ import { finding, type Finding } from "./report.mts";
  * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
  * 0015_test_drives, 0016_quotes, 0017_dashboard_indexes,
  * 0018_conversation_reads, 0019_whatsapp_delivery_status,
- * 0020_vehicle_lifecycle y 0021_trade_ins, leído del catálogo real
- * (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030, DEC-032, DEC-033,
- * DEC-034, DEC-036, DEC-038, DEC-039, DEC-040, DEC-041, DEC-042, DEC-044,
- * DEC-051, DEC-052).
+ * 0020_vehicle_lifecycle, 0021_trade_ins y 0022_deliveries, leído del
+ * catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030, DEC-032,
+ * DEC-033, DEC-034, DEC-036, DEC-038, DEC-039, DEC-040, DEC-041, DEC-042,
+ * DEC-044, DEC-051, DEC-052, DEC-053).
  * Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
@@ -27,6 +27,7 @@ const APP_TABLES = [
   "contacts",
   "conversation_reads",
   "conversations",
+  "deliveries",
   "memberships",
   "message_statuses",
   "messages",
@@ -102,7 +103,10 @@ type Policy = {
  * función de ingesta de estados (EXPECTED_MESSAGE_STATUSES). El Hito 20
  * (DEC-052) suma la lectura, el alta (pendiente, sin tasación ni ingreso,
  * de una oportunidad abierta) y la edición de trade_ins: qué cambio vale lo
- * decide su trigger (EXPECTED_TRADE_INS).
+ * decide su trigger (EXPECTED_TRADE_INS). El Hito 21 (DEC-053) suma la
+ * lectura, el alta (pendiente, sin nada verificado ni sello, de la unidad
+ * vendida de una oportunidad ganada) y la edición de deliveries: qué cambio
+ * vale lo decide su trigger (EXPECTED_DELIVERIES).
  * Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
@@ -145,6 +149,37 @@ export const EXPECTED_POLICIES: Policy[] = [
     using:
       "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
     withCheck: null,
+  },
+  {
+    table: "deliveries",
+    name: "deliveries_insert_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "INSERT",
+    using: null,
+    withCheck:
+      '((organization_id IN ( SELECT private.user_org_ids() AS user_org_ids)) AND (created_by = ( SELECT auth.uid() AS uid)) AND (status = \'pending\'::text) AND (completed_at IS NULL) AND (completed_by IS NULL) AND (checklist = \'{"keys": false, "manuals": false, "cleaning": false, "documents": false, "spare_tire": false}\'::jsonb) AND (created_at = now()) AND (updated_at = now()) AND (EXISTS ( SELECT\n   FROM opportunities\n  WHERE ((opportunities.organization_id = deliveries.organization_id) AND (opportunities.id = deliveries.opportunity_id) AND (opportunities.stage = \'won\'::text) AND (opportunities.vehicle_id = deliveries.vehicle_id)))) AND (EXISTS ( SELECT\n   FROM vehicles\n  WHERE ((vehicles.organization_id = deliveries.organization_id) AND (vehicles.id = deliveries.vehicle_id) AND (vehicles.status = \'sold\'::text)))))',
+  },
+  {
+    table: "deliveries",
+    name: "deliveries_select_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "SELECT",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "deliveries",
+    name: "deliveries_update_member",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "UPDATE",
+    using:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck:
+      "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
   },
   {
     table: "memberships",
@@ -738,6 +773,43 @@ export const EXPECTED_TRADE_INS = {
 };
 
 /**
+ * Entregas de vehículos (Hito 21, 0022, DEC-053 §1, §3 y §4): los CHECKs
+ * (estado, checklist, completada con su sello y todo verificado, fecha
+ * pactada), las FKs (compuestas a la oportunidad y a la unidad, y los
+ * autores) y las uniques por oportunidad y por unidad, el trigger BEFORE
+ * UPDATE de cambios y el constraint trigger diferido que exige la unidad
+ * entregada al completar, habilitados, y sus dos funciones: invoker, de
+ * search_path vacío y sin EXECUTE para nadie.
+ */
+export const EXPECTED_DELIVERIES = {
+  constraints: [
+    "deliveries_checklist_check CHECK (((jsonb_typeof(checklist) = 'object'::text) AND (checklist ?& ARRAY['keys'::text, 'manuals'::text, 'spare_tire'::text, 'cleaning'::text, 'documents'::text]) AND ((checklist - ARRAY['keys'::text, 'manuals'::text, 'spare_tire'::text, 'cleaning'::text, 'documents'::text]) = '{}'::jsonb) AND (jsonb_typeof((checklist -> 'keys'::text)) = 'boolean'::text) AND (jsonb_typeof((checklist -> 'manuals'::text)) = 'boolean'::text) AND (jsonb_typeof((checklist -> 'spare_tire'::text)) = 'boolean'::text) AND (jsonb_typeof((checklist -> 'cleaning'::text)) = 'boolean'::text) AND (jsonb_typeof((checklist -> 'documents'::text)) = 'boolean'::text)))",
+    "deliveries_completed_by_profiles_id_fk FOREIGN KEY (completed_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    'deliveries_completion_check CHECK ((((status = \'completed\'::text) = (completed_at IS NOT NULL)) AND ((completed_at IS NULL) = (completed_by IS NULL)) AND ((status <> \'completed\'::text) OR (checklist = \'{"keys": true, "manuals": true, "cleaning": true, "documents": true, "spare_tire": true}\'::jsonb))))',
+    "deliveries_created_by_profiles_id_fk FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE RESTRICT",
+    "deliveries_opportunity_fk FOREIGN KEY (organization_id, opportunity_id) REFERENCES opportunities(organization_id, id) ON DELETE RESTRICT",
+    "deliveries_organization_id_opportunity_id_key UNIQUE (organization_id, opportunity_id)",
+    "deliveries_organization_id_organizations_id_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT",
+    "deliveries_organization_id_vehicle_id_key UNIQUE (organization_id, vehicle_id)",
+    "deliveries_scheduled_at_check CHECK (((scheduled_at >= '2000-01-01 00:00:00+00'::timestamp with time zone) AND (scheduled_at < '2101-01-01 00:00:00+00'::timestamp with time zone)))",
+    "deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text])))",
+    "deliveries_vehicle_fk FOREIGN KEY (organization_id, vehicle_id) REFERENCES vehicles(organization_id, id) ON DELETE RESTRICT",
+  ],
+  uniqueIndexes: [
+    "deliveries_organization_id_opportunity_id_key CREATE UNIQUE INDEX deliveries_organization_id_opportunity_id_key ON public.deliveries USING btree (organization_id, opportunity_id)",
+    "deliveries_organization_id_vehicle_id_key CREATE UNIQUE INDEX deliveries_organization_id_vehicle_id_key ON public.deliveries USING btree (organization_id, vehicle_id)",
+  ],
+  triggers: [
+    "O CREATE TRIGGER deliveries_change_guard BEFORE UPDATE ON public.deliveries FOR EACH ROW EXECUTE FUNCTION private.enforce_delivery_change()",
+    "O CREATE CONSTRAINT TRIGGER deliveries_completed_vehicle_delivered AFTER UPDATE ON public.deliveries DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (((new.status = 'completed'::text) AND (old.status IS DISTINCT FROM 'completed'::text))) EXECUTE FUNCTION private.enforce_completed_delivery_vehicle_delivered()",
+  ],
+  functions: [
+    'private.enforce_completed_delivery_vehicle_delivered() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+    'private.enforce_delivery_change() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+  ],
+};
+
+/**
  * Cotizaciones (Hito 10, 0016, DEC-042 §5): los CHECKs, las FKs (compuestas
  * a la oportunidad y a la unidad) y la unique del número de quotes, el
  * índice único parcial de la cotización aceptada, los triggers de número
@@ -838,6 +910,7 @@ export const EXPECTED_TEAM_SETTINGS = {
  */
 const AUTHENTICATED_PRIVILEGES = [
   "INSERT contacts",
+  "INSERT deliveries",
   "INSERT memberships",
   "INSERT messages",
   "INSERT opportunities",
@@ -848,6 +921,7 @@ const AUTHENTICATED_PRIVILEGES = [
   "INSERT trade_ins",
   "INSERT vehicles",
   ...MEMBER_READABLE_TABLES.map((table) => `SELECT ${table}`),
+  "UPDATE deliveries",
   "UPDATE memberships",
   "UPDATE opportunities",
   "UPDATE organizations",
@@ -859,9 +933,14 @@ const AUTHENTICATED_PRIVILEGES = [
 
 /**
  * Lo único que authenticated puede actualizar (H1.3C, H1.6, el Hito 2, el
- * cierre de DEC-034, el Hito 6, el Hito 9 y el Hito 10): nunca la tabla.
+ * cierre de DEC-034, el Hito 6, el Hito 9, el Hito 10, el Hito 20 y el
+ * Hito 21): nunca la tabla.
  */
 const AUTHENTICATED_UPDATE_COLUMNS = [
+  "deliveries.checklist",
+  "deliveries.scheduled_at",
+  "deliveries.status",
+  "deliveries.updated_at",
   "memberships.active",
   "memberships.role",
   "memberships.updated_at",
@@ -1483,6 +1562,7 @@ export async function verifyCatalog(
                 AND position('vehicles_status_transition' in p.prosrc) > 0
                 AND position('vehicles_immutable' in p.prosrc) > 0
                 AND position('vehicles_sale_requires_won' in p.prosrc) > 0
+                AND position('vehicles_delivery_requires_completed' in p.prosrc) > 0
               )
               OR (
                 p.oid = to_regprocedure('private.enforce_won_vehicle_sold()')
@@ -1658,6 +1738,83 @@ export async function verifyCatalog(
       "schema.trade-ins",
       equal(tradeInsFound, EXPECTED_TRADE_INS),
       `trade_ins: ${tradeInsFound.constraints.length} constraints (expected: ${EXPECTED_TRADE_INS.constraints.length}, exact definitions); unique indexes: ${tradeInsFound.uniqueIndexes.length} (expected: ${EXPECTED_TRADE_INS.uniqueIndexes.length}); triggers: ${list(tradeInsFound.triggers)}; functions: ${list(tradeInsFound.functions)}`,
+    ),
+  );
+
+  // Entregas (Hito 21): constraints, índices únicos, los dos triggers y sus
+  // funciones.
+  const [deliveryCatalog] = await tx<
+    {
+      constraints: string[] | null;
+      uniqueIndexes: string[] | null;
+      triggers: string[] | null;
+      functions: string[] | null;
+    }[]
+  >`
+    SELECT
+      (
+        SELECT array_agg(conname || ' ' || pg_get_constraintdef(oid) ORDER BY conname)
+        FROM pg_constraint
+        WHERE conrelid = to_regclass('public.deliveries')
+          AND contype IN ('c', 'f', 'u')
+      ) AS constraints,
+      (
+        SELECT array_agg(c.relname || ' ' || pg_get_indexdef(i.indexrelid) ORDER BY c.relname)
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE i.indrelid = to_regclass('public.deliveries')
+          AND i.indisunique
+          AND NOT i.indisprimary
+      ) AS "uniqueIndexes",
+      (
+        SELECT array_agg(t.tgenabled::text || ' ' || pg_get_triggerdef(t.oid) ORDER BY t.tgname)
+        FROM pg_trigger t
+        WHERE t.tgrelid = to_regclass('public.deliveries') AND NOT t.tgisinternal
+      ) AS triggers,
+      (
+        SELECT array_agg(
+          p.oid::regprocedure::text
+            || ' SECURITY DEFINER=' || p.prosecdef
+            || ' config=' || coalesce(array_to_string(p.proconfig, ','), 'none')
+            || ' EXECUTE authenticated=' || has_function_privilege('authenticated', p.oid, 'EXECUTE')
+            || ' anon=' || has_function_privilege('anon', p.oid, 'EXECUTE')
+            || ' app_runtime=' || has_function_privilege('app_runtime', p.oid, 'EXECUTE')
+            || ' guards=' || (
+              (
+                p.oid = to_regprocedure('private.enforce_delivery_change()')
+                AND position('deliveries_immutable' in p.prosrc) > 0
+                AND position('deliveries_completed' in p.prosrc) > 0
+                AND position('deliveries_status_transition' in p.prosrc) > 0
+                AND position('deliveries_checklist_incomplete' in p.prosrc) > 0
+                AND position('deliveries_completion_requires_user' in p.prosrc) > 0
+                AND position('deliveries_vehicle_not_sold' in p.prosrc) > 0
+                AND position('FOR SHARE' in p.prosrc) > 0
+              )
+              OR (
+                p.oid = to_regprocedure('private.enforce_completed_delivery_vehicle_delivered()')
+                AND position('deliveries_completed_vehicle_delivered' in p.prosrc) > 0
+              )
+            )
+          ORDER BY p.proname
+        )
+        FROM pg_proc p
+        WHERE p.oid IN (
+          to_regprocedure('private.enforce_delivery_change()'),
+          to_regprocedure('private.enforce_completed_delivery_vehicle_delivered()')
+        )
+      ) AS functions
+  `;
+  const deliveriesFound = {
+    constraints: deliveryCatalog?.constraints ?? [],
+    uniqueIndexes: deliveryCatalog?.uniqueIndexes ?? [],
+    triggers: deliveryCatalog?.triggers ?? [],
+    functions: deliveryCatalog?.functions ?? [],
+  };
+  findings.push(
+    finding(
+      "schema.deliveries",
+      equal(deliveriesFound, EXPECTED_DELIVERIES),
+      `deliveries: ${deliveriesFound.constraints.length} constraints (expected: ${EXPECTED_DELIVERIES.constraints.length}, exact definitions); unique indexes: ${deliveriesFound.uniqueIndexes.length} (expected: ${EXPECTED_DELIVERIES.uniqueIndexes.length}); triggers: ${list(deliveriesFound.triggers)}; functions: ${list(deliveriesFound.functions)}`,
     ),
   );
 

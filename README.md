@@ -21,6 +21,8 @@ Porandú conecta inventario, conversaciones, intención de compra y operación c
 > **Hito 19 — Ciclo de vida de las unidades (DEC-051):** las unidades del stock siguen una máquina de estados formal (en preparación → disponible ⇄ reservada → vendida, terminal). Se ponen en el salón, se reservan y se liberan desde Stock y desde la ficha del catálogo, y se venden solo al cerrar Ganada su oportunidad, en la misma transacción. Reemplaza la disponibilidad de H1.3C (`markVehicleAvailable()` y la policy `vehicles_update_mark_available`). `0020_vehicle_lifecycle` se aplica a staging después del merge (ver "Ciclo de vida de las unidades (Hito 19)").
 >
 > **Hito 20 — Toma de usados y tasaciones (DEC-052):** el panel "Vehículo en parte de pago / Toma" de `/opportunities/[id]` registra el usado que el cliente entrega, lo tasa un admin (valor de toma, costo de reacondicionamiento y costo total de ingreso; los costos solo los ve el admin) y registra la respuesta del cliente. Ganar la oportunidad con la toma aprobada inserta el usado en `vehicles` como unidad En preparación en la misma transacción del cierre. `0021_trade_ins` se aplica a staging después del merge (ver "Toma de usados y tasaciones (Hito 20)").
+>
+> **Hito 21 — Logística y entregas (DEC-053):** el panel "Coordinación de Entrega" de `/opportunities/[id]` (solo con la oportunidad Ganada) programa la entrega de la unidad vendida, lleva el checklist físico (llaves, manuales, auxilio, limpieza y documentos) y, con todo verificado, "Completar Entrega y Dar Salida al Vehículo" completa el remito y pasa la unidad a Entregada en una sola transacción: sale del Inventario, del Catálogo y de las Métricas del salón. `0022_deliveries` se aplica a staging después del merge (ver "Logística y entregas (Hito 21)").
 
 ---
 
@@ -1166,6 +1168,48 @@ closeOpportunity() → … → withTenant(): FOR UPDATE oportunidad → unidad v
 - **Fuera de este bloque:** fotos y documentación del usado, tasación asistida o automática, historial de tasaciones, editar el usado, el saldo del cierre, el precio de venta de la unidad que nace, la venta como entidad, la preventa "Próximamente", Matching al ponerla en el salón y un rol de tasador.
 - **Tests:** `tests/unit/domains/opportunities/trade-ins.test.ts` (la matriz, las reglas del fundador, el costo de ingreso, la validación y los planes) y `trade-in-presentation.test.ts` (ViewModel, visibilidad de la sección financiera y estado optimista), `tests/unit/trade-ins/` (Server Actions y panel), los cierres (`close-action.test.ts`, `closure-fields.test.ts`) y la guarda de escritura de ESLint. `tests/db/trade-ins.test.ts` contra PostgreSQL 17: RLS, los 16 pares del trigger cruzados con el dominio, tasación solo del admin, sellos e inmutabilidad (también para el rol dueño), CHECKs, el ingreso y el constraint trigger diferido, las Server Actions y la regla de oro de punta a punta (registrar → tasar → aprobar → ganar → la unidad nace En preparación y aparece en el Inventario y en el panel), con los casos sin aprobación y perdida, un conflicto de venta, una falla inyectada que revierte todo y carreras reales. `tests/db/migrations.test.ts` aplica `0021` sobre una base en el Hito 19; `tests/db/pipeline.test.ts` prueba la toma vigente del embudo.
 - `0021_trade_ins` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0021_trade_ins` si staging ya tiene `0020` (o con las anteriores que falten delante, en orden). La verificación suma `schema.trade-ins` y amplía `schema.tables`, `rls.policies` y `schema.opportunity-stages`.
+
+## Logística y entregas (Hito 21)
+
+La entrega física de la unidad vendida al cliente de una oportunidad ganada (DEC-053): se programa la fecha pactada, se tilda el checklist físico y, con todo verificado, se completa el remito y la unidad sale del salón (`sold → delivered`) en la misma transacción.
+
+```text
+Ganada + unidad Vendida ──"Programar entrega"──► Entrega programada ──"Completar Entrega y Dar Salida al Vehículo"──► Entregada
+                                                   │  ▲ tildar el checklist / "Reprogramar"           (checklist entero verificado)
+                                                   └──┘
+Unidad: … ──► Vendida ──(solo con su entrega completada)──► Entregada (terminal, fuera del salón)
+
+Completar: completeDelivery() → requireTenant() → pedido (solo la entrega)
+→ withTenant(): SELECT … FOR UPDATE (entrega) → SELECT … FOR UPDATE (unidad) → plan del dominio (checklist guardado)
+→ UPDATE deliveries SET status = 'completed' (el trigger fija el sello) → UPDATE vehicles SET status = 'delivered'
+→ COMMIT (deliveries_completed_vehicle_delivered, diferido) → revalidar /opportunities/[id], el embudo, /stock, el catálogo, /cockpit y sus métricas
+```
+
+| Acción | Desde | Hacia | Quién |
+|---|---|---|---|
+| Programar entrega | Oportunidad Ganada, unidad Vendida | Entrega programada | Cualquier miembro activo |
+| Tildar / destildar un ítem | Entrega programada | Entrega programada | Cualquier miembro activo |
+| Reprogramar | Entrega programada | Entrega programada, otra fecha | Cualquier miembro activo |
+| Completar entrega | Entrega programada, checklist entero | Entregada; la unidad, Entregada | Cualquier miembro activo, con confirmación |
+
+- **Dominio puro** (`domains/opportunities/deliveries.ts`): la matriz (`pending → completed`, terminal), el checklist (`keys`, `manuals`, `spareTire`, `cleaning`, `documents`), la fecha pactada (hora de Asunción, desde ahora hasta 180 días) y los planes sobre las filas bloqueadas (`planDeliverySchedule()`, `planDeliveryReschedule()`, `planDeliveryChecklistChange()`, `planDeliveryCompletion()`). `domains/vehicles/lifecycle.ts` suma `sold → delivered` (transición `deliver`, canal `delivery`: nunca una acción de Stock). La presentación (`delivery-presentation.ts`) arma el panel y su estado optimista.
+- **Reglas del fundador:** solo se programa con la oportunidad Ganada y la unidad Vendida; no se completa sin el checklist entero verificado (el guardado en la base, no el del navegador).
+- **Puertas:** las Server Actions `scheduleDelivery()`, `rescheduleDelivery()`, `setDeliveryChecklistItem()` y `completeDelivery()` (`lib/deliveries/actions.ts`). El pedido trae la oportunidad o la entrega y su dato; la unidad es la vinculada de la ganada y la organización sale del `TenantContext`. ESLint impide importar `db/queries/deliveries-write.ts` desde otro módulo.
+- **Respuestas:** `scheduled`, `rescheduled`, `changed` o `completed`; `unchanged`; `already_scheduled`; `already_completed`; `checklist_incomplete` (con los ítems que faltan); `vehicle_conflict` (la unidad no está Vendida en el salón); `opportunity_not_won`; `invalid`; `not_found` (inexistente o de otra organización, sin distinguir) y `failed` (sin detalles de la base).
+- **Base (`0022_deliveries`):**
+  - `deliveries` con FKs compuestas hacia la oportunidad y la unidad, una entrega por oportunidad y una por unidad (uniques), el checklist `jsonb` con exactamente los cinco ítems booleanos, `completed_at`/`completed_by` si y solo si está completada y solo con todo verificado (CHECKs).
+  - RLS: lectura de la organización; alta solo pendiente, sin nada verificado ni sello, con el autor y el reloj de la base, para la unidad vendida de una oportunidad ganada; UPDATE tenant-scoped. Grants: `SELECT` e `INSERT` de tabla y UPDATE solo de `status`, `checklist`, `scheduled_at` y `updated_at`. Sin DELETE.
+  - Trigger `deliveries_change_guard` (invoker, `search_path` vacío, sin EXECUTE para nadie), que no exime al rol dueño: oportunidad, unidad, autor y sello inmutables; completada es terminal; completar exige el checklist entero, un usuario y la unidad vendida (leída `FOR SHARE`), y fija el sello. Todo con `23514`.
+  - `vehicles_status_check` suma `delivered`, y el trigger `vehicles_status_transition` (función reemplazada) suma `sold → delivered` solo con la entrega completada (`vehicles_delivery_requires_completed`).
+  - Constraint trigger diferido `deliveries_completed_vehicle_delivered`: una entrega completada sin su unidad entregada revierte la transacción entera al COMMIT.
+  - Postcondiciones: las de `0021`, con `deliveries` en las altas y los cambios aprobados y las ganadas con su unidad vendida o entregada, y las de DEC-053.
+- **Salida del salón:** el Inventario (`/stock`) y las Métricas del salón no leen las unidades entregadas; el Catálogo ya mostraba solo disponibles, reservadas y vendidas. El embudo y el detalle siguen mostrando la venta.
+- **Concurrencia:** completar bloquea entrega → unidad; tildar y reprogramar, solo la entrega; programar, oportunidad → unidad. Destildar y completar a la vez se serializan (nunca una completada con un ítem sin verificar); dos completados a la vez dan una sola salida; dos programaciones, una sola entrega.
+- **UI:** el panel va después del resumen del cierre: la unidad de la venta, la fecha pactada (sugerida desde la del cierre) con "Reprogramar" y aviso de fecha vencida, el checklist con casillas de Radix (`components/ui/checkbox.tsx`, dependencia nueva `@radix-ui/react-checkbox`), un medidor de cinco segmentos y el botón de completar, habilitado solo con todo verificado y con confirmación (alertdialog, foco en "Cancelar"). Optimista (`useOptimistic`): cada casilla, la reprogramación y el completado se ven al instante; un aviso (región `status`) dice cómo terminó. Verificado con Playwright en 390 y 1280 px, sin scroll horizontal, de punta a punta: programar → tildar (click y Espacio) → recargar → confirmar → la unidad ya no está en `/stock`.
+- **Limitaciones conocidas:** el cierre (DEC-034) conserva su "estado y fecha de entrega" acordados, inmutables: el remito registra la entrega real sin reescribirlos. Una entrega completada no se deshace. Las ventas ganadas antes de `0022` quedan Vendidas, sin entrega, hasta que alguien la programe y la complete.
+- **Fuera de este bloque:** fotos o firma del cliente en el remito, PDF del remito, notas por ítem, asignar un responsable, notificaciones o recordatorios, la entrega en la agenda (`/calendar`), entregas parciales y todo lo listado como futuro.
+- **Tests:** `tests/unit/domains/opportunities/deliveries.test.ts`, `tests/unit/deliveries/delivery-panel.test.ts`, `tests/unit/domains/vehicles/lifecycle.test.ts` (los 25 pares) y la guarda de escritura de ESLint. `tests/db/deliveries.test.ts` contra PostgreSQL 17: RLS y aislamiento entre organizaciones, grants, el trigger y los CHECKs (también para el rol dueño), la salida solo con la entrega completada, el constraint trigger diferido, las Server Actions de punta a punta (programar → tildar → completar → la unidad deja el Inventario y el Catálogo), una falla inyectada que revierte las dos filas y carreras reales. `tests/db/migrations.test.ts` aplica `0022` sobre una base en el Hito 20.
+- `0022_deliveries` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0022_deliveries` si staging ya tiene `0021` (o con las anteriores que falten delante, en orden). La verificación suma `schema.deliveries` y amplía `schema.tables`, `rls.policies`, los privilegios de `authenticated` y `schema.vehicle-lifecycle`.
 
 ## Convenciones
 
