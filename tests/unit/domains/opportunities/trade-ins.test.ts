@@ -427,6 +427,29 @@ describe("planes sobre la fila bloqueada", () => {
   });
 
   describe("decidir", () => {
+    const ADMIN = { isAdmin: true };
+    const SELLER = { isAdmin: false };
+
+    it("aprobar la toma es de un admin: un seller recibe requires_admin, en cualquier estado (DEC-054 §2)", () => {
+      for (const status of TRADE_IN_STATUSES) {
+        expect(planTradeInDecision(target(status), "accept", SELLER)).toEqual({
+          kind: "requires_admin",
+        });
+      }
+    });
+
+    it("un seller sí rechaza, descarta y registra que el cliente desistió", () => {
+      expect(
+        planTradeInDecision(target("appraised"), "reject", SELLER),
+      ).toMatchObject({ kind: "change", to: "rejected" });
+      expect(
+        planTradeInDecision(target("pending"), "discard", SELLER),
+      ).toMatchObject({ kind: "change", to: "rejected" });
+      expect(
+        planTradeInDecision(target("accepted"), "withdraw", SELLER),
+      ).toMatchObject({ kind: "change", to: "rejected" });
+    });
+
     const CASES: [TradeInStatus, string, object][] = [
       [
         "appraised",
@@ -483,13 +506,18 @@ describe("planes sobre la fila bloqueada", () => {
         planTradeInDecision(
           target(status),
           decision as (typeof TRADE_IN_DECISION_IDS)[number],
+          ADMIN,
         ),
       ).toEqual(plan);
     });
 
     it("aceptar una tasada sin valor de toma (dato incompleto) tampoco pasa", () => {
       expect(
-        planTradeInDecision(target("appraised", { appraisal: null }), "accept"),
+        planTradeInDecision(
+          target("appraised", { appraisal: null }),
+          "accept",
+          ADMIN,
+        ),
       ).toEqual({ kind: "offer_price_required" });
     });
 
@@ -501,6 +529,7 @@ describe("planes sobre la fila bloqueada", () => {
             planTradeInDecision(
               target("appraised", { opportunityStage: stage }),
               decision,
+              ADMIN,
             ),
           ).toEqual({ kind: "opportunity_closed", stage });
         }

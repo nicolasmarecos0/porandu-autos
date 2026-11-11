@@ -14,11 +14,14 @@ import { CockpitViewSwitch, type CockpitViewId } from "./cockpit-view-switch";
 export function CockpitHeader({
   title,
   current,
+  canViewMetrics,
   aside,
   children,
 }: {
   title: string;
   current: CockpitViewId;
+  /** El rol ve las Métricas del salón (DEC-054 §5). */
+  canViewMetrics: boolean;
   /** A la derecha del título en escritorio; debajo en un teléfono. */
   aside?: ReactNode;
   /** Línea de lectura rápida bajo el título. */
@@ -29,7 +32,10 @@ export function CockpitHeader({
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
           <h1 className="text-title text-text-primary">{title}</h1>
-          <CockpitViewSwitch current={current} />
+          <CockpitViewSwitch
+            current={current}
+            canViewMetrics={canViewMetrics}
+          />
         </div>
         {aside}
       </div>

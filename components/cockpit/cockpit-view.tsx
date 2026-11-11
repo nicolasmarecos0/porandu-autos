@@ -21,9 +21,11 @@ import { CockpitSummary } from "./cockpit-summary";
 export function CockpitView({
   title,
   feed,
+  canViewMetrics,
 }: {
   title: string;
   feed: CockpitFeed;
+  canViewMetrics: boolean;
 }) {
   return (
     <WorkspaceLayout
@@ -31,6 +33,7 @@ export function CockpitView({
         <CockpitHeader
           title={title}
           current="feed"
+          canViewMetrics={canViewMetrics}
           aside={
             <p className="text-label text-text-muted">
               Actualizado{" "}

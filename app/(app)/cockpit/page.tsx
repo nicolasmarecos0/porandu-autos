@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { CockpitView } from "@/components/cockpit/cockpit-view";
 import { getNavItem } from "@/components/shell/navigation";
 import { getCockpitFeed } from "@/db/queries/cockpit";
+import { getViewerCapabilities } from "@/lib/auth/viewer";
 
 const { label } = getNavItem("cockpit");
 
@@ -18,6 +19,15 @@ export const metadata: Metadata = { title: label };
  * marca conversaciones como vistas ni cambia estados.
  */
 export default async function CockpitPage() {
-  const feed = await getCockpitFeed();
-  return <CockpitView title={label} feed={feed} />;
+  const [feed, viewer] = await Promise.all([
+    getCockpitFeed(),
+    getViewerCapabilities(),
+  ]);
+  return (
+    <CockpitView
+      title={label}
+      feed={feed}
+      canViewMetrics={viewer["metrics.view"]}
+    />
+  );
 }

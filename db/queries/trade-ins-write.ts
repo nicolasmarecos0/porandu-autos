@@ -60,6 +60,7 @@ import { stageFromDb } from "./opportunities";
 const CONSTRAINT_OUTCOMES = {
   trade_ins_opportunity_closed: "opportunity_closed",
   trade_ins_appraisal_requires_admin: "requires_admin",
+  trade_ins_acceptance_requires_admin: "requires_admin",
   trade_ins_offer_required: "offer_price_required",
   trade_ins_active_opportunity_key: "already_registered",
 } as const;
@@ -440,11 +441,14 @@ export type DecideTradeInOutcome =
     }>
   | Readonly<{ outcome: "offer_price_required"; opportunityId: string }>
   | Readonly<{ outcome: "opportunity_closed"; opportunityId: string }>
+  /** Aprobar la toma es de un admin (DEC-054 §2). */
+  | Readonly<{ outcome: "requires_admin"; opportunityId: string }>
   | Readonly<{ outcome: "not_found" }>;
 
 export async function writeTradeInDecision(
   ctx: TenantContext,
   request: TradeInDecisionRequest,
+  actor: TradeInActor,
 ): Promise<DecideTradeInOutcome> {
   let opportunityId: string | null = null;
   try {
@@ -455,7 +459,7 @@ export async function writeTradeInDecision(
       opportunityId = locked.opportunityId;
       const { identity } = locked;
 
-      const plan = planTradeInDecision(locked.target, request.decision);
+      const plan = planTradeInDecision(locked.target, request.decision, actor);
       switch (plan.kind) {
         case "unchanged":
           return {
@@ -475,6 +479,8 @@ export async function writeTradeInDecision(
           return { outcome: "offer_price_required", opportunityId };
         case "opportunity_closed":
           return { outcome: "opportunity_closed", opportunityId };
+        case "requires_admin":
+          return { outcome: "requires_admin", opportunityId };
         case "change":
           break;
       }
@@ -503,7 +509,9 @@ export async function writeTradeInDecision(
     const outcome = constraintOutcomeOf(error);
     if (
       opportunityId !== null &&
-      (outcome === "opportunity_closed" || outcome === "offer_price_required")
+      (outcome === "opportunity_closed" ||
+        outcome === "offer_price_required" ||
+        outcome === "requires_admin")
     ) {
       return { outcome, opportunityId };
     }

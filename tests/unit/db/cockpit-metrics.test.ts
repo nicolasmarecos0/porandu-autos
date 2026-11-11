@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getCockpitMetrics } from "@/db/queries/cockpit-metrics";
+import type { CockpitMetrics } from "@/domains/cockpit/metrics";
 
 /*
  * Loader de las Métricas del salón (propuesta DEC-050), sin base de datos:
@@ -34,7 +35,11 @@ vi.mock("@/lib/tenant/session", () => ({
 vi.mock("@/db/tenant", () => ({ withTenant: mocks.withTenant }));
 
 const ORG = "00000000-0000-4000-8000-000000000001";
-const CTX = Object.freeze({ organizationId: ORG, marker: "tenant-context" });
+const CTX = Object.freeze({
+  organizationId: ORG,
+  role: "admin",
+  marker: "tenant-context",
+});
 /** 14:30 del martes 3 de noviembre de 2026 en Asunción. */
 const NOW = new Date("2026-11-03T17:30:00Z");
 
@@ -151,6 +156,15 @@ beforeEach(() => {
   );
 });
 
+/** Las métricas de un admin: el loader siempre las devuelve listas. */
+async function readyMetrics(
+  ...args: Parameters<typeof getCockpitMetrics>
+): Promise<CockpitMetrics> {
+  const result = await getCockpitMetrics(...args);
+  if (result.kind !== "ready") throw new Error("expected ready metrics");
+  return result.metrics;
+}
+
 describe("getCockpitMetrics: requireTenant() → withTenant()", () => {
   it("obtiene el contexto con requireTenant() y lo pasa tal cual a una sola withTenant() con cinco lecturas", async () => {
     await getCockpitMetrics({}, NOW);
@@ -159,6 +173,18 @@ describe("getCockpitMetrics: requireTenant() → withTenant()", () => {
     expect(mocks.withTenant).toHaveBeenCalledTimes(1);
     expect(mocks.withTenant.mock.calls[0]?.[0]).toBe(CTX);
     expect(mocks.queries).toHaveLength(READS.length);
+  });
+
+  it("un seller recibe `restricted` sin abrir withTenant() (DEC-054 §5)", async () => {
+    mocks.requireTenant.mockImplementationOnce(async () => {
+      mocks.calls.push("requireTenant");
+      return { ...CTX, role: "seller" };
+    });
+
+    expect(await getCockpitMetrics({}, NOW)).toEqual({ kind: "restricted" });
+    expect(mocks.calls).toEqual(["requireTenant"]);
+    expect(mocks.withTenant).not.toHaveBeenCalled();
+    expect(mocks.queries).toHaveLength(0);
   });
 
   it("si requireTenant() redirige (sin sesión, sin acceso), no consulta", async () => {
@@ -306,7 +332,7 @@ describe("el período de la URL llega a la base como instantes", () => {
   });
 
   it("un período inválido cae a los últimos 30 días con el aviso", async () => {
-    const metrics = await getCockpitMetrics({ period: "1y" }, NOW);
+    const metrics = await readyMetrics({ period: "1y" }, NOW);
 
     expect(metrics.period.kind).toBe("30d");
     expect(metrics.notice).toBe(
@@ -318,7 +344,7 @@ describe("el período de la URL llega a la base como instantes", () => {
 
 describe("filas de la base → ViewModel", () => {
   it("arma cada bloque con las reglas del dominio", async () => {
-    const metrics = await getCockpitMetrics({}, NOW);
+    const metrics = await readyMetrics({}, NOW);
 
     expect(metrics.funnel).toEqual({
       open: 5,

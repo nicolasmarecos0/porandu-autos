@@ -111,10 +111,18 @@ export type TradeInCardView = Readonly<{
   /** "Registró: Otro miembro · 9 nov 2026 09:12". */
   registeredLabel: string;
   appraisal: TradeInAppraisalView | null;
-  /** Lo que el que mira puede decidir hoy (cualquier miembro). */
+  /**
+   * Lo que el que mira puede decidir hoy. Aprobar la toma (`accept`) es de
+   * un admin (DEC-054 §2): para un seller no está acá.
+   */
   decisions: readonly TradeInDecisionId[];
   /** Tasar (pendiente) o retasar (tasado): solo un admin. */
   appraise: "appraise" | "reappraise" | null;
+  /**
+   * Las acciones que la toma admite hoy pero el rol del que mira no
+   * (DEC-054 §6): la UI las muestra bloqueadas, con quién las hace.
+   */
+  locked: readonly ("appraise" | "accept")[];
   /**
    * La tasación vigente en es-PY, para precargar la retasación. Solo para
    * el admin.
@@ -179,7 +187,7 @@ export type TradeInPanelData = Readonly<{
 export const TRADE_IN_DECISION_LABELS: Readonly<
   Record<TradeInDecisionId, string>
 > = {
-  accept: "Cliente aprobó",
+  accept: "Aprobar toma",
   reject: "Cliente rechazó",
   discard: "Descartar toma",
   withdraw: "Cliente desistió",
@@ -197,10 +205,10 @@ export const TRADE_IN_DECISION_COPY: Readonly<
   Record<TradeInDecisionId, TradeInDecisionCopy>
 > = {
   accept: {
-    title: "Registrar que el cliente aprobó la toma",
+    title: "Aprobar la toma",
     description:
-      "El cliente aceptó el valor de toma. Al marcar la oportunidad como ganada, el usado ingresa al stock como unidad En preparación.",
-    confirm: "Aprobado por el cliente",
+      "Confirmás, como administrador, que el cliente aceptó el valor de toma. Al marcar la oportunidad como ganada, el usado ingresa al stock como unidad En preparación.",
+    confirm: "Aprobar toma",
     tone: "primary",
   },
   reject: {
@@ -283,10 +291,15 @@ export function tradeInNote(
               text: "La oportunidad se perdió: la toma quedó sin la respuesta del cliente.",
             };
       }
-      return {
-        tone: "info",
-        text: "Comunicale al cliente el valor de toma y registrá su respuesta.",
-      };
+      return viewerIsAdmin
+        ? {
+            tone: "info",
+            text: "Comunicale al cliente el valor de toma y registrá su respuesta.",
+          }
+        : {
+            tone: "info",
+            text: "Comunicale al cliente el valor de toma. Si acepta, la aprobación la confirma un admin (gerente).",
+          };
     case "accepted":
       if (stocked) {
         return {
@@ -398,7 +411,17 @@ export function tradeInCardView(
             : null,
         )
       : null,
-    decisions: open ? decisionsFor(row.status) : [],
+    decisions: open
+      ? decisionsFor(row.status).filter((id) => admin || id !== "accept")
+      : [],
+    locked:
+      open && !admin
+        ? row.status === "pending"
+          ? ["appraise"]
+          : row.status === "appraised"
+            ? ["accept"]
+            : []
+        : [],
     appraise:
       open && admin
         ? row.status === "pending"
@@ -559,6 +582,7 @@ export function optimisticTradeInPanel(
     ...view,
     decisions: [],
     appraise: null,
+    locked: [],
   });
   const appraisedLabel = `Tasó: Vos · ${formatDemandDate(now)}`;
 
@@ -643,8 +667,6 @@ export const TRADE_IN_MESSAGES = {
     "Para aprobarla hace falta el valor de toma: primero la tasa un admin. No se hizo ningún cambio.",
   opportunity_closed:
     "La oportunidad ya está cerrada: la toma no cambia más. No se hizo ningún cambio.",
-  requires_admin:
-    "Solo un admin (tasador o gerente) carga la tasación. No se hizo ningún cambio.",
   already_registered:
     "La oportunidad ya tiene una toma vigente: decidí esa antes de registrar otra. No se registró nada.",
   not_found: "No encontramos la toma. Puede que ya no exista.",
@@ -659,7 +681,7 @@ export function tradeInDecisionMessage(
 ): string {
   switch (decision) {
     case "accept":
-      return `${label}: aprobado por el cliente. Al ganar la oportunidad, ingresa al stock En preparación.`;
+      return `${label}: toma aprobada. Al ganar la oportunidad, ingresa al stock En preparación.`;
     case "reject":
       return `${label}: el cliente rechazó la toma.`;
     case "discard":

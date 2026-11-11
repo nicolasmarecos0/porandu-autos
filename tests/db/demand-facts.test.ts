@@ -47,11 +47,12 @@ vi.mock("server-only", () => ({}));
 /*
  * Las postcondiciones del ledger append-only (0007) viajan en cada migración
  * posterior junto con las de toda la base: se corren las de la última que
- * amplió las altas y los cambios aprobados (0022_deliveries, DEC-053), que
- * son las que describen el catálogo real de hoy.
+ * amplió las altas, los cambios y los borrados aprobados
+ * (0023_security_roles, DEC-054), que son las que describen el catálogo real
+ * de hoy.
  */
 const MIGRATION = new URL(
-  "../../db/migrations/0022_deliveries.sql",
+  "../../db/migrations/0023_security_roles.sql",
   import.meta.url,
 );
 
@@ -762,7 +763,7 @@ describe("postcondiciones del ledger (0007, vigentes en 0012) sobre catálogos m
        CREATE POLICY probe ON public.opportunity_demand_facts FOR UPDATE TO authenticated
          USING (organization_id IN (SELECT private.user_org_ids()))
          WITH CHECK (organization_id IN (SELECT private.user_org_ids()))`,
-      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\), opportunities\.stage, loss_reason, vehicle_id, updated_at and the closure metadata \(H1\.6, Hito 2, DEC-034\), organizations\.name, default_currency, updated_at and memberships\.role, active, updated_at \(Hito 6, DEC-038\), test_drives\.status, updated_at \(Hito 9, DEC-041\), quotes\.status, updated_at \(Hito 10, DEC-042\) and trade_ins\.status, currency, estimated_repair_cost, offer_price, converted_vehicle_id, updated_at \(Hito 20, DEC-052\) and deliveries\.status, checklist, scheduled_at, updated_at \(Hito 21, DEC-053\)/,
+      /may only update vehicles\.status, vehicles\.updated_at \(H1\.3C\), vehicles\.price, vehicles\.currency \(Hito 22, DEC-054\), opportunities\.stage, loss_reason, vehicle_id, updated_at and the closure metadata \(H1\.6, Hito 2, DEC-034\), organizations\.name, default_currency, updated_at and memberships\.role, active, updated_at \(Hito 6, DEC-038\), test_drives\.status, updated_at \(Hito 9, DEC-041\), quotes\.status, updated_at \(Hito 10, DEC-042\) and trade_ins\.status, currency, estimated_repair_cost, offer_price, converted_vehicle_id, updated_at \(Hito 20, DEC-052\) and deliveries\.status, checklist, scheduled_at, updated_at \(Hito 21, DEC-053\)/,
     ],
     [
       "UPDATE de service_role",

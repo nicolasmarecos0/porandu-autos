@@ -659,11 +659,18 @@ describe("la base exige la máquina del dominio (trigger vehicles_status_transit
     },
   );
 
-  it("el rol dueño no cambia otras columnas: vehicles_immutable, aun junto con un pase válido", async () => {
+  it("el rol dueño no cambia otras columnas: vehicles_immutable, aun junto con un pase válido; ni el precio, que es de un admin (0023)", async () => {
     const id = await unit(ORG_1, "available");
     const before = await row(id);
+    await expect(
+      asOwner((sql) =>
+        sql.unsafe("UPDATE public.vehicles SET price = 1 WHERE id = $1", [id]),
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint_name: "vehicles_price_requires_admin",
+    });
     for (const statement of [
-      "UPDATE public.vehicles SET price = 1 WHERE id = $1",
       "UPDATE public.vehicles SET brand = 'Pisada', status = 'reserved' WHERE id = $1",
       "UPDATE public.vehicles SET organization_id = '" +
         ORG_2 +
@@ -686,7 +693,6 @@ describe("la base exige la máquina del dominio (trigger vehicles_status_transit
     const before = await row(id);
     for (const set of [
       { brand: "Pisada" },
-      { price: "1.00", currency: "USD" as const },
       { km: 1 },
       { organizationId: ORG_2 },
     ]) {
@@ -695,6 +701,17 @@ describe("la base exige la máquina del dominio (trigger vehicles_status_transit
         "42501",
       );
     }
+    // El precio tiene grant desde 0023 (DEC-054 §3), pero nunca junto con
+    // un pase de estado.
+    await expectSqlError(
+      directUpdate(ctxA(), id, {
+        price: "1.00",
+        currency: "USD",
+        status: "reserved",
+      }),
+      "23514",
+      "vehicles_immutable",
+    );
     expect(await row(id)).toEqual(before);
   });
 

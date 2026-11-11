@@ -46,9 +46,12 @@ const AVAILABLE = unit(2, "available", "Hilux");
 const RESERVED = unit(3, "reserved", "Corolla");
 const SOLD = unit(4, "sold", "SW4");
 
-function renderStock(vehicles: readonly StockVehicle[]): string {
+function renderStock(
+  vehicles: readonly StockVehicle[],
+  canEditPrice = true,
+): string {
   return renderToStaticMarkup(
-    createElement(StockView, { title: "Stock", vehicles }),
+    createElement(StockView, { title: "Stock", vehicles, canEditPrice }),
   );
 }
 
@@ -67,6 +70,35 @@ function row(html: string, vehicle: StockVehicle): string {
   );
   return html.slice(start, html.indexOf("</li>", start));
 }
+
+describe("Inventario (/stock): el precio publicado según el rol (Hito 22, DEC-054 §3)", () => {
+  const rail = (html: string) =>
+    html.slice(html.indexOf('id="stock-unit-context"'));
+
+  it("un admin ve «Editar precio» en el contexto de la unidad", () => {
+    const html = rail(renderStock([AVAILABLE]));
+    expect(html).toMatch(/<button[^>]*>Editar precio<\/button>/);
+    expect(html).not.toContain('aria-disabled="true"');
+  });
+
+  it("un seller lo ve bloqueado, con quién lo cambia, y sin el drawer", () => {
+    const html = rail(renderStock([AVAILABLE], false));
+    expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>/);
+    expect(html).toContain("Editar precio");
+    expect(html).toContain(
+      "Solo un administrador (gerente) cambia el precio publicado.",
+    );
+    expect(html).not.toMatch(/<button[^>]*>Editar precio<\/button>/);
+  });
+
+  it("una vendida no ofrece editar el precio, a ningún rol", () => {
+    for (const canEditPrice of [true, false]) {
+      expect(rail(renderStock([SOLD], canEditPrice))).not.toContain(
+        "Editar precio",
+      );
+    }
+  });
+});
 
 describe("Inventario (/stock): una acción rápida por unidad", () => {
   const html = renderStock([PREPARING, AVAILABLE, RESERVED, SOLD]);

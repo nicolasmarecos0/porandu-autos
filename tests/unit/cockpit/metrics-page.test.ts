@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getCockpitMetrics: vi.fn(),
   CockpitMetricsView: vi.fn(() => null),
+  CockpitMetricsRestricted: vi.fn(() => null),
 }));
 
 vi.mock("@/db/queries/cockpit-metrics", () => ({
@@ -17,12 +18,14 @@ vi.mock("@/db/queries/cockpit-metrics", () => ({
 }));
 vi.mock("@/components/cockpit/metrics/metrics-view", () => ({
   CockpitMetricsView: mocks.CockpitMetricsView,
+  CockpitMetricsRestricted: mocks.CockpitMetricsRestricted,
 }));
 
 const { default: CockpitMetricsPage, metadata } =
   await import("@/app/(app)/cockpit/metrics/page");
 
 const METRICS = Object.freeze({ marker: "metrics" });
+const READY = Object.freeze({ kind: "ready", metrics: METRICS });
 
 function props(searchParams: Record<string, string | string[] | undefined>) {
   return {
@@ -38,7 +41,7 @@ beforeEach(() => {
 
 describe("/cockpit/metrics", () => {
   it("pasa las métricas del loader a la vista, con su título", async () => {
-    mocks.getCockpitMetrics.mockResolvedValueOnce(METRICS);
+    mocks.getCockpitMetrics.mockResolvedValueOnce(READY);
 
     const element = await CockpitMetricsPage(props({}));
 
@@ -52,13 +55,22 @@ describe("/cockpit/metrics", () => {
   });
 
   it("le pasa el período de la URL al loader sin interpretarlo (input no confiable)", async () => {
-    mocks.getCockpitMetrics.mockResolvedValueOnce(METRICS);
+    mocks.getCockpitMetrics.mockResolvedValueOnce(READY);
     const searchParams = { period: ["7d", "90d"], range: "year" };
 
     await CockpitMetricsPage(props(searchParams));
 
     expect(mocks.getCockpitMetrics).toHaveBeenCalledTimes(1);
     expect(mocks.getCockpitMetrics).toHaveBeenCalledWith(searchParams);
+  });
+
+  it("para un rol sin la vista directiva, el estado vacío y ningún número (DEC-054 §5)", async () => {
+    mocks.getCockpitMetrics.mockResolvedValueOnce({ kind: "restricted" });
+
+    const element = await CockpitMetricsPage(props({}));
+
+    expect(element.type).toBe(mocks.CockpitMetricsRestricted);
+    expect(element.props).toEqual({ title: "Métricas del salón" });
   });
 
   it("si el loader redirige (sin sesión, sin acceso), no renderiza", async () => {

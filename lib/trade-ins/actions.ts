@@ -13,6 +13,7 @@ import {
 } from "@/db/queries/trade-ins-write";
 import { formatMoney } from "@/domains/money";
 import { tradeInLabel } from "@/domains/opportunities/trade-in-presentation";
+import { can, unauthorizedRole } from "@/lib/auth/roles";
 import { PIPELINE_PATH } from "@/lib/opportunities/paths";
 import { opportunityPath } from "@/lib/quotes/paths";
 import { requireTenant } from "@/lib/tenant/session";
@@ -39,14 +40,18 @@ import {
  *
  * Tasar o retasar, appraiseTradeIn() (solo un admin: el tasador o gerente):
  *
- *   requireTenant() → leer y validar la tasación → writeTradeInAppraisal()
+ *   requireTenant() → rol con `trade_in.appraise` (lib/auth/roles.ts; si no,
+ *   UNAUTHORIZED_ROLE sin leer la tasación) → leer y validar la tasación →
+ *   writeTradeInAppraisal()
  *   (withTenant(), oportunidad y toma bloqueadas, plan del dominio con el
  *   rol de la membership, UPDATE, trigger) → revalidar
  *
- * Decidir, changeTradeInStatus() (cualquier miembro: registra lo que dijo
- * el cliente o que la toma no sigue):
+ * Decidir, changeTradeInStatus() (registra lo que dijo el cliente o que la
+ * toma no sigue; aprobarla, `accept`, es del admin, DEC-054 §2):
  *
- *   requireTenant() → leer la decisión → writeTradeInDecision() (withTenant(),
+ *   requireTenant() → leer la decisión → si es aprobar, rol con
+ *   `trade_in.approve` (si no, UNAUTHORIZED_ROLE sin tocar la base) →
+ *   writeTradeInDecision() (withTenant(),
  *   filas bloqueadas, plan del dominio, UPDATE compare-and-set, trigger) →
  *   revalidar
  *
@@ -117,7 +122,7 @@ export async function registerTradeIn(
     outcome = await insertTradeIn(
       ctx,
       { opportunityId, vehicle, appraisal },
-      { isAdmin: ctx.role === "admin" },
+      { isAdmin: can(ctx.role, "trade_in.appraise") },
     );
   } catch (error) {
     logFailure("register", error);
@@ -139,7 +144,7 @@ export async function registerTradeIn(
       revalidateTradeIn(opportunityId);
       return { status: outcome.outcome, values };
     case "requires_admin":
-      return { status: "requires_admin", values };
+      return { ...unauthorizedRole("trade_in.appraise"), values };
     case "not_found":
       return { status: "not_found" };
   }
@@ -150,6 +155,9 @@ export async function appraiseTradeIn(
   formData: FormData,
 ): Promise<AppraiseTradeInState> {
   const ctx = await requireTenant();
+  if (!can(ctx.role, "trade_in.appraise")) {
+    return unauthorizedRole("trade_in.appraise");
+  }
 
   const parsed = parseAppraiseTradeInRequest(formData);
   if (parsed.kind === "not_found") return { status: "not_found" };
@@ -163,7 +171,7 @@ export async function appraiseTradeIn(
     outcome = await writeTradeInAppraisal(
       ctx,
       { tradeInId, seen, appraisal },
-      { isAdmin: ctx.role === "admin" },
+      { isAdmin: can(ctx.role, "trade_in.appraise") },
     );
   } catch (error) {
     logFailure("appraise", error);
@@ -192,7 +200,7 @@ export async function appraiseTradeIn(
       revalidateTradeIn(outcome.opportunityId);
       return { status: "opportunity_closed" };
     case "requires_admin":
-      return { status: "requires_admin" };
+      return unauthorizedRole("trade_in.appraise");
     case "not_found":
       return { status: "not_found" };
   }
@@ -206,13 +214,18 @@ export async function changeTradeInStatus(
 
   const parsed = parseTradeInDecisionRequest(formData);
   if (parsed.kind === "not_found") return { status: "not_found" };
+  const isAdmin = can(ctx.role, "trade_in.approve");
+  if (parsed.decision === "accept" && !isAdmin) {
+    return unauthorizedRole("trade_in.approve");
+  }
 
   let outcome: DecideTradeInOutcome;
   try {
-    outcome = await writeTradeInDecision(ctx, {
-      tradeInId: parsed.tradeInId,
-      decision: parsed.decision,
-    });
+    outcome = await writeTradeInDecision(
+      ctx,
+      { tradeInId: parsed.tradeInId, decision: parsed.decision },
+      { isAdmin },
+    );
   } catch (error) {
     logFailure("change status", error);
     return { status: "failed" };
@@ -246,6 +259,8 @@ export async function changeTradeInStatus(
     case "opportunity_closed":
       revalidateTradeIn(outcome.opportunityId);
       return { status: "opportunity_closed" };
+    case "requires_admin":
+      return unauthorizedRole("trade_in.approve");
     case "not_found":
       return { status: "not_found" };
   }

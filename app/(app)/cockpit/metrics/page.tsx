@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 
-import { CockpitMetricsView } from "@/components/cockpit/metrics/metrics-view";
+import {
+  CockpitMetricsRestricted,
+  CockpitMetricsView,
+} from "@/components/cockpit/metrics/metrics-view";
 import { getCockpitMetrics } from "@/db/queries/cockpit-metrics";
 
 const TITLE = "Métricas del salón";
@@ -18,10 +21,16 @@ export const metadata: Metadata = { title: TITLE };
  *
  * Dinámica: lee cookies (la sesión y la organización activa). Sin caché
  * compartida entre requests (DEC-043 §6). Solo lee.
+ *
+ * Es la vista de la gerencia (Hito 22, DEC-054 §5): para un seller el
+ * loader no lee nada y la página muestra un estado vacío que lo explica.
  */
 export default async function CockpitMetricsPage({
   searchParams,
 }: PageProps<"/cockpit/metrics">) {
-  const metrics = await getCockpitMetrics(await searchParams);
-  return <CockpitMetricsView title={TITLE} metrics={metrics} />;
+  const result = await getCockpitMetrics(await searchParams);
+  if (result.kind === "restricted") {
+    return <CockpitMetricsRestricted title={TITLE} />;
+  }
+  return <CockpitMetricsView title={TITLE} metrics={result.metrics} />;
 }

@@ -14,10 +14,11 @@ import { finding, type Finding } from "./report.mts";
  * 0012_team_settings, 0013_whatsapp_ingestion, 0014_whatsapp_outbound,
  * 0015_test_drives, 0016_quotes, 0017_dashboard_indexes,
  * 0018_conversation_reads, 0019_whatsapp_delivery_status,
- * 0020_vehicle_lifecycle, 0021_trade_ins y 0022_deliveries, leído del
+ * 0020_vehicle_lifecycle, 0021_trade_ins, 0022_deliveries y
+ * 0023_security_roles, leído del
  * catálogo real (DEC-018, DEC-019, ADR-001 §2, §3.6 y §4, DEC-030, DEC-032,
  * DEC-033, DEC-034, DEC-036, DEC-038, DEC-039, DEC-040, DEC-041, DEC-042,
- * DEC-044, DEC-051, DEC-052, DEC-053).
+ * DEC-044, DEC-051, DEC-052, DEC-053, DEC-054).
  * Espeja tests/db/tenant-catalog y
  * tests/db/schema: si una migración nueva cambia lo esperado, se actualiza
  * junto con esos tests.
@@ -106,7 +107,8 @@ type Policy = {
  * decide su trigger (EXPECTED_TRADE_INS). El Hito 21 (DEC-053) suma la
  * lectura, el alta (pendiente, sin nada verificado ni sello, de la unidad
  * vendida de una oportunidad ganada) y la edición de deliveries: qué cambio
- * vale lo decide su trigger (EXPECTED_DELIVERIES).
+ * vale lo decide su trigger (EXPECTED_DELIVERIES). El Hito 22 (DEC-054)
+ * suma el único DELETE: anular una entrega pendiente, solo un admin.
  * Tal como las deparsea PostgreSQL 17.
  */
 export const EXPECTED_POLICIES: Policy[] = [
@@ -148,6 +150,16 @@ export const EXPECTED_POLICIES: Policy[] = [
     command: "SELECT",
     using:
       "(organization_id IN ( SELECT private.user_org_ids() AS user_org_ids))",
+    withCheck: null,
+  },
+  {
+    table: "deliveries",
+    name: "deliveries_delete_admin",
+    permissive: "PERMISSIVE",
+    roles: ["authenticated"],
+    command: "DELETE",
+    using:
+      "((organization_id IN ( SELECT private.user_admin_org_ids() AS user_admin_org_ids)) AND (status = 'pending'::text))",
     withCheck: null,
   },
   {
@@ -779,7 +791,9 @@ export const EXPECTED_TRADE_INS = {
  * autores) y las uniques por oportunidad y por unidad, el trigger BEFORE
  * UPDATE de cambios y el constraint trigger diferido que exige la unidad
  * entregada al completar, habilitados, y sus dos funciones: invoker, de
- * search_path vacío y sin EXECUTE para nadie.
+ * search_path vacío y sin EXECUTE para nadie. El Hito 22 (0023, DEC-054
+ * §4) suma el trigger BEFORE DELETE que conserva las completadas y su
+ * función.
  */
 export const EXPECTED_DELIVERIES = {
   constraints: [
@@ -802,10 +816,12 @@ export const EXPECTED_DELIVERIES = {
   triggers: [
     "O CREATE TRIGGER deliveries_change_guard BEFORE UPDATE ON public.deliveries FOR EACH ROW EXECUTE FUNCTION private.enforce_delivery_change()",
     "O CREATE CONSTRAINT TRIGGER deliveries_completed_vehicle_delivered AFTER UPDATE ON public.deliveries DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (((new.status = 'completed'::text) AND (old.status IS DISTINCT FROM 'completed'::text))) EXECUTE FUNCTION private.enforce_completed_delivery_vehicle_delivered()",
+    "O CREATE TRIGGER deliveries_delete_guard BEFORE DELETE ON public.deliveries FOR EACH ROW EXECUTE FUNCTION private.enforce_delivery_delete()",
   ],
   functions: [
     'private.enforce_completed_delivery_vehicle_delivered() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
     'private.enforce_delivery_change() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
+    'private.enforce_delivery_delete() SECURITY DEFINER=false config=search_path="" EXECUTE authenticated=false anon=false app_runtime=false guards=true',
   ],
 };
 
@@ -906,9 +922,11 @@ export const EXPECTED_TEAM_SETTINGS = {
  * H1.6 y el Hito 2 (opportunities), el Hito 6 (organizations, memberships),
  * el Hito 9 (test_drives) y el Hito 10 (quotes), que son por columna
  * (AUTHENTICATED_UPDATE_COLUMNS).
- * Ningún DELETE.
+ * El único DELETE es el de deliveries (Hito 22, DEC-054 §4: anular una
+ * entrega pendiente, solo un admin, por su policy).
  */
 const AUTHENTICATED_PRIVILEGES = [
+  "DELETE deliveries",
   "INSERT contacts",
   "INSERT deliveries",
   "INSERT memberships",
@@ -934,7 +952,7 @@ const AUTHENTICATED_PRIVILEGES = [
 /**
  * Lo único que authenticated puede actualizar (H1.3C, H1.6, el Hito 2, el
  * cierre de DEC-034, el Hito 6, el Hito 9, el Hito 10, el Hito 20 y el
- * Hito 21): nunca la tabla.
+ * Hito 21, y el precio publicado de vehicles del Hito 22): nunca la tabla.
  */
 const AUTHENTICATED_UPDATE_COLUMNS = [
   "deliveries.checklist",
@@ -967,6 +985,8 @@ const AUTHENTICATED_UPDATE_COLUMNS = [
   "trade_ins.offer_price",
   "trade_ins.status",
   "trade_ins.updated_at",
+  "vehicles.currency",
+  "vehicles.price",
   "vehicles.status",
   "vehicles.updated_at",
 ];
@@ -1562,6 +1582,8 @@ export async function verifyCatalog(
                 AND position('vehicles_status_transition' in p.prosrc) > 0
                 AND position('vehicles_immutable' in p.prosrc) > 0
                 AND position('vehicles_sale_requires_won' in p.prosrc) > 0
+                AND position('vehicles_price_requires_admin' in p.prosrc) > 0
+                AND position('vehicles_price_locked' in p.prosrc) > 0
                 AND position('vehicles_delivery_requires_completed' in p.prosrc) > 0
               )
               OR (
@@ -1711,6 +1733,7 @@ export async function verifyCatalog(
                 AND position('trade_ins_status_transition' in p.prosrc) > 0
                 AND position('trade_ins_appraisal_requires_user' in p.prosrc) > 0
                 AND position('trade_ins_appraisal_requires_admin' in p.prosrc) > 0
+                AND position('trade_ins_acceptance_requires_admin' in p.prosrc) > 0
                 AND position('FOR SHARE' in p.prosrc) > 0
               )
               OR (
@@ -1794,13 +1817,18 @@ export async function verifyCatalog(
                 p.oid = to_regprocedure('private.enforce_completed_delivery_vehicle_delivered()')
                 AND position('deliveries_completed_vehicle_delivered' in p.prosrc) > 0
               )
+              OR (
+                p.oid = to_regprocedure('private.enforce_delivery_delete()')
+                AND position('deliveries_cancel_requires_pending' in p.prosrc) > 0
+              )
             )
           ORDER BY p.proname
         )
         FROM pg_proc p
         WHERE p.oid IN (
           to_regprocedure('private.enforce_delivery_change()'),
-          to_regprocedure('private.enforce_completed_delivery_vehicle_delivered()')
+          to_regprocedure('private.enforce_completed_delivery_vehicle_delivered()'),
+          to_regprocedure('private.enforce_delivery_delete()')
         )
       ) AS functions
   `;
@@ -2125,7 +2153,7 @@ export async function verifyCatalog(
     finding(
       "privileges.authenticated",
       equal(authenticatedPrivileges, AUTHENTICATED_PRIVILEGES),
-      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships and test_drives, UPDATE on opportunities, vehicles, organizations, memberships and test_drives only; no DELETE)`,
+      `authenticated on public tables: ${list(authenticatedPrivileges)} (expected: SELECT on every table, INSERT on contacts, opportunities, vehicles, opportunity_demand_facts, opportunity_notes, messages, memberships and test_drives, UPDATE on opportunities, vehicles, organizations, memberships and test_drives only; DELETE only on deliveries)`,
     ),
   );
 

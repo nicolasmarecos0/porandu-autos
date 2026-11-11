@@ -6,6 +6,7 @@ import { opportunities, quotes, testDrives, vehicles } from "@/db/schema";
 import { withTenant, type TenantContext } from "@/db/tenant";
 import type { CockpitMetrics } from "@/domains/cockpit/metrics";
 import { ACTIVE_ORGANIZATION_COOKIE } from "@/lib/tenant/cookie";
+import { resolveTenant } from "@/lib/tenant/resolution";
 
 import { cookieJar, type CookieJar } from "../unit/support/cookie-jar";
 import { closureColumns } from "./support/closures";
@@ -728,12 +729,36 @@ async function redirectOf(promise: Promise<unknown>): Promise<string> {
   throw new Error("expected a redirect");
 }
 
+/** Las métricas del loader, que para un admin siempre están listas. */
+async function readyMetrics(
+  ...args: Parameters<typeof getCockpitMetrics>
+): Promise<CockpitMetrics> {
+  const result = await getCockpitMetrics(...args);
+  if (result.kind !== "ready") throw new Error("expected ready metrics");
+  return result.metrics;
+}
+
+/**
+ * Un contexto falsificado con rol admin (A-03): la vista directiva es de la
+ * gerencia (DEC-054 §5), así que el aislamiento se prueba con un admin; un
+ * seller no llega ni a la base.
+ */
+function forgedAdmin(userId: string, organizationId: string): TenantContext {
+  const resolution = resolveTenant(
+    { userId, claims: { sub: userId, role: "authenticated" } },
+    [{ organizationId, organizationName: "Organización", role: "admin" }],
+    undefined,
+  );
+  if (resolution.kind !== "resolved") throw new Error("unresolved tenant");
+  return resolution.context;
+}
+
 /** Las métricas con un contexto que Tenant Resolution no habría emitido. */
 async function forgedMetrics(ctx: TenantContext): Promise<CockpitMetrics> {
   request(null);
   mocks.forged = ctx;
   try {
-    return await getCockpitMetrics({}, NOW);
+    return await readyMetrics({}, NOW);
   } finally {
     mocks.forged = null;
   }
@@ -914,22 +939,22 @@ const ORG_2_30_DAYS: CockpitMetrics = {
 describe("loader real: requireTenant() → withTenant() → RLS", () => {
   it("A (ORG_1): embudo, conversión, motivos, ciclo, plata en juego, pruebas, atención y stock de los últimos 30 días", async () => {
     request(USER_A);
-    expect(await getCockpitMetrics({}, NOW)).toEqual(ORG_1_30_DAYS);
+    expect(await readyMetrics({}, NOW)).toEqual(ORG_1_30_DAYS);
   });
 
   it("B (ORG_2) ve solo los números de ORG_2", async () => {
     request(USER_B);
-    expect(await getCockpitMetrics({}, NOW)).toEqual(ORG_2_30_DAYS);
+    expect(await readyMetrics({}, NOW)).toEqual(ORG_2_30_DAYS);
   });
 
-  it("C con ORG_1 activa ve solo ORG_1, aunque RLS también le deja ver ORG_3 (filtro explícito)", async () => {
+  it("C con ORG_1 activa es seller: la vista directiva queda restringida (DEC-054 §5)", async () => {
     request(USER_C, ORG_1);
-    expect(await getCockpitMetrics({}, NOW)).toEqual(ORG_1_30_DAYS);
+    expect(await getCockpitMetrics({}, NOW)).toEqual({ kind: "restricted" });
   });
 
   it("C con ORG_3 activa ve solo ORG_3, con la suma exacta que un float no representa; nunca ORG_2 (inactiva)", async () => {
     request(USER_C, ORG_3);
-    const metrics = await getCockpitMetrics({}, NOW);
+    const metrics = await readyMetrics({}, NOW);
     expect(metrics.lossReasons).toEqual({
       lost: 1,
       reasons: [{ reason: "financing_rejected", count: 1, share: 100 }],
@@ -955,7 +980,7 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
 
   it("una organización sin datos: ceros y las tasas sin dato, nunca 0 %", async () => {
     request(USER_F);
-    expect(await getCockpitMetrics({}, NOW)).toEqual(EMPTY);
+    expect(await readyMetrics({}, NOW)).toEqual(EMPTY);
   });
 
   it("sin sesión o sin membership activa, no llega a la base: redirige", async () => {
@@ -968,7 +993,7 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
   });
 
   it("contexto falsificado (A-03): A con ORG_2 no cuenta ni ORG_2 ni ORG_1", async () => {
-    expect(await forgedMetrics(tenantContext(USER_A, ORG_2))).toEqual(EMPTY);
+    expect(await forgedMetrics(forgedAdmin(USER_A, ORG_2))).toEqual(EMPTY);
   });
 });
 
@@ -982,7 +1007,7 @@ describe("el período de la URL cambia los flujos, no el estado de hoy", () => {
 
   it("últimos 7 días: la ganada del 1 nov, la perdida del 30 oct y las pruebas desde el 28 oct", async () => {
     request(USER_A);
-    const metrics = await getCockpitMetrics({ period: "7d" }, NOW);
+    const metrics = await readyMetrics({ period: "7d" }, NOW);
     expect(metrics.period).toMatchObject({ kind: "7d", from: "2026-10-28" });
     expect(metrics.conversion).toEqual({
       won: 1,
@@ -1008,7 +1033,7 @@ describe("el período de la URL cambia los flujos, no el estado de hoy", () => {
 
   it("últimos 90 días: suma la ganada de 1 ms antes del piso de 30 días y la prueba del 1 sep", async () => {
     request(USER_A);
-    const metrics = await getCockpitMetrics({ period: "90d" }, NOW);
+    const metrics = await readyMetrics({ period: "90d" }, NOW);
     expect(metrics.conversion).toEqual({
       won: 3,
       lost: 3,
@@ -1027,7 +1052,7 @@ describe("el período de la URL cambia los flujos, no el estado de hoy", () => {
 
   it("todo el historial: sin piso, con la perdida de julio; el futuro sigue afuera", async () => {
     request(USER_A);
-    const metrics = await getCockpitMetrics({ period: "all" }, NOW);
+    const metrics = await readyMetrics({ period: "all" }, NOW);
     expect(metrics.period).toEqual({
       kind: "all",
       from: null,
@@ -1058,7 +1083,7 @@ describe("el período de la URL cambia los flujos, no el estado de hoy", () => {
 
   it("un período inválido cae a los últimos 30 días con el aviso, sin romper", async () => {
     request(USER_A);
-    expect(await getCockpitMetrics({ period: "1y" }, NOW)).toEqual({
+    expect(await readyMetrics({ period: "1y" }, NOW)).toEqual({
       ...ORG_1_30_DAYS,
       notice:
         "El período pedido no es válido. Se muestran los últimos 30 días.",
@@ -1068,7 +1093,7 @@ describe("el período de la URL cambia los flujos, no el estado de hoy", () => {
   it("al día siguiente del último día de validez, la cotización enviada deja de estar en juego", async () => {
     request(USER_A);
     const tomorrow = new Date(NOW.getTime() + DAY);
-    const [, usd] = (await getCockpitMetrics({}, tomorrow)).quoteValue;
+    const [, usd] = (await readyMetrics({}, tomorrow)).quoteValue;
     expect(usd).toEqual({
       currency: "USD",
       total: { count: 2, amount: "94490.50" },
@@ -1098,9 +1123,9 @@ describe("leer no escribe", () => {
     });
     const before = await snapshot();
     request(USER_A);
-    await getCockpitMetrics({ period: "all" }, NOW);
+    await readyMetrics({ period: "all" }, NOW);
     request(USER_B);
-    await getCockpitMetrics({}, NOW);
+    await readyMetrics({}, NOW);
     expect(await snapshot()).toEqual(before);
   });
 });
@@ -1136,11 +1161,11 @@ describe("mutaciones: los tests detectan cada barrera rota", () => {
     expect(unfiltered).toEqual(seeded([ORG_1, ORG_3]));
     // El loader real filtra: C con ORG_3 activa no ve el stock de ORG_1.
     request(USER_C, ORG_3);
-    expect((await getCockpitMetrics({}, NOW)).stock.total).toBe(2);
+    expect((await readyMetrics({}, NOW)).stock.total).toBe(2);
   });
 
   it("con RLS desactivado, el contexto falsificado contaría ORG_2: el filtro explícito no alcanza solo", async () => {
-    const forged = tenantContext(USER_A, ORG_2);
+    const forged = forgedAdmin(USER_A, ORG_2);
     const tables = ["opportunities", "vehicles", "quotes", "test_drives"];
     for (const table of tables) {
       await db.admin.unsafe(

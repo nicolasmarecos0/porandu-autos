@@ -34,6 +34,7 @@ import { StockSummary } from "./stock-summary";
 import { TransitionIcon } from "./transition-icon";
 import { EmptyUnitContext, UnitContext } from "./unit-context";
 import { useVehicleLifecycle } from "./use-vehicle-lifecycle";
+import { VehiclePriceAction } from "./vehicle-price-drawer";
 import {
   VehicleTransitionDialog,
   type TransitionRequest,
@@ -66,6 +67,8 @@ import {
  * - "Nueva unidad" (H1.3B) abre el alta rápida en un drawer. Al crear, la
  *   Server Action revalida la página, la lista trae la unidad nueva (en
  *   preparación) y la vista la selecciona y la muestra.
+ * - "Editar precio" (Hito 22, DEC-054 §3), en el contexto de la unidad: solo
+ *   un admin lo usa; un seller lo ve bloqueado, con quién lo cambia.
  */
 
 /** Aviso de la última escritura (alta o ciclo de vida). */
@@ -80,9 +83,12 @@ const RAIL_QUERY = "(min-width: 48rem)";
 export function StockView({
   title,
   vehicles,
+  canEditPrice,
 }: {
   title: string;
   vehicles: readonly StockVehicle[];
+  /** El rol tiene `vehicle.edit_price` (lib/auth/roles.ts). */
+  canEditPrice: boolean;
 }) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const lifecycle = useVehicleLifecycle(vehicles, setNotice);
@@ -160,12 +166,24 @@ export function StockView({
   }
 
   const contextAction = (vehicle: StockVehicle) => (
-    <TransitionButton
-      vehicle={vehicle}
-      saving={lifecycle.saving.has(vehicle.id)}
-      onRequest={requestTransition}
-      size="full"
-    />
+    <>
+      <TransitionButton
+        vehicle={vehicle}
+        saving={lifecycle.saving.has(vehicle.id)}
+        onRequest={requestTransition}
+        size="full"
+      />
+      {lifecycle.saving.has(vehicle.id) ? null : (
+        <VehiclePriceAction
+          vehicle={vehicle}
+          canEditPrice={canEditPrice}
+          onNotice={(next) => {
+            setSheetOpen(false);
+            setNotice(next);
+          }}
+        />
+      )}
+    </>
   );
 
   return (

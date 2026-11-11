@@ -2,10 +2,12 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 
+import type { Money } from "@/domains/money";
 import {
   planVehicleStatusChange,
   type StockTransitionId,
 } from "@/domains/vehicles/lifecycle";
+import { planVehiclePriceChange } from "@/domains/vehicles/price";
 import type { VehicleStatus } from "@/domains/vehicles/stock";
 
 import { vehicles } from "../schema";
@@ -162,4 +164,115 @@ export async function transitionVehicleStatus(
       to: plan.to,
     };
   });
+}
+
+/*
+ * Precio publicado de una unidad desde Stock (Hito 22, DEC-054 §3). La
+ * única puerta es la Server Action changeVehiclePrice() (lib/vehicles/
+ * actions.ts), que exige el rol con `vehicle.edit_price` (lib/auth/roles.ts)
+ * antes de llegar acá. La base lo vuelve a exigir: el trigger
+ * vehicles_status_transition de 0023 rechaza un cambio de precio de quien no
+ * es admin de la organización (vehicles_price_requires_admin), de una
+ * unidad vendida o entregada (vehicles_price_locked) o junto con un cambio
+ * de estado, y el CHECK vehicles_price_check, un precio no positivo o con
+ * decimales en guaraníes.
+ *
+ *   TenantContext → withTenant() → SELECT … FOR UPDATE (la unidad) →
+ *   planVehiclePriceChange() (dominio) → UPDATE price, currency … AND
+ *   status = <el leído> → RLS + trigger → COMMIT
+ */
+
+export type VehiclePriceChangeRequest = Readonly<{
+  vehicleId: string;
+  price: Money;
+}>;
+
+export type VehiclePriceChangeOutcome =
+  | Readonly<{
+      outcome: "changed";
+      vehicle: StatusChangeVehicle;
+      from: Money | null;
+      to: Money;
+    }>
+  | Readonly<{ outcome: "unchanged"; vehicle: StatusChangeVehicle }>
+  | Readonly<{
+      outcome: "locked";
+      vehicle: StatusChangeVehicle;
+      status: VehicleStatus;
+    }>
+  /** El trigger lo rechazó por rol (defensa en profundidad). */
+  | Readonly<{ outcome: "unauthorized_role" }>
+  | Readonly<{ outcome: "not_found" }>;
+
+function constraintOf(error: unknown): string | undefined {
+  const cause =
+    error instanceof Error && typeof error.cause === "object"
+      ? error.cause
+      : error;
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const name = (cause as { constraint_name?: unknown }).constraint_name;
+  return typeof name === "string" ? name : undefined;
+}
+
+export async function writeVehiclePrice(
+  ctx: TenantContext,
+  request: VehiclePriceChangeRequest,
+): Promise<VehiclePriceChangeOutcome> {
+  try {
+    return await withTenant(ctx, async (tx) => {
+      const { organizationId } = ctx;
+      const unit = and(
+        eq(vehicles.id, request.vehicleId),
+        eq(vehicles.organizationId, organizationId),
+      );
+      const [current] = await tx
+        .select({
+          ...identity,
+          status: vehicles.status,
+          price: vehicles.price,
+          currency: vehicles.currency,
+        })
+        .from(vehicles)
+        .where(unit)
+        .for("update");
+      if (!current) return { outcome: "not_found" };
+      const { status, price, currency, ...vehicle } = current;
+
+      const plan = planVehiclePriceChange(
+        {
+          status: statusFromDb[status],
+          price:
+            price !== null && currency !== null
+              ? { amount: price, currency }
+              : null,
+        },
+        request.price,
+      );
+      switch (plan.kind) {
+        case "unchanged":
+          return { outcome: "unchanged", vehicle };
+        case "locked":
+          return { outcome: "locked", vehicle, status: plan.status };
+        case "change":
+          break;
+      }
+
+      const updated = await tx
+        .update(vehicles)
+        .set({ price: plan.to.amount, currency: plan.to.currency })
+        .where(and(unit, eq(vehicles.status, status)))
+        .returning({ id: vehicles.id });
+      if (updated.length !== 1) {
+        throw new Error(
+          "vehicle price change affected an unexpected row count",
+        );
+      }
+      return { outcome: "changed", vehicle, from: plan.from, to: plan.to };
+    });
+  } catch (error) {
+    if (constraintOf(error) === "vehicles_price_requires_admin") {
+      return { outcome: "unauthorized_role" };
+    }
+    throw error;
+  }
 }

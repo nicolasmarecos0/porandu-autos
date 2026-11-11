@@ -175,6 +175,7 @@ function render({
         closureDeliveryDate: null,
         now: new Date("2026-11-11T13:00:00Z"),
       }),
+      canCancelDelivery: false,
     }),
   );
 }

@@ -203,6 +203,9 @@ export const DELIVERY_COMPLETION_FIELDS = {
   deliveryId: "deliveryId",
 } as const;
 
+/** Anular (Hito 22, DEC-054 §4): solo la entrega. */
+export const DELIVERY_CANCELLATION_FIELDS = DELIVERY_COMPLETION_FIELDS;
+
 export type DeliveryScheduledAtError =
   "required" | "invalid" | "in_the_past" | "too_far";
 
@@ -403,7 +406,29 @@ export function planDeliveryCompletion(
   return { kind: "complete" };
 }
 
+export type DeliveryCancellationPlan =
+  /** Borrar el remito pendiente: la venta sigue Vendida, sin entrega. */
+  | Readonly<{ kind: "cancel" }>
+  /** Completada: la unidad ya salió del salón y no se anula nunca. */
+  | Readonly<{ kind: "already_completed" }>;
+
+/**
+ * Decide, sin tocar nada, si una entrega se puede anular (Hito 22, DEC-054
+ * §4): solo una pendiente. Quién la anula (un admin) lo decide
+ * lib/auth/roles.ts (`delivery.cancel`); la base vuelve a exigir las dos
+ * cosas (policy deliveries_delete_admin y trigger deliveries_delete_guard).
+ */
+export function planDeliveryCancellation(
+  target: Pick<DeliveryTarget, "status">,
+): DeliveryCancellationPlan {
+  return target.status === "completed"
+    ? { kind: "already_completed" }
+    : { kind: "cancel" };
+}
+
 /* ── Copy (es-PY) ───────────────────────────────────────────────────────── */
+
+export const CANCEL_DELIVERY_LABEL = "Anular entrega";
 
 export const DELIVERY_PANEL_TITLE = "Coordinación de Entrega";
 

@@ -7,6 +7,7 @@ import {
   useOptimistic,
   useRef,
   useState,
+  useTransition,
   type FormEvent,
 } from "react";
 
@@ -22,6 +23,7 @@ import {
   LockIcon,
 } from "@/components/ui/icons";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { RestrictedAction } from "@/components/ui/restricted-action";
 import {
   checklistIncompleteMessage,
   COMPLETE_DELIVERY_LABEL,
@@ -38,6 +40,8 @@ import {
   DELIVERY_SCHEDULED_AT_ERRORS,
   deliveryCompletedMessage,
   deliveryVehicleConflictMessage,
+  CANCEL_DELIVERY_LABEL,
+  DELIVERY_CANCELLATION_FIELDS,
   missingChecklistItems,
   OPPORTUNITY_NOT_WON_MESSAGE,
   type DeliveryChecklistItem,
@@ -52,18 +56,25 @@ import {
   type DeliveryView,
 } from "@/domains/opportunities/delivery-presentation";
 import {
+  CAPABILITY_REQUIREMENTS,
+  unauthorizedRoleMessage,
+} from "@/lib/auth/roles";
+import {
+  cancelDelivery,
   completeDelivery,
   rescheduleDelivery,
   scheduleDelivery,
   setDeliveryChecklistItem,
 } from "@/lib/deliveries/actions";
 import type {
+  CancelDeliveryState,
   CompleteDeliveryState,
   DeliveryChecklistState,
   ScheduleDeliveryState,
 } from "@/lib/deliveries/requests";
 import { STOCK_PATH } from "@/lib/vehicles/paths";
 
+import { CancelDeliveryDialog } from "./cancel-delivery-dialog";
 import { CompleteDeliveryDialog } from "./complete-delivery-dialog";
 import { DeliveryStatusChip } from "./delivery-status";
 
@@ -171,12 +182,39 @@ function completeNotice(result: CompleteDeliveryState): Notice | null {
   }
 }
 
+/** Qué dice el panel de una respuesta de cancelDelivery() (DEC-054 §4). */
+function cancelNotice(result: CancelDeliveryState): Notice | null {
+  switch (result?.status) {
+    case "cancelled":
+      return {
+        tone: "success",
+        text: "Entrega anulada. La unidad sigue Vendida: podés programar otra entrega.",
+      };
+    case "already_completed":
+      return { tone: "error", text: DELIVERY_ALREADY_COMPLETED_MESSAGE };
+    case "unauthorized_role":
+      return {
+        tone: "error",
+        text: unauthorizedRoleMessage(result.capability),
+      };
+    case "not_found":
+      return { tone: "error", text: DELIVERY_NOT_FOUND_MESSAGE };
+    case "failed":
+      return { tone: "error", text: DELIVERY_FAILED_MESSAGE };
+    case undefined:
+      return null;
+  }
+}
+
 export function DeliveryPanel({
   opportunityId,
   data,
+  canCancel,
 }: {
   opportunityId: string;
   data: DeliveryPanelData;
+  /** El rol tiene `delivery.cancel` (lib/auth/roles.ts, DEC-054 §4). */
+  canCancel: boolean;
 }) {
   const [view, addOptimistic] = useOptimistic<
     DeliveryPanelState,
@@ -184,6 +222,8 @@ export function DeliveryPanel({
   >({ data, saving: false }, optimisticDeliveryPanel);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelPending, startCancel] = useTransition();
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const settled = useRef(false);
 
@@ -273,7 +313,12 @@ export function DeliveryPanel({
             <ScheduledDelivery
               delivery={current.delivery}
               min={current.minInput}
-              saving={view.saving}
+              saving={view.saving || cancelPending}
+              canCancel={canCancel}
+              onCancel={() => {
+                settled.current = false;
+                setCancelling(true);
+              }}
               onReschedule={(formData, scheduledInput) =>
                 run<ScheduleDeliveryState>(
                   { kind: "reschedule", scheduledInput },
@@ -325,6 +370,37 @@ export function DeliveryPanel({
         </div>
       </Panel>
 
+      {current.kind === "scheduled" ? (
+        <CancelDeliveryDialog
+          open={cancelling}
+          onCancel={() => setCancelling(false)}
+          onConfirm={() => {
+            settled.current = true;
+            setCancelling(false);
+            setNotice(null);
+            const formData = new FormData();
+            formData.set(
+              DELIVERY_CANCELLATION_FIELDS.deliveryId,
+              current.delivery.id,
+            );
+            startCancel(async () => {
+              let result: CancelDeliveryState;
+              try {
+                result = await cancelDelivery(null, formData);
+              } catch {
+                result = { status: "failed" };
+              }
+              announce(cancelNotice(result));
+            });
+          }}
+          onCloseAutoFocus={(event) => {
+            if (settled.current) {
+              event.preventDefault();
+              noticeRef.current?.focus();
+            }
+          }}
+        />
+      ) : null}
       {current.kind === "scheduled" ? (
         <CompleteDeliveryDialog
           open={confirming}
@@ -477,6 +553,8 @@ function ScheduledDelivery({
   delivery,
   min,
   saving,
+  canCancel,
+  onCancel,
   onReschedule,
   onCheck,
   onComplete,
@@ -484,6 +562,8 @@ function ScheduledDelivery({
   delivery: DeliveryView;
   min: string;
   saving: boolean;
+  canCancel: boolean;
+  onCancel: () => void;
   onReschedule: (formData: FormData, scheduledInput: string) => void;
   onCheck: (item: DeliveryChecklistItem, checked: boolean) => void;
   onComplete: () => void;
@@ -558,13 +638,31 @@ function ScheduledDelivery({
               </p>
             </div>
             {rescheduling ? null : (
-              <Button
-                className="h-10 sm:h-8"
-                disabled={saving}
-                onClick={() => setRescheduling(true)}
-              >
-                Reprogramar
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  className="h-10 sm:h-8"
+                  disabled={saving}
+                  onClick={() => setRescheduling(true)}
+                >
+                  Reprogramar
+                </Button>
+                {/* Anular es de la gerencia (DEC-054 §4). */}
+                {canCancel ? (
+                  <Button
+                    className="h-10 text-danger sm:h-8"
+                    disabled={saving}
+                    onClick={onCancel}
+                  >
+                    {CANCEL_DELIVERY_LABEL}
+                  </Button>
+                ) : (
+                  <RestrictedAction
+                    label={CANCEL_DELIVERY_LABEL}
+                    reason={CAPABILITY_REQUIREMENTS["delivery.cancel"]}
+                    className="h-10 sm:h-8"
+                  />
+                )}
+              </div>
             )}
           </div>
           {rescheduling ? (
