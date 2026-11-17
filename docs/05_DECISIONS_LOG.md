@@ -68,7 +68,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-052 | Toma de usados y tasaciones: el usado aceptado entra al stock con el cierre Ganada (Hito 20) | Aceptada | 2026-11-10 |
 | DEC-053 | Logística y entregas: remito con checklist físico y salida atómica de la unidad vendida (Hito 21) | Aceptada | 2026-11-11 |
 | DEC-054 | Seguridad, refinamiento de roles y accesos: la gerencia aprueba, fija precios, anula y audita (Hito 22, cierre del MVP) | Aceptada | 2026-11-11 |
-| DEC-055 | Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23) | Aceptada en principio | 2026-11-17 |
+| DEC-055 | Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23) | Aceptada | 2026-11-17 |
 | DEC-056 | Cliente del runtime para Supavisor desde Vercel (E3 parcial de ADR-001) | Aceptada en principio | 2026-11-17 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
@@ -1795,12 +1795,12 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Decisiones abiertas para el fundador: un rol `manager` o tasador separado del `admin`; métricas propias por vendedor; restringir `/intelligence`; auditoría de precios y anulaciones.
 
 ## DEC-055 — Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23)
-- **Estado:** Aceptada en principio · 2026-11-17. Formaliza el pedido del fundador del 16 nov 2026: rediseñar la interfaz de Porandú sobre las capturas de referencia de automotiveMastermind (perfil del cliente en tres columnas, barra de puntajes, Behavior Drivers, tarjetas de reemplazo, tabla de prospectos, notificaciones y app móvil), reemplazando su morado por un "Azul Oscuro Ejecutivo". Antes de escribir código se le presentaron al fundador los conflictos del pedido con DEC-013 (color de marca y "la referencia no se copia literalmente"), con DEC-003, DEC-005 y DEC-023 (completar con datos de respaldo lo que la base no tiene) y con las funciones que no tienen decisión. El fundador eligió:
+- **Estado:** Aceptada · 2026-11-17. El fundador la aceptó como definitiva el 17 nov 2026, junto con sus *propuestas de implementación* (incluidas las de la auditoría previa al deploy). Formaliza el pedido del fundador del 16 nov 2026: rediseñar la interfaz de Porandú sobre las capturas de referencia de automotiveMastermind (perfil del cliente en tres columnas, barra de puntajes, Behavior Drivers, tarjetas de reemplazo, tabla de prospectos, notificaciones y app móvil), reemplazando su morado por un "Azul Oscuro Ejecutivo". Antes de escribir código se le presentaron al fundador los conflictos del pedido con DEC-013 (color de marca y "la referencia no se copia literalmente"), con DEC-003, DEC-005 y DEC-023 (completar con datos de respaldo lo que la base no tiene) y con las funciones que no tienen decisión. El fundador eligió:
   - **Color:** `#0F1E36` solo en las superficies oscuras (banda superior y tarjeta del prospecto). `#376B89` sigue como acento en enlaces, selección y foco.
   - **Datos:** producto honesto. Se muestran solo datos reales; lo que falta se ve como "Sin dato" o no se muestra.
   - **Funciones nuevas:** solo la vista Tabla. Las demás quedan en backlog (§7).
 
-  Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+  Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido; quedaron aceptados con la decisión.
 - **Contexto:** `/opportunities` ya era una adaptación de esta misma referencia (DEC-015, "Reference-first + Porandú DNA"):
   - la tarjeta de identidad corresponde al perfil del cliente;
   - la franja de scores con el Porandú elevado, a BPS / In Market / Vehicle / Deal;
