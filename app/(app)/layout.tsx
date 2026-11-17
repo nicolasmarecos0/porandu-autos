@@ -18,6 +18,9 @@ import { requireTenant } from "@/lib/tenant/session";
  * loader (db/queries/opportunities.ts).
  */
 export default async function AppLayout({ children }: LayoutProps<"/">) {
-  await requireTenant();
-  return <AppShell>{children}</AppShell>;
+  const { claims } = await requireTenant();
+  // El email sale de los claims ya verificados: identifica la cuenta en la
+  // banda superior sin otra lectura (DEC-055).
+  const email = typeof claims.email === "string" ? claims.email : null;
+  return <AppShell account={{ email }}>{children}</AppShell>;
 }

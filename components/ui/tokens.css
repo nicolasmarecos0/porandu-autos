@@ -9,45 +9,50 @@
  * La paleta por defecto de Tailwind se elimina (`--color-*: initial`) para que
  * los componentes solo puedan usar colores definidos acá.
  *
- * Estética (DEC-013): software operativo enterprise, claro y denso. Banda
- * superior de marca `#376B89`, rail de navegación oscuro y compacto, workspace
- * claro-neutro con paneles blancos, franjas de métricas y encabezados de
- * tabla en grafito. Bordes y sombras sutiles, sin glow.
- * Los pares de texto/fondo cumplen WCAG AA (≥ 4.5:1).
+ * Estética (DEC-013, DEC-055): software operativo enterprise, claro y denso.
+ * Superficies oscuras de marca en azul marino ejecutivo `#0F1E36` (banda
+ * superior y tarjeta del prospecto); rail de navegación, franjas de métricas
+ * y encabezados de tabla en carbón neutro `#383838`; workspace gris claro
+ * neutro con paneles blancos. `#376B89` sigue siendo el acento de marca:
+ * enlaces, selección, navegación activa y foco. Bordes y sombras sutiles,
+ * sin glow.
+ * Los pares de texto/fondo cumplen WCAG AA (≥ 4.5:1). Los tonos `*-bright`
+ * no la cumplen como texto: son solo para líneas, bordes y barras.
  */
 
 @theme static {
   --color-*: initial;
 
   /* Backgrounds: fondo del workspace. */
-  --color-bg-canvas: #eef1f4;
-  --color-bg-subtle: #e6eaee;
+  --color-bg-canvas: #f4f5f7;
+  --color-bg-subtle: #eceef1;
 
   /* Surfaces: paneles y tarjetas, de mayor a menor protagonismo. */
   --color-surface-1: #ffffff;
-  --color-surface-2: #f7f9fa;
-  --color-surface-3: #eef2f5;
+  --color-surface-2: #f8f9fa;
+  --color-surface-3: #eff1f4;
 
   /*
-   * Surface inverse: rail de navegación, franja de métricas y encabezados de
-   * tabla. `raised` destaca un bloque dentro de una superficie inverse.
+   * Surface inverse (carbón neutro, DEC-055): rail de navegación, franja de
+   * métricas, encabezados de tabla y tooltips. `raised` destaca un bloque
+   * dentro de una superficie inverse (el tile del Porandú en la franja).
    */
-  --color-surface-inverse: #1d2830;
-  --color-surface-inverse-hover: #2a3740;
-  --color-surface-inverse-raised: #2c3a44;
+  --color-surface-inverse: #383838;
+  --color-surface-inverse-hover: #454545;
+  --color-surface-inverse-raised: #454545;
 
   /* Borders. */
-  --color-border-subtle: #e4e9ed;
-  --color-border-default: #d6dde3;
-  --color-border-strong: #bcc7d0;
-  --color-border-inverse: rgb(255 255 255 / 0.08);
+  --color-border-subtle: #e5e7eb;
+  --color-border-default: #d8dbe0;
+  --color-border-strong: #bcc1c9;
+  --color-border-inverse: rgb(255 255 255 / 0.1);
 
   /* Text. */
   --color-text-primary: #16212b;
   --color-text-secondary: #3e4a56;
   --color-text-muted: #5c6874;
   --color-text-inverse: #ffffff;
-  --color-text-inverse-muted: #aebcc7;
+  --color-text-inverse-muted: #c4c4c4;
 
   /* Brand: color principal de Porandú (acento estructural). */
   --color-brand: #376b89;
@@ -59,6 +64,33 @@
   /* Tinte claro de marca para usar sobre superficies inverse. */
   --color-brand-inverse: #a9c7d9;
 
+  /*
+   * Navy: azul marino ejecutivo (DEC-055). Superficies oscuras de marca
+   * (banda superior, tarjeta del prospecto). `strong` es su azul profundo
+   * para bordes activos y texto sobre `soft` (azul hielo), que resalta la
+   * columna del Porandú Score. `muted`: texto secundario sobre navy.
+   */
+  --color-navy: #0f1e36;
+  --color-navy-hover: #162b4d;
+  --color-navy-strong: #1e3a8a;
+  --color-navy-soft: #f0f5ff;
+  --color-navy-muted: #a9bcdc;
+
+  /*
+   * Accent: naranja de realce (DEC-055). `accent` para el borde del Top Match
+   * y barras; `accent-strong` para texto y rellenos con texto blanco.
+   */
+  --color-accent: #f58220;
+  --color-accent-strong: #c2410c;
+  --color-accent-soft: #fff4eb;
+  --color-accent-border: #f9c99b;
+
+  /* Info: celeste para estados informativos (p. ej. pago contado). */
+  --color-info: #0369a1;
+  --color-info-bright: #0284c7;
+  --color-info-soft: #e8f5fc;
+  --color-info-border: #b5dcf1;
+
   /* Estados. Texto oscuro sobre `*-soft`; `*-border` para contornos. */
   --color-success: #1d7348;
   --color-success-soft: #e5f3ec;
@@ -69,6 +101,11 @@
   --color-danger: #b42318;
   --color-danger-soft: #fdecea;
   --color-danger-border: #f4c0ba;
+
+  /* Tonos vivos de estado: solo líneas divisorias, bordes y barras. */
+  --color-success-bright: #10b981;
+  --color-warning-bright: #f59e0b;
+  --color-danger-bright: #ef4444;
 
   /* Skeletons: estructura sin datos (placeholders de B1 y estados de carga). */
   --color-skeleton: #e3e9ee;

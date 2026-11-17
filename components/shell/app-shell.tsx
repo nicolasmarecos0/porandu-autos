@@ -1,20 +1,27 @@
 import type { ReactNode } from "react";
+import { AccountMenu } from "./account-menu";
 import { NavRail } from "./nav-rail";
-import { SignOutButton } from "./sign-out-button";
 import { TopBar } from "./top-bar";
 
 /**
  * Shell desktop-first:
  *
- *   Top Bar (marca)
- *   Global Navigation Rail | Main Workspace
+ *   Top Bar (marca, azul marino; menú de la cuenta a la derecha)
+ *   Global Navigation Rail (carbón) | Main Workspace
  *
  * El shell ocupa exactamente el viewport. El workspace es un contenedor flex
  * de altura completa (`min-w-0`, `min-h-0`); cada página compone ahí sus
  * regiones con `WorkspaceLayout` (encabezado, franja de métricas, columna
  * central y rail contextual), cada una con scroll propio.
  */
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({
+  account,
+  children,
+}: {
+  /** Cuenta de la sesión, de los claims verificados (DEC-055). */
+  account: { email: string | null };
+  children: ReactNode;
+}) {
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <a
@@ -25,7 +32,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </a>
       {/* Sesión (H0.6). La organización se elige en /select-organization (H0.7). */}
       <TopBar>
-        <SignOutButton />
+        <AccountMenu email={account.email} />
       </TopBar>
       <div className="flex min-h-0 flex-1">
         <NavRail />

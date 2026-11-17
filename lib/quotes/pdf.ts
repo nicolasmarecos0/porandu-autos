@@ -71,10 +71,10 @@ export const PDF_COLOR_TOKENS = {
   textSecondary: { token: "--color-text-secondary", hex: "#3e4a56" },
   textMuted: { token: "--color-text-muted", hex: "#5c6874" },
   textInverse: { token: "--color-text-inverse", hex: "#ffffff" },
-  surface2: { token: "--color-surface-2", hex: "#f7f9fa" },
-  surfaceInverse: { token: "--color-surface-inverse", hex: "#1d2830" },
-  borderSubtle: { token: "--color-border-subtle", hex: "#e4e9ed" },
-  borderDefault: { token: "--color-border-default", hex: "#d6dde3" },
+  surface2: { token: "--color-surface-2", hex: "#f8f9fa" },
+  surfaceInverse: { token: "--color-surface-inverse", hex: "#383838" },
+  borderSubtle: { token: "--color-border-subtle", hex: "#e5e7eb" },
+  borderDefault: { token: "--color-border-default", hex: "#d8dbe0" },
   success: { token: "--color-success", hex: "#1d7348" },
 } as const;
 

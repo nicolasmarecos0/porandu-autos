@@ -363,3 +363,49 @@ export function CameraIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Tres líneas: el menú de la cuenta en la banda superior. */
+export function MenuIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4.5 7h15M4.5 12h15M4.5 17h15" />
+    </Icon>
+  );
+}
+
+/** Grilla con encabezado: la vista Tabla de oportunidades. */
+export function TableIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" />
+      <path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10" />
+    </Icon>
+  );
+}
+
+/** Flechas arriba y abajo: una columna que se puede ordenar. */
+export function SortIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4" />
+    </Icon>
+  );
+}
+
+/** Flecha hacia abajo: orden descendente de una columna. */
+export function ArrowDownIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 5v14M6.5 13.5L12 19l5.5-5.5" />
+    </Icon>
+  );
+}
+
+/** Flecha hacia arriba: orden ascendente de una columna. */
+export function ArrowUpIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 19V5M6.5 10.5L12 5l5.5 5.5" />
+    </Icon>
+  );
+}
