@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { demandSummary } from "@/domains/demand/presentation";
 import { resolveDemand, type DemandRow } from "@/domains/demand/resolver";
+import { searchedVehicle } from "@/domains/opportunities/prospect";
 import { bucketFromRecency } from "@/domains/opportunities/queue";
 import {
   DEFAULT_TABLE_SORT,
@@ -11,7 +12,6 @@ import {
   sortTableRows,
   tablePayment,
   tableSignals,
-  tableVehicle,
 } from "@/domains/opportunities/table";
 import type { Opportunity } from "@/domains/opportunities/types";
 import { UNSCORED, type ScoreSet } from "@/domains/scoring/types";
@@ -155,7 +155,7 @@ describe("matchesTableQuery", () => {
   });
 });
 
-describe("tableVehicle", () => {
+describe("searchedVehicle", () => {
   it("usa la demanda cuando existe", () => {
     const row = opportunity("a", {
       rows: [
@@ -165,14 +165,14 @@ describe("tableVehicle", () => {
         }),
       ],
     });
-    expect(tableVehicle(row)).toBe("Kia Sportage");
+    expect(searchedVehicle(row)).toBe("Kia Sportage");
   });
 
   it("sin demanda cargada usa el legado; sin nada, sin dato", () => {
-    expect(tableVehicle(opportunity("a", { legacyModel: "Tucson" }))).toBe(
+    expect(searchedVehicle(opportunity("a", { legacyModel: "Tucson" }))).toBe(
       "Tucson",
     );
-    expect(tableVehicle(opportunity("b"))).toBeNull();
+    expect(searchedVehicle(opportunity("b"))).toBeNull();
   });
 });
 

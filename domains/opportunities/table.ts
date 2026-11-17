@@ -1,6 +1,7 @@
 import { PURCHASE_TYPES, type PurchaseType } from "@/domains/demand/facts";
 import type { SubScoreKey } from "@/domains/scoring/types";
 
+import { searchedVehicle } from "./prospect";
 import type { Opportunity } from "./types";
 
 /*
@@ -96,14 +97,6 @@ function fold(text: string): string {
     .toLocaleLowerCase("es-PY");
 }
 
-/** Vehículo que busca: la demanda (H1.4) o, si nunca se cargó, el legado. */
-export function tableVehicle(opportunity: Opportunity): string | null {
-  if (opportunity.demand) return opportunity.demand.vehicle?.title ?? null;
-  const { model, version } = opportunity.interest;
-  const legacy = [model, version].filter(Boolean).join(" ");
-  return legacy || null;
-}
-
 /**
  * ¿La fila coincide con lo que se tipeó? Busca en el nombre del prospecto,
  * el vehículo que busca y el responsable. Una búsqueda vacía coincide con
@@ -117,7 +110,7 @@ export function matchesTableQuery(
   if (needle === "") return true;
   return [
     opportunity.prospect.name,
-    tableVehicle(opportunity),
+    searchedVehicle(opportunity),
     opportunity.owner?.name,
   ].some(
     (field) =>

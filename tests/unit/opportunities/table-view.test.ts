@@ -99,9 +99,9 @@ describe("OpportunitiesTableView", () => {
     );
   });
 
-  it("cada fila lleva a la ficha de decisión en la cola", () => {
-    expect(html).toContain('href="/opportunities?op=op-high"');
-    expect(html).toContain('href="/opportunities?op=op-low"');
+  it("cada fila lleva a la ficha de decisión en la cola, recordando que vino de la tabla", () => {
+    expect(html).toContain('href="/opportunities?op=op-high&amp;from=table"');
+    expect(html).toContain('href="/opportunities?op=op-low&amp;from=table"');
   });
 
   it("muestra pago, responsable y vehículo reales; lo que falta, sin dato", () => {
@@ -133,7 +133,7 @@ describe("OpportunitiesTableView", () => {
 
   it("en el teléfono, una lista compacta con el mismo destino", () => {
     const list = html.slice(html.indexOf('<ul aria-label="Oportunidades"'));
-    expect(list).toContain('href="/opportunities?op=op-high"');
+    expect(list).toContain('href="/opportunities?op=op-high&amp;from=table"');
     expect(text(list)).toContain("Financiado");
   });
 });

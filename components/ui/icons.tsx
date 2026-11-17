@@ -409,3 +409,13 @@ export function ArrowUpIcon(props: IconProps) {
     </Icon>
   );
 }
+
+/** Silueta de una persona: el avatar sin iniciales (sin nombre ni foto). */
+export function PersonIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="8.5" r="3.5" />
+      <path d="M5 19.5a7 7 0 0 1 14 0" />
+    </Icon>
+  );
+}

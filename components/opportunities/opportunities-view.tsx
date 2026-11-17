@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { NextBestActionCard } from "@/components/intelligence/next-best-action";
 import { ScoreDock, ScoreStrip } from "@/components/intelligence/score-strip";
@@ -12,7 +13,14 @@ import {
   formatElapsedLong,
   formatElapsedShort,
 } from "@/domains/opportunities/recency";
+import { UNDEFINED_VEHICLE } from "@/domains/demand/presentation";
+import { searchedVehicle } from "@/domains/opportunities/prospect";
 import type { Opportunity } from "@/domains/opportunities/types";
+import {
+  DEFAULT_CATALOG_FILTERS,
+  catalogSearch,
+} from "@/domains/vehicles/catalog";
+import { STOCK_CATALOG_PATH } from "@/lib/vehicles/paths";
 import type { ScoreComposition } from "@/domains/scoring/types";
 import {
   NewOpportunityDrawer,
@@ -33,6 +41,11 @@ type OpportunitiesViewProps = {
   scoreComposition: ScoreComposition;
   /** Oportunidad elegida al abrir (`?op=`, desde la tabla, DEC-055). */
   initialSelectedId?: string | null;
+  /**
+   * Lista a la que vuelve "Volver" en el teléfono, si se llegó desde otra
+   * vista (la tabla). Sin ella, "Volver" muestra la cola.
+   */
+  returnHref?: string | null;
 };
 
 const ID_PREFIX = "opportunity";
@@ -60,7 +73,8 @@ type Pane = "list" | "detail";
  * - de `md` a `xl`, la columna izquierda y una sola columna con scroll: la
  *   decisión y, debajo, ¿qué ofrecerle?;
  * - en el teléfono, maestro/detalle: la cola ocupa la pantalla; abrir una
- *   oportunidad muestra su detalle con "Volver" y los cuatro scores fijos
+ *   oportunidad muestra su detalle con "Volver" (a la tabla, si se llegó
+ *   desde ahí), el atajo "Showroom" al catálogo y los cuatro scores fijos
  *   abajo. El foco va al título del detalle y, al volver, a la cola.
  *
  * Los datos llegan del loader de la página (PostgreSQL, tenant-scoped).
@@ -84,6 +98,7 @@ export function OpportunitiesView({
   referenceMinuteOfDay,
   scoreComposition,
   initialSelectedId = null,
+  returnHref = null,
 }: OpportunitiesViewProps) {
   const queue = useOpportunityQueue(
     opportunities,
@@ -168,25 +183,39 @@ export function OpportunitiesView({
             pane === "list" && "max-md:hidden",
           )}
         >
+          {/* Teléfono: siempre hay una salida del detalle, aunque la
+              selección haya desaparecido (p. ej. tras una revalidación). */}
+          <div className="flex shrink-0 items-center gap-2 md:hidden">
+            {returnHref ? (
+              <Link
+                href={returnHref}
+                prefetch={false}
+                className={BACK_CLASS_NAME}
+              >
+                <ChevronLeftIcon className="size-4.5" />
+                Volver a la tabla
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={backToList}
+                className={BACK_CLASS_NAME}
+              >
+                <ChevronLeftIcon className="size-4.5" />
+                Volver
+              </button>
+            )}
+            <h2
+              ref={detailHeadingRef}
+              tabIndex={-1}
+              className="min-w-0 flex-1 truncate text-heading text-text-primary focus:outline-none"
+            >
+              {selected ? selected.prospect.name : title}
+            </h2>
+          </div>
           {selected ? (
             <>
-              <div className="flex shrink-0 items-center gap-2 md:hidden">
-                <button
-                  type="button"
-                  onClick={backToList}
-                  className="inline-flex h-9 shrink-0 items-center gap-1 rounded-md pr-3 pl-1.5 text-label font-semibold text-brand hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                >
-                  <ChevronLeftIcon className="size-4.5" />
-                  Volver
-                </button>
-                <h2
-                  ref={detailHeadingRef}
-                  tabIndex={-1}
-                  className="min-w-0 flex-1 truncate text-heading text-text-primary focus:outline-none"
-                >
-                  {selected.prospect.name}
-                </h2>
-              </div>
+              <ShowroomBar vehicle={searchedVehicle(selected)} />
               <ProspectCard opportunity={selected} className="md:hidden" />
             </>
           ) : null}
@@ -279,6 +308,41 @@ export function OpportunitiesView({
         </div>
       </div>
     </TooltipProvider>
+  );
+}
+
+const BACK_CLASS_NAME =
+  "inline-flex h-9 shrink-0 items-center gap-1 rounded-md pr-3 pl-1.5 text-label font-semibold text-brand transition-colors hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring";
+
+/**
+ * Barra "Showroom" del detalle en el teléfono (DEC-055): lleva al Catálogo
+ * visual del stock (DEC-049, la galería para mostrar en el salón) ya
+ * filtrado por el vehículo que busca el cliente. Es un atajo a una vista que
+ * existe: no arma ofertas ni cuotas. Sin vehículo cargado, abre el catálogo
+ * completo.
+ */
+function ShowroomBar({ vehicle }: { vehicle: string | null }) {
+  const href = `${STOCK_CATALOG_PATH}${catalogSearch({
+    ...DEFAULT_CATALOG_FILTERS,
+    query: vehicle ?? "",
+  })}`;
+  return (
+    <div className="flex shrink-0 items-center gap-3 rounded-lg border border-border-subtle bg-surface-1 py-2 pr-2 pl-3 shadow-card md:hidden">
+      <p className="min-w-0 flex-1 truncate text-label text-text-secondary">
+        <span className="text-text-muted">Busca </span>
+        <span className="font-semibold text-text-primary">
+          {vehicle ?? UNDEFINED_VEHICLE}
+        </span>
+      </p>
+      <Link
+        href={href}
+        prefetch={false}
+        className="inline-flex h-8 shrink-0 items-center rounded-full border-2 border-accent px-3.5 text-label font-semibold text-accent-strong transition-colors hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      >
+        Showroom
+        <span className="sr-only">: catálogo filtrado por lo que busca</span>
+      </Link>
+    </div>
   );
 }
 

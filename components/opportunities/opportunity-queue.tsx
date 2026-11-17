@@ -5,6 +5,7 @@ import { cn } from "@/components/ui/cn";
 import { ChevronRightIcon } from "@/components/ui/icons";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip } from "@/components/ui/tooltip";
+import { searchedVehicle } from "@/domains/opportunities/prospect";
 import { QUEUE_TABS, countByTab } from "@/domains/opportunities/queue";
 import { formatElapsedShort } from "@/domains/opportunities/recency";
 import { UNDEFINED_VEHICLE } from "@/domains/demand/presentation";
@@ -175,12 +176,10 @@ function QueueRow({
   elapsed,
   onSelect,
 }: QueueRowProps) {
-  const { prospect, interest, demand, scores, lastActivity } = opportunity;
+  const { prospect, scores, lastActivity } = opportunity;
   const porandu = scores.porandu;
   // El vehículo sale de la demanda (H1.4); el legado, solo si nunca se cargó.
-  const vehicle = demand
-    ? demand.vehicle?.title
-    : [interest.model, interest.version].filter(Boolean).join(" ");
+  const vehicle = searchedVehicle(opportunity);
   return (
     <div
       id={id}

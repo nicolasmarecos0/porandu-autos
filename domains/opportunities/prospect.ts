@@ -1,7 +1,21 @@
+import type { Opportunity } from "./types";
+
 /*
  * Derivaciones de presentación del prospecto. Puras: no guardan nada y se
  * recalculan desde el dato persistido.
  */
+
+/**
+ * Vehículo que busca: el de la demanda (H1.4) o, si nunca se cargó, el
+ * legado; `null` es sin dato. Lo usan la cola, la tabla y el atajo al
+ * catálogo (DEC-055).
+ */
+export function searchedVehicle(opportunity: Opportunity): string | null {
+  if (opportunity.demand) return opportunity.demand.vehicle?.title ?? null;
+  const { model, version } = opportunity.interest;
+  const legacy = [model, version].filter(Boolean).join(" ");
+  return legacy || null;
+}
 
 /** Primera letra en mayúscula y sin tilde ("Ó" → "O"); la "Ñ" se conserva. */
 function initial(word: string | undefined): string {

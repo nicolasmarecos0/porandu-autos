@@ -1,4 +1,5 @@
 import { cn } from "./cn";
+import { PersonIcon } from "./icons";
 
 const sizeClasses = {
   xs: "size-6 text-[0.625rem]",
@@ -23,7 +24,11 @@ type AvatarProps = {
   className?: string;
 };
 
-/** Avatar de iniciales. Decorativo: el nombre visible acompaña siempre. */
+/**
+ * Avatar de iniciales. Decorativo: el nombre visible acompaña siempre. Sin
+ * iniciales (un nombre sin letras), muestra una silueta: nunca una foto
+ * inventada ni un círculo vacío.
+ */
 export function Avatar({
   initials,
   size = "sm",
@@ -40,7 +45,11 @@ export function Avatar({
         className,
       )}
     >
-      {initials}
+      {initials.trim() === "" ? (
+        <PersonIcon className="size-[55%]" />
+      ) : (
+        initials
+      )}
     </span>
   );
 }

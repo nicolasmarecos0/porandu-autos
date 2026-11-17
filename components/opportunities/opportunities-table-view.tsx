@@ -27,6 +27,7 @@ import {
   UNDEFINED_VEHICLE,
 } from "@/domains/demand/presentation";
 import { stageLabel } from "@/domains/opportunities/labels";
+import { searchedVehicle } from "@/domains/opportunities/prospect";
 import {
   QUEUE_TABS,
   countByTab,
@@ -43,7 +44,6 @@ import {
   sortTableRows,
   tablePayment,
   tableSignals,
-  tableVehicle,
   type TablePage,
   type TablePageSize,
   type TableSignal,
@@ -171,7 +171,7 @@ export function OpportunitiesTableView({
   const openRow = (event: MouseEvent, opportunityId: string) => {
     // El enlace del nombre navega solo; el resto de la fila es un atajo.
     if ((event.target as HTMLElement).closest("a, button")) return;
-    router.push(queueSelectionHref(opportunityId));
+    router.push(queueSelectionHref(opportunityId, "table"));
   };
 
   const sortBy = (key: TableSortKey) => {
@@ -527,7 +527,7 @@ function TableRow({
   onOpen: (event: MouseEvent, opportunityId: string) => void;
 }) {
   const { prospect, owner, scores, stage } = opportunity;
-  const vehicle = tableVehicle(opportunity);
+  const vehicle = searchedVehicle(opportunity);
   const cell = "border-b border-border-subtle px-4 py-3";
   return (
     <tr
@@ -539,7 +539,7 @@ function TableRow({
           <Avatar initials={prospect.initials} size="md" />
           <div className="min-w-0">
             <Link
-              href={queueSelectionHref(opportunity.id)}
+              href={queueSelectionHref(opportunity.id, "table")}
               prefetch={false}
               className="rounded-sm text-body font-semibold text-text-primary group-hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
             >
@@ -600,12 +600,12 @@ function CompactRow({
   elapsed: string;
 }) {
   const { prospect, scores, stage, lastActivity } = opportunity;
-  const vehicle = tableVehicle(opportunity);
+  const vehicle = searchedVehicle(opportunity);
   const payment = tablePayment(opportunity);
   return (
     <li>
       <Link
-        href={queueSelectionHref(opportunity.id)}
+        href={queueSelectionHref(opportunity.id, "table")}
         prefetch={false}
         className={cn(
           "flex items-center gap-3 rounded-lg border px-3 py-2.5 shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
@@ -672,9 +672,11 @@ function Pager({
     "flex size-8 items-center justify-center rounded-md border border-border-default bg-surface-1 text-text-secondary transition-colors hover:border-border-strong hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring disabled:cursor-not-allowed disabled:opacity-40";
   return (
     <nav aria-label="Páginas" className="flex items-center gap-2">
-      <span className="text-label whitespace-nowrap text-text-muted tabular-nums">
-        Mostrando {page.from}–{page.to}
-      </span>
+      {page.total > 0 ? (
+        <span className="text-label whitespace-nowrap text-text-muted tabular-nums">
+          Mostrando {page.from}–{page.to}
+        </span>
+      ) : null}
       <label className="flex items-center">
         <span className="sr-only">Filas por página</span>
         <select
@@ -733,7 +735,7 @@ function CreatedNotice({
               ? `Oportunidad creada. El teléfono ya era de ${created.contactName}: se usó ese contacto, sin cambios.`
               : `Oportunidad creada para ${created.contactName}.`}{" "}
             <Link
-              href={queueSelectionHref(created.opportunityId)}
+              href={queueSelectionHref(created.opportunityId, "table")}
               prefetch={false}
               className="font-semibold underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
             >

@@ -21,10 +21,23 @@ export const TABLE_PATH = "/opportunities/table";
  */
 export const SELECTED_OPPORTUNITY_PARAM = "op";
 
+/**
+ * Parámetro que dice desde qué vista se abrió la oportunidad (DEC-055): en
+ * el teléfono, "Volver" regresa a esa lista. Solo admite `table`.
+ */
+export const SELECTION_ORIGIN_PARAM = "from";
+
+/** Vista desde la que se abre una oportunidad en la cola. */
+export type SelectionOrigin = "table";
+
 /** La cola con esa oportunidad seleccionada. */
-export function queueSelectionHref(opportunityId: string): string {
+export function queueSelectionHref(
+  opportunityId: string,
+  origin?: SelectionOrigin,
+): string {
   const query = new URLSearchParams({
     [SELECTED_OPPORTUNITY_PARAM]: opportunityId,
   });
+  if (origin) query.set(SELECTION_ORIGIN_PARAM, origin);
   return `${OPPORTUNITIES_PATH}?${query.toString()}`;
 }
