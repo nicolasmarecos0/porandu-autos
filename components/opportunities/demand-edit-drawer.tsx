@@ -82,7 +82,7 @@ export function DemandEditDrawer({
       }}
     >
       <DrawerTrigger asChild>
-        <Button variant="secondary">Editar</Button>
+        <Button variant="outline">Editar</Button>
       </DrawerTrigger>
       <DrawerContent
         title="Lo que busca"

@@ -6,6 +6,9 @@ const variantClasses = {
     "bg-brand text-brand-contrast shadow-sm hover:bg-brand-hover focus-visible:outline-focus-ring",
   secondary:
     "border border-border-default bg-surface-1 text-text-primary hover:border-border-strong hover:bg-surface-2 focus-visible:outline-focus-ring",
+  // Acción de edición sobre una tarjeta (DEC-058): borde azul acero de marca.
+  outline:
+    "border border-brand bg-surface-1 text-brand-strong hover:bg-brand-soft focus-visible:outline-focus-ring",
   // Alta de un registro en una vista de listado (DEC-055): el verde de la referencia.
   success:
     "bg-success text-text-inverse shadow-sm hover:bg-success/90 focus-visible:outline-focus-ring",

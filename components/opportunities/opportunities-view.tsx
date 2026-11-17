@@ -8,7 +8,10 @@ import { WhyNowCard } from "@/components/intelligence/why-now";
 import { cn } from "@/components/ui/cn";
 import { ChevronLeftIcon, CloseIcon } from "@/components/ui/icons";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { VehicleRail } from "@/components/vehicle-rail/vehicle-rail";
+import {
+  StockMatchCards,
+  VehicleRail,
+} from "@/components/vehicle-rail/vehicle-rail";
 import {
   formatElapsedLong,
   formatElapsedShort,
@@ -62,7 +65,7 @@ type Pane = "list" | "detail";
  *   ┌ identidad ──┬ strip de scores ────────┬ busca ───────┐
  *   │ prospecto   │ ¿Qué hacer?             │ Top Match    │
  *   ├ cola ───────┤ ¿Por qué ahora?         │ alternativa  │
- *   │             │ (fuertes / a validar)   │ trade-in     │
+ *   │             │ (fuertes / a validar)   │              │
  *   └─────────────┴─────────────────────────┴──────────────┘
  *
  * "Busca" es la demanda estructurada (H1.4): Current Truth resumida, con
@@ -79,9 +82,11 @@ type Pane = "list" | "detail";
  *
  * Los datos llegan del loader de la página (PostgreSQL, tenant-scoped).
  * Desde Hito 3 (DEC-035), el Porandú Score con su desglose, la recencia y
- * "¿Qué hacer?" los deriva el motor de inteligencia en el loader. Lo que la
- * fuente no trae ("sin dato") no se muestra: sin señales ni matches
- * inventados.
+ * "¿Qué hacer?" los deriva el motor de inteligencia en el loader. Desde
+ * DEC-058, también Intent, las señales de "¿Por qué ahora?" y el Top Match
+ * y la alternativa reales de Match v0, con el render genérico de cada
+ * carrocería. Lo que la fuente no trae ("sin dato") no se muestra: sin
+ * señales ni matches inventados.
  *
  * "Nueva oportunidad" (H1.2) abre el alta manual en un drawer. Al crear, la
  * Server Action revalida la página, la cola trae la oportunidad nueva y la
@@ -300,6 +305,9 @@ export function OpportunitiesView({
                 opportunityId={selected.id}
                 demand={selected.demand}
               />
+            ) : null}
+            {selected?.stockMatches ? (
+              <StockMatchCards rail={selected.stockMatches} />
             ) : null}
             {selected ? <VehicleRail opportunity={selected} /> : null}
           </aside>

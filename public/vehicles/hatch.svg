@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 6 156 56" role="img" aria-label="Representación genérica">
+  <defs>
+    <linearGradient id="v-hatch-paint" gradientUnits="userSpaceOnUse" x1="0" y1="10" x2="0" y2="53">
+      <stop offset="0" stop-color="#DADFE4"/>
+      <stop offset="0.36" stop-color="#F6F7F9"/>
+      <stop offset="0.5" stop-color="#D3D8DD"/>
+      <stop offset="0.86" stop-color="#8F969F"/>
+      <stop offset="1" stop-color="#BCC2C9"/>
+    </linearGradient>
+    <linearGradient id="v-hatch-sheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.3" stop-color="#FFFFFF" stop-opacity="0.85"/>
+      <stop offset="0.75" stop-color="#FFFFFF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="v-hatch-glass" gradientUnits="userSpaceOnUse" x1="0" y1="12" x2="0" y2="30">
+      <stop offset="0" stop-color="#5B6776"/>
+      <stop offset="0.5" stop-color="#232A33"/>
+      <stop offset="1" stop-color="#0C0F13"/>
+    </linearGradient>
+    <linearGradient id="v-hatch-reflect" gradientUnits="userSpaceOnUse" x1="30" y1="10" x2="70" y2="40">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="0.42" stop-color="#FFFFFF" stop-opacity="0.1"/>
+      <stop offset="0.43" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.62" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.63" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="0.75" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="v-hatch-shadow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="v-hatch-well" cx="0.5" cy="0.6" r="0.5">
+      <stop offset="0.6" stop-color="#0A0B0D"/>
+      <stop offset="1" stop-color="#22262B"/>
+    </radialGradient>
+    <radialGradient id="v-hatch-tire" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.66" stop-color="#2C3036"/>
+      <stop offset="0.9" stop-color="#16191C"/>
+      <stop offset="1" stop-color="#0A0B0D"/>
+    </radialGradient>
+    <radialGradient id="v-hatch-barrel" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3E434A"/>
+      <stop offset="1" stop-color="#121417"/>
+    </radialGradient>
+    <linearGradient id="v-hatch-rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FAFBFC"/>
+      <stop offset="0.45" stop-color="#C3C9D0"/>
+      <stop offset="1" stop-color="#737A83"/>
+    </linearGradient>
+    <radialGradient id="v-hatch-cap" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#868D95"/>
+    </radialGradient>
+    <linearGradient id="v-hatch-head" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#AEBBC9"/>
+      <stop offset="0.55" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DCE7F2"/>
+    </linearGradient>
+    <linearGradient id="v-hatch-tail" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F87171"/>
+      <stop offset="1" stop-color="#991B1B"/>
+    </linearGradient>
+    <clipPath id="v-hatch-body"><path d="M24.6 51.2Q22 50.2 22 46.4L22.4 35.4Q22.8 28 26.4 22.6Q30.6 15.8 37.6 14.8Q42 14.4 48.4 14.4H80.6Q87.8 14.6 93.6 18.4L109.8 27.4L132.4 30.8Q139.4 31.8 141.8 36.2L143 43.4Q143.4 49.4 139.6 51.6H127.59A12.4 12.4 0 1 0 104.41 51.8H56.59A12.4 12.4 0 1 0 33.41 51.8H26.6Q25.4 51.8 24.6 51.2Z"/></clipPath>
+    <clipPath id="v-hatch-dlo"><path d="M29.4 27.2L32.2 20.6Q34.4 17 38.6 16.9L79.6 16.8Q85.6 17 89.8 19.8L100.2 28Z"/></clipPath>
+  </defs>
+  <ellipse cx="80" cy="58" rx="77" ry="3.4" fill="url(#v-hatch-shadow)"/>
+  <circle cx="45" cy="47.4" r="12.2" fill="url(#v-hatch-well)"/><circle cx="116" cy="47.4" r="12.2" fill="url(#v-hatch-well)"/>
+  <path d="M24.6 51.2Q22 50.2 22 46.4L22.4 35.4Q22.8 28 26.4 22.6Q30.6 15.8 37.6 14.8Q42 14.4 48.4 14.4H80.6Q87.8 14.6 93.6 18.4L109.8 27.4L132.4 30.8Q139.4 31.8 141.8 36.2L143 43.4Q143.4 49.4 139.6 51.6H127.59A12.4 12.4 0 1 0 104.41 51.8H56.59A12.4 12.4 0 1 0 33.41 51.8H26.6Q25.4 51.8 24.6 51.2Z" fill="url(#v-hatch-paint)"/>
+  <g clip-path="url(#v-hatch-body)">
+    <rect x="0" y="46.6" width="160" height="10" fill="#24282D" opacity="0.9"/>
+    <rect x="0" y="46.1" width="160" height="0.5" fill="#FFFFFF" opacity="0.6"/>
+    <path d="M23 36Q70 34.8 141 37" fill="none" stroke="url(#v-hatch-sheen)" stroke-width="1.4"/>
+    <path d="M23 36Q70 34.8 141 37" fill="none" stroke="#000000" stroke-opacity="0.1" stroke-width="0.4" transform="translate(0 0.9)"/>
+    <path d="M138.2 41.6H143V44.6H138.8Z" fill="#14171B"/>
+  </g>
+  
+  <path d="M24.6 51.2Q22 50.2 22 46.4L22.4 35.4Q22.8 28 26.4 22.6Q30.6 15.8 37.6 14.8Q42 14.4 48.4 14.4H80.6Q87.8 14.6 93.6 18.4L109.8 27.4L132.4 30.8Q139.4 31.8 141.8 36.2L143 43.4Q143.4 49.4 139.6 51.6H127.59A12.4 12.4 0 1 0 104.41 51.8H56.59A12.4 12.4 0 1 0 33.41 51.8H26.6Q25.4 51.8 24.6 51.2Z" fill="none" stroke="#97A0AA" stroke-width="0.4" stroke-linejoin="round"/>
+  
+  <path d="M29.4 27.2L32.2 20.6Q34.4 17 38.6 16.9L79.6 16.8Q85.6 17 89.8 19.8L100.2 28Z" fill="url(#v-hatch-glass)"/>
+  <rect x="63.6" y="0" width="3.2" height="40" fill="#0A0C0F" clip-path="url(#v-hatch-dlo)"/>
+  <path d="M29.4 27.2L32.2 20.6Q34.4 17 38.6 16.9L79.6 16.8Q85.6 17 89.8 19.8L100.2 28Z" fill="url(#v-hatch-reflect)"/>
+  <path d="M29.4 27.2L32.2 20.6Q34.4 17 38.6 16.9L79.6 16.8Q85.6 17 89.8 19.8L100.2 28Z" fill="none" stroke="#0A0C0F" stroke-width="0.9" stroke-linejoin="round"/>
+  <path d="M29 27.6L101.4 28.4" fill="none" stroke="#9AA3AD" stroke-width="0.5"/>
+  <path d="M65.2 28.2V50.8" fill="none" stroke="#6B747E" stroke-opacity="0.5" stroke-width="0.4"/>
+  <rect x="52.800000000000004" y="31.2" width="5.6" height="1.1" rx="0.55" fill="#A8B0B9"/><rect x="53.1" y="31.3" width="5" height="0.35" rx="0.18" fill="#FFFFFF" opacity="0.95"/><rect x="86.4" y="31.6" width="5.6" height="1.1" rx="0.55" fill="#A8B0B9"/><rect x="86.7" y="31.700000000000003" width="5" height="0.35" rx="0.18" fill="#FFFFFF" opacity="0.95"/>
+  <path d="M96.0 28.0Q95.39999999999999 25.599999999999998 98.0 25.2H101.0Q102.19999999999999 25.299999999999997 102.19999999999999 26.599999999999998V27.4Q102.0 28.4 100.6 28.4Z" fill="url(#v-hatch-paint)" stroke="#97A0AA" stroke-width="0.35"/><path d="M97.0 28.4L98.0 29.799999999999997" stroke="#15181C" stroke-width="0.9"/>
+  <path d="M129.2 31.4L140.2 32.8Q141.6 33.2 141.8 35.2L130 34.8Z" fill="url(#v-hatch-head)" stroke="#4E5864" stroke-width="0.3"/>
+  <path d="M22.6 27.6L27.6 26.6V30.8L22.5 31.6Z" fill="url(#v-hatch-tail)" stroke="#5F1414" stroke-width="0.2"/>
+  
+  <g>
+    <circle cx="45" cy="47.4" r="10.6" fill="url(#v-hatch-tire)"/>
+    <circle cx="45" cy="47.4" r="9.54" fill="none" stroke="#33373D" stroke-width="0.3"/>
+    <circle cx="45" cy="47.4" r="7.42" fill="url(#v-hatch-barrel)"/>
+    <path d="M47.37 42.80A5.19 5.19 0 0 1 49.90 46.81L48.12 46.81A3.41 3.41 0 0 0 46.63 44.43Z" fill="#5A6069"/>
+    <g fill="url(#v-hatch-rim)" stroke="#5E656D" stroke-width="0.12"><path d="M44.58 45.32 L44.48 40.42 L45.52 40.42 L45.42 45.32Z"/><path d="M45.88 45.47 L48.68 41.45 L49.52 42.06 L46.56 45.97Z"/><path d="M46.85 46.36 L51.47 44.75 L51.80 45.74 L47.11 47.16Z"/><path d="M47.11 47.64 L51.80 49.06 L51.47 50.05 L46.85 48.44Z"/><path d="M46.56 48.83 L49.52 52.74 L48.68 53.35 L45.88 49.33Z"/><path d="M45.42 49.48 L45.52 54.38 L44.48 54.38 L44.58 49.48Z"/><path d="M44.12 49.33 L41.32 53.35 L40.48 52.74 L43.44 48.83Z"/><path d="M43.15 48.44 L38.53 50.05 L38.20 49.06 L42.89 47.64Z"/><path d="M42.89 47.16 L38.20 45.74 L38.53 44.75 L43.15 46.36Z"/><path d="M43.44 45.97 L40.48 42.06 L41.32 41.45 L44.12 45.47Z"/></g>
+    <circle cx="45" cy="47.4" r="7.42" fill="none" stroke="url(#v-hatch-rim)" stroke-width="0.79"/>
+    <circle cx="45" cy="47.4" r="2.33" fill="url(#v-hatch-cap)" stroke="#6E757D" stroke-width="0.15"/>
+    <circle cx="45.81" cy="46.29" r="0.26" fill="#3A3F46"/><circle cx="46.31" cy="47.83" r="0.26" fill="#3A3F46"/><circle cx="45.00" cy="48.78" r="0.26" fill="#3A3F46"/><circle cx="43.69" cy="47.83" r="0.26" fill="#3A3F46"/><circle cx="44.19" cy="46.29" r="0.26" fill="#3A3F46"/>
+    <path d="M35.88 44.64A9.54 9.54 0 0 1 41.82 38.50" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="0.8" stroke-linecap="round"/>
+  </g>
+  <g>
+    <circle cx="116" cy="47.4" r="10.6" fill="url(#v-hatch-tire)"/>
+    <circle cx="116" cy="47.4" r="9.54" fill="none" stroke="#33373D" stroke-width="0.3"/>
+    <circle cx="116" cy="47.4" r="7.42" fill="url(#v-hatch-barrel)"/>
+    <path d="M118.37 42.80A5.19 5.19 0 0 1 120.90 46.81L119.12 46.81A3.41 3.41 0 0 0 117.63 44.43Z" fill="#5A6069"/>
+    <g fill="url(#v-hatch-rim)" stroke="#5E656D" stroke-width="0.12"><path d="M115.58 45.32 L115.48 40.42 L116.52 40.42 L116.42 45.32Z"/><path d="M116.88 45.47 L119.68 41.45 L120.52 42.06 L117.56 45.97Z"/><path d="M117.85 46.36 L122.47 44.75 L122.80 45.74 L118.11 47.16Z"/><path d="M118.11 47.64 L122.80 49.06 L122.47 50.05 L117.85 48.44Z"/><path d="M117.56 48.83 L120.52 52.74 L119.68 53.35 L116.88 49.33Z"/><path d="M116.42 49.48 L116.52 54.38 L115.48 54.38 L115.58 49.48Z"/><path d="M115.12 49.33 L112.32 53.35 L111.48 52.74 L114.44 48.83Z"/><path d="M114.15 48.44 L109.53 50.05 L109.20 49.06 L113.89 47.64Z"/><path d="M113.89 47.16 L109.20 45.74 L109.53 44.75 L114.15 46.36Z"/><path d="M114.44 45.97 L111.48 42.06 L112.32 41.45 L115.12 45.47Z"/></g>
+    <circle cx="116" cy="47.4" r="7.42" fill="none" stroke="url(#v-hatch-rim)" stroke-width="0.79"/>
+    <circle cx="116" cy="47.4" r="2.33" fill="url(#v-hatch-cap)" stroke="#6E757D" stroke-width="0.15"/>
+    <circle cx="116.81" cy="46.29" r="0.26" fill="#3A3F46"/><circle cx="117.31" cy="47.83" r="0.26" fill="#3A3F46"/><circle cx="116.00" cy="48.78" r="0.26" fill="#3A3F46"/><circle cx="114.69" cy="47.83" r="0.26" fill="#3A3F46"/><circle cx="115.19" cy="46.29" r="0.26" fill="#3A3F46"/>
+    <path d="M106.88 44.64A9.54 9.54 0 0 1 112.82 38.50" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="0.8" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -30,6 +30,8 @@ function Flag({ label, children }: { label: string; children: ReactNode }) {
  * y responsable. Las señales salen de la demanda tipada (H1.4):
  * `trade_in_intent` y `purchase_type`, sin parsear textos. La etapa es un
  * pill de solo lectura: cambiarla desde acá no forma parte de DEC-055.
+ * El avatar es una ilustración genérica asignada por contacto (DEC-058),
+ * con las iniciales como respaldo: no es una foto de la persona.
  */
 export function ProspectCard({
   opportunity,
@@ -51,7 +53,12 @@ export function ProspectCard({
     >
       <div className="px-5 pt-5 pb-4">
         <div className="flex items-start gap-4">
-          <Avatar initials={prospect.initials} size="2xl" tone="onNavy" />
+          <Avatar
+            initials={prospect.initials}
+            src={prospect.avatar}
+            size="2xl"
+            tone="onNavy"
+          />
           <h2 className="min-w-0 flex-1 pt-1.5 text-title leading-6 tracking-tight">
             {prospect.name}
           </h2>

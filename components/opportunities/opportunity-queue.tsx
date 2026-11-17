@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from "react";
 import { PoranduRing } from "@/components/intelligence/porandu-ring";
+import { Avatar } from "@/components/ui/avatar";
 import { ScoreBreakdown } from "@/components/intelligence/score-breakdown";
 import { cn } from "@/components/ui/cn";
 import { ChevronRightIcon } from "@/components/ui/icons";
@@ -231,6 +232,12 @@ function QueueRow({
           </PoranduRing>
         </span>
       </Tooltip>
+      <Avatar
+        initials={prospect.initials}
+        src={prospect.avatar}
+        size="sm"
+        className="-ml-1"
+      />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span

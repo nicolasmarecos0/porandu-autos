@@ -3,13 +3,16 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { cn } from "@/components/ui/cn";
-import type { DemandFact } from "@/domains/demand/facts";
+import { VehicleRender } from "@/components/vehicle-rail/vehicle-render";
+import type { DemandFact, PurchaseType } from "@/domains/demand/facts";
 import {
   NO_DATA,
+  PURCHASE_TYPE_LABELS,
   UNDEFINED_VEHICLE,
   type DemandFactSummary,
   type DemandSummary,
 } from "@/domains/demand/presentation";
+import { bodyTypeOf } from "@/domains/vehicles/body-type";
 
 import { DemandEditDrawer, type DemandSaved } from "./demand-edit-drawer";
 
@@ -22,22 +25,28 @@ import { DemandEditDrawer, type DemandSaved } from "./demand-edit-drawer";
  *   cargó un vehículo, marcado "Dato anterior".
  * - Sin dato se dice; un dato quitado, "Sin dato (Quitado)".
  * - Los valores humanos no llevan marca; "Detectado" (H2a+), advertencia.
+ * - Composición de la referencia (DEC-058): píldoras arriba ("Con
+ *   trade-in" y la forma de pago), "Editar" con borde azul acero, la grilla
+ *   a la izquierda y abajo a la derecha el render genérico de la carrocería
+ *   ("Representación"), elegida por el modelo. Sin modelo conocido, sin
+ *   render.
  */
 
 function Pill({
   tone,
   children,
 }: {
-  tone: "neutral" | "info" | "warning";
+  tone: "neutral" | "info" | "warning" | "brand";
   children: ReactNode;
 }) {
   return (
     <span
       className={cn(
-        "rounded-sm px-1.5 py-0.5 text-caption font-semibold",
+        "rounded-sm px-1.5 py-0.5 text-caption font-semibold whitespace-nowrap",
         tone === "neutral" && "bg-surface-3 text-text-secondary",
         tone === "info" && "bg-info-soft text-info",
         tone === "warning" && "bg-warning-soft text-warning",
+        tone === "brand" && "bg-brand-soft text-brand-strong",
       )}
     >
       {children}
@@ -78,24 +87,41 @@ type DemandCardProps = {
   demand: DemandSummary;
 };
 
+/** Forma de pago que se marca con una píldora: la definida. */
+const PAYMENT_PILLS: Readonly<Partial<Record<PurchaseType, string>>> = {
+  cash: PURCHASE_TYPE_LABELS.cash,
+  financed: PURCHASE_TYPE_LABELS.financed,
+};
+
 export function DemandCard({ opportunityId, demand }: DemandCardProps) {
   const [saved, setSaved] = useState<DemandSaved | null>(null);
   const { vehicle, facts } = demand;
   const vehicleFact = facts.desired_vehicle;
+  const purchaseType = facts.purchase_type.input.purchaseType as
+    PurchaseType | undefined;
+  const payment = purchaseType ? PAYMENT_PILLS[purchaseType] : undefined;
+  // El modelo cargado; el legado ("Dato anterior") solo trae texto libre.
+  const body = vehicle
+    ? bodyTypeOf({
+        model:
+          vehicle.source === "demand" ? vehicleFact.input.model : vehicle.title,
+      })
+    : null;
   return (
     <section
       aria-label="Lo que busca"
       className="shrink-0 rounded-lg border border-border-subtle bg-surface-1 p-4 shadow-card"
     >
-      <header className="flex items-center gap-2">
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <h3 className="text-body text-text-secondary">Busca</h3>
         {facts.trade_in_intent.input.tradeIn === "yes" ? (
           <Pill tone="info">Con trade-in</Pill>
         ) : null}
+        {payment ? <Pill tone="brand">{payment}</Pill> : null}
         <span className="ml-auto flex items-center gap-2">
           <Link
             href={`/opportunities/${opportunityId}`}
-            className="rounded-sm text-caption text-brand hover:text-brand-strong hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            className="rounded-sm text-caption whitespace-nowrap text-brand hover:text-brand-strong hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
             Ver historial
           </Link>
@@ -118,16 +144,19 @@ export function DemandCard({ opportunityId, demand }: DemandCardProps) {
           <span className="text-label text-text-muted">(Quitado)</span>
         ) : null}
       </p>
-      <dl className="mt-3 grid grid-cols-[6.5rem_1fr] gap-x-2 gap-y-1 text-label">
-        {ROWS.map(([fact, label]) => (
-          <div key={fact} className="contents">
-            <dt className="text-text-muted">{label}</dt>
-            <dd className="text-text-primary tabular-nums">
-              <FactValue fact={facts[fact]} />
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <div className="mt-3 flex flex-wrap items-end justify-end gap-3">
+        <dl className="grid min-w-56 flex-1 grid-cols-[6rem_1fr] gap-x-2 gap-y-1 text-label">
+          {ROWS.map(([fact, label]) => (
+            <div key={fact} className="contents">
+              <dt className="text-text-muted">{label}</dt>
+              <dd className="min-w-0 text-text-primary tabular-nums">
+                <FactValue fact={facts[fact]} />
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <VehicleRender body={body} className="w-28" />
+      </div>
       <div role="status" className={saved ? "mt-2" : "sr-only"}>
         {saved ? (
           <p className="text-caption text-success">

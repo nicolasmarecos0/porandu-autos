@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 6 156 56" role="img" aria-label="Representación genérica">
+  <defs>
+    <linearGradient id="v-pickup-paint" gradientUnits="userSpaceOnUse" x1="0" y1="10" x2="0" y2="53">
+      <stop offset="0" stop-color="#E9EDF1"/>
+      <stop offset="0.36" stop-color="#FFFFFF"/>
+      <stop offset="0.5" stop-color="#F0F3F6"/>
+      <stop offset="0.86" stop-color="#C7CED6"/>
+      <stop offset="1" stop-color="#E3E7EC"/>
+    </linearGradient>
+    <linearGradient id="v-pickup-sheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.3" stop-color="#FFFFFF" stop-opacity="0.85"/>
+      <stop offset="0.75" stop-color="#FFFFFF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="v-pickup-glass" gradientUnits="userSpaceOnUse" x1="0" y1="12" x2="0" y2="30">
+      <stop offset="0" stop-color="#5B6776"/>
+      <stop offset="0.5" stop-color="#232A33"/>
+      <stop offset="1" stop-color="#0C0F13"/>
+    </linearGradient>
+    <linearGradient id="v-pickup-reflect" gradientUnits="userSpaceOnUse" x1="30" y1="10" x2="70" y2="40">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="0.42" stop-color="#FFFFFF" stop-opacity="0.1"/>
+      <stop offset="0.43" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.62" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.63" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="0.75" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="v-pickup-shadow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="v-pickup-well" cx="0.5" cy="0.6" r="0.5">
+      <stop offset="0.6" stop-color="#0A0B0D"/>
+      <stop offset="1" stop-color="#22262B"/>
+    </radialGradient>
+    <radialGradient id="v-pickup-tire" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.66" stop-color="#2C3036"/>
+      <stop offset="0.9" stop-color="#16191C"/>
+      <stop offset="1" stop-color="#0A0B0D"/>
+    </radialGradient>
+    <radialGradient id="v-pickup-barrel" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3E434A"/>
+      <stop offset="1" stop-color="#121417"/>
+    </radialGradient>
+    <linearGradient id="v-pickup-rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FAFBFC"/>
+      <stop offset="0.45" stop-color="#C3C9D0"/>
+      <stop offset="1" stop-color="#737A83"/>
+    </linearGradient>
+    <radialGradient id="v-pickup-cap" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#868D95"/>
+    </radialGradient>
+    <linearGradient id="v-pickup-head" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#AEBBC9"/>
+      <stop offset="0.55" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DCE7F2"/>
+    </linearGradient>
+    <linearGradient id="v-pickup-tail" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F87171"/>
+      <stop offset="1" stop-color="#991B1B"/>
+    </linearGradient>
+    <clipPath id="v-pickup-body"><path d="M8 51L6.2 47.5V29.6Q6.2 27.3 8.6 27.3H60.4V14.6Q60.6 11.2 64.4 11H100.5Q105.2 11.2 108.2 14.2L123.6 25.2L146.2 28.1Q152.4 29 154.2 33.4L155.2 42.6Q155.6 48.8 151.8 51H136.80A13.6 13.6 0 1 0 111.20 51H48.80A13.6 13.6 0 1 0 23.20 51Z"/></clipPath>
+    <clipPath id="v-pickup-dlo"><path d="M64.2 25.6L64.6 15.6Q64.9 13.9 67 13.9H99.6Q103.4 14 105.8 16.6L116.4 26.2Z"/></clipPath>
+  </defs>
+  <ellipse cx="80" cy="58" rx="77" ry="3.4" fill="url(#v-pickup-shadow)"/>
+  <circle cx="36" cy="46.4" r="13.4" fill="url(#v-pickup-well)"/><circle cx="124" cy="46.4" r="13.4" fill="url(#v-pickup-well)"/>
+  <path d="M8 51L6.2 47.5V29.6Q6.2 27.3 8.6 27.3H60.4V14.6Q60.6 11.2 64.4 11H100.5Q105.2 11.2 108.2 14.2L123.6 25.2L146.2 28.1Q152.4 29 154.2 33.4L155.2 42.6Q155.6 48.8 151.8 51H136.80A13.6 13.6 0 1 0 111.20 51H48.80A13.6 13.6 0 1 0 23.20 51Z" fill="url(#v-pickup-paint)"/>
+  <g clip-path="url(#v-pickup-body)">
+    <rect x="0" y="44.8" width="160" height="10" fill="#2F343A" opacity="0.9"/>
+    <rect x="0" y="44.3" width="160" height="0.5" fill="#FFFFFF" opacity="0.6"/>
+    <path d="M10 35.6Q60 35 150 36.6" fill="none" stroke="url(#v-pickup-sheen)" stroke-width="1.4"/>
+    <path d="M10 35.6Q60 35 150 36.6" fill="none" stroke="#000000" stroke-opacity="0.1" stroke-width="0.4" transform="translate(0 0.9)"/>
+    <path d="M150.4 35.2H155.4V41.4H150.9Z" fill="#14171B"/>
+  </g>
+  <path d="M51.20 51A14.90 14.90 0 1 0 20.80 51" fill="none" stroke="#2F343A" stroke-width="2.6" clip-path="url(#v-pickup-body)"/><path d="M139.20 51A14.90 14.90 0 1 0 108.80 51" fill="none" stroke="#2F343A" stroke-width="2.6" clip-path="url(#v-pickup-body)"/>
+  <path d="M8 51L6.2 47.5V29.6Q6.2 27.3 8.6 27.3H60.4V14.6Q60.6 11.2 64.4 11H100.5Q105.2 11.2 108.2 14.2L123.6 25.2L146.2 28.1Q152.4 29 154.2 33.4L155.2 42.6Q155.6 48.8 151.8 51H136.80A13.6 13.6 0 1 0 111.20 51H48.80A13.6 13.6 0 1 0 23.20 51Z" fill="none" stroke="#97A0AA" stroke-width="0.4" stroke-linejoin="round"/>
+  <path d="M8.6 28.1H59.8" stroke="#FFFFFF" stroke-opacity="0.95" stroke-width="0.7"/><path d="M60.4 27.4V50.4" stroke="#7E8791" stroke-opacity="0.7" stroke-width="0.45"/><path d="M8 30.4H59.6" stroke="#7E8791" stroke-opacity="0.35" stroke-width="0.35"/>
+  <path d="M64.2 25.6L64.6 15.6Q64.9 13.9 67 13.9H99.6Q103.4 14 105.8 16.6L116.4 26.2Z" fill="url(#v-pickup-glass)"/>
+  <rect x="84.4" y="0" width="3.2" height="40" fill="#0A0C0F" clip-path="url(#v-pickup-dlo)"/>
+  <path d="M64.2 25.6L64.6 15.6Q64.9 13.9 67 13.9H99.6Q103.4 14 105.8 16.6L116.4 26.2Z" fill="url(#v-pickup-reflect)"/>
+  <path d="M64.2 25.6L64.6 15.6Q64.9 13.9 67 13.9H99.6Q103.4 14 105.8 16.6L116.4 26.2Z" fill="none" stroke="#0A0C0F" stroke-width="0.9" stroke-linejoin="round"/>
+  <path d="M63.6 26.4L117.4 26.8" fill="none" stroke="#9AA3AD" stroke-width="0.5"/>
+  <path d="M86 26.4V50.6" fill="none" stroke="#6B747E" stroke-opacity="0.5" stroke-width="0.4"/><path d="M62.2 26V50.6" fill="none" stroke="#6B747E" stroke-opacity="0.5" stroke-width="0.4"/>
+  <rect x="75.7" y="30.4" width="5.6" height="1.1" rx="0.55" fill="#A8B0B9"/><rect x="76.0" y="30.5" width="5" height="0.35" rx="0.18" fill="#FFFFFF" opacity="0.95"/><rect x="99.7" y="30.6" width="5.6" height="1.1" rx="0.55" fill="#A8B0B9"/><rect x="100.0" y="30.700000000000003" width="5" height="0.35" rx="0.18" fill="#FFFFFF" opacity="0.95"/>
+  <path d="M111.0 26.200000000000003Q110.39999999999999 23.8 113.0 23.400000000000002H116.0Q117.19999999999999 23.5 117.19999999999999 24.8V25.6Q117.0 26.6 115.6 26.6Z" fill="url(#v-pickup-paint)" stroke="#97A0AA" stroke-width="0.35"/><path d="M112.0 26.6L113.0 28.0" stroke="#15181C" stroke-width="0.9"/>
+  <path d="M143.8 29.4L152.8 30.8Q154.4 31.2 154.5 33.4L144.4 33Z" fill="url(#v-pickup-head)" stroke="#4E5864" stroke-width="0.3"/>
+  <path d="M6.4 29.6H9.6V37.2H6.4Z" fill="url(#v-pickup-tail)" stroke="#5F1414" stroke-width="0.2"/>
+  
+  <g>
+    <circle cx="36" cy="46.4" r="11.6" fill="url(#v-pickup-tire)"/>
+    <circle cx="36" cy="46.4" r="10.44" fill="none" stroke="#33373D" stroke-width="0.3"/>
+    <circle cx="36" cy="46.4" r="8.12" fill="url(#v-pickup-barrel)"/>
+    <path d="M38.60 41.37A5.68 5.68 0 0 1 41.36 45.75L39.41 45.75A3.74 3.74 0 0 0 37.79 43.15Z" fill="#5A6069"/>
+    <g fill="url(#v-pickup-rim)" stroke="#5E656D" stroke-width="0.12"><path d="M35.54 44.13 L35.43 38.77 L36.57 38.77 L36.46 44.13Z"/><path d="M36.96 44.29 L40.02 39.89 L40.95 40.56 L37.71 44.83Z"/><path d="M38.02 45.26 L43.08 43.50 L43.44 44.59 L38.30 46.14Z"/><path d="M38.30 46.66 L43.44 48.21 L43.08 49.30 L38.02 47.54Z"/><path d="M37.71 47.97 L40.95 52.24 L40.02 52.91 L36.96 48.51Z"/><path d="M36.46 48.67 L36.57 54.03 L35.43 54.03 L35.54 48.67Z"/><path d="M35.04 48.51 L31.98 52.91 L31.05 52.24 L34.29 47.97Z"/><path d="M33.98 47.54 L28.92 49.30 L28.56 48.21 L33.70 46.66Z"/><path d="M33.70 46.14 L28.56 44.59 L28.92 43.50 L33.98 45.26Z"/><path d="M34.29 44.83 L31.05 40.56 L31.98 39.89 L35.04 44.29Z"/></g>
+    <circle cx="36" cy="46.4" r="8.12" fill="none" stroke="url(#v-pickup-rim)" stroke-width="0.87"/>
+    <circle cx="36" cy="46.4" r="2.55" fill="url(#v-pickup-cap)" stroke="#6E757D" stroke-width="0.15"/>
+    <circle cx="36.89" cy="45.18" r="0.26" fill="#3A3F46"/><circle cx="37.43" cy="46.87" r="0.26" fill="#3A3F46"/><circle cx="36.00" cy="47.91" r="0.26" fill="#3A3F46"/><circle cx="34.57" cy="46.87" r="0.26" fill="#3A3F46"/><circle cx="35.11" cy="45.18" r="0.26" fill="#3A3F46"/>
+    <path d="M26.02 43.38A10.44 10.44 0 0 1 32.52 36.66" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="0.8" stroke-linecap="round"/>
+  </g>
+  <g>
+    <circle cx="124" cy="46.4" r="11.6" fill="url(#v-pickup-tire)"/>
+    <circle cx="124" cy="46.4" r="10.44" fill="none" stroke="#33373D" stroke-width="0.3"/>
+    <circle cx="124" cy="46.4" r="8.12" fill="url(#v-pickup-barrel)"/>
+    <path d="M126.60 41.37A5.68 5.68 0 0 1 129.36 45.75L127.41 45.75A3.74 3.74 0 0 0 125.79 43.15Z" fill="#5A6069"/>
+    <g fill="url(#v-pickup-rim)" stroke="#5E656D" stroke-width="0.12"><path d="M123.54 44.13 L123.43 38.77 L124.57 38.77 L124.46 44.13Z"/><path d="M124.96 44.29 L128.02 39.89 L128.95 40.56 L125.71 44.83Z"/><path d="M126.02 45.26 L131.08 43.50 L131.44 44.59 L126.30 46.14Z"/><path d="M126.30 46.66 L131.44 48.21 L131.08 49.30 L126.02 47.54Z"/><path d="M125.71 47.97 L128.95 52.24 L128.02 52.91 L124.96 48.51Z"/><path d="M124.46 48.67 L124.57 54.03 L123.43 54.03 L123.54 48.67Z"/><path d="M123.04 48.51 L119.98 52.91 L119.05 52.24 L122.29 47.97Z"/><path d="M121.98 47.54 L116.92 49.30 L116.56 48.21 L121.70 46.66Z"/><path d="M121.70 46.14 L116.56 44.59 L116.92 43.50 L121.98 45.26Z"/><path d="M122.29 44.83 L119.05 40.56 L119.98 39.89 L123.04 44.29Z"/></g>
+    <circle cx="124" cy="46.4" r="8.12" fill="none" stroke="url(#v-pickup-rim)" stroke-width="0.87"/>
+    <circle cx="124" cy="46.4" r="2.55" fill="url(#v-pickup-cap)" stroke="#6E757D" stroke-width="0.15"/>
+    <circle cx="124.89" cy="45.18" r="0.26" fill="#3A3F46"/><circle cx="125.43" cy="46.87" r="0.26" fill="#3A3F46"/><circle cx="124.00" cy="47.91" r="0.26" fill="#3A3F46"/><circle cx="122.57" cy="46.87" r="0.26" fill="#3A3F46"/><circle cx="123.11" cy="45.18" r="0.26" fill="#3A3F46"/>
+    <path d="M114.02 43.38A10.44 10.44 0 0 1 120.52 36.66" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="0.8" stroke-linecap="round"/>
+  </g>
+</svg>

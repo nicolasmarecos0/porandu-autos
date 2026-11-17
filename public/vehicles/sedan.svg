@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="2 6 156 56" role="img" aria-label="Representación genérica">
+  <defs>
+    <linearGradient id="v-sedan-paint" gradientUnits="userSpaceOnUse" x1="0" y1="10" x2="0" y2="53">
+      <stop offset="0" stop-color="#4B5159"/>
+      <stop offset="0.36" stop-color="#6C737C"/>
+      <stop offset="0.5" stop-color="#2A2E34"/>
+      <stop offset="0.86" stop-color="#0D0F12"/>
+      <stop offset="1" stop-color="#22262B"/>
+    </linearGradient>
+    <linearGradient id="v-sedan-sheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.3" stop-color="#FFFFFF" stop-opacity="0.42"/>
+      <stop offset="0.75" stop-color="#FFFFFF" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="v-sedan-glass" gradientUnits="userSpaceOnUse" x1="0" y1="12" x2="0" y2="30">
+      <stop offset="0" stop-color="#5B6776"/>
+      <stop offset="0.5" stop-color="#232A33"/>
+      <stop offset="1" stop-color="#0C0F13"/>
+    </linearGradient>
+    <linearGradient id="v-sedan-reflect" gradientUnits="userSpaceOnUse" x1="30" y1="10" x2="70" y2="40">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="0.42" stop-color="#FFFFFF" stop-opacity="0.1"/>
+      <stop offset="0.43" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.62" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.63" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="0.75" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="v-sedan-shadow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.45"/>
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="v-sedan-well" cx="0.5" cy="0.6" r="0.5">
+      <stop offset="0.6" stop-color="#0A0B0D"/>
+      <stop offset="1" stop-color="#22262B"/>
+    </radialGradient>
+    <radialGradient id="v-sedan-tire" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.66" stop-color="#2C3036"/>
+      <stop offset="0.9" stop-color="#16191C"/>
+      <stop offset="1" stop-color="#0A0B0D"/>
+    </radialGradient>
+    <radialGradient id="v-sedan-barrel" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#3E434A"/>
+      <stop offset="1" stop-color="#121417"/>
+    </radialGradient>
+    <linearGradient id="v-sedan-rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FAFBFC"/>
+      <stop offset="0.45" stop-color="#C3C9D0"/>
+      <stop offset="1" stop-color="#737A83"/>
+    </linearGradient>
+    <radialGradient id="v-sedan-cap" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#868D95"/>
+    </radialGradient>
+    <linearGradient id="v-sedan-head" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#AEBBC9"/>
+      <stop offset="0.55" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DCE7F2"/>
+    </linearGradient>
+    <linearGradient id="v-sedan-tail" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F87171"/>
+      <stop offset="1" stop-color="#991B1B"/>
+    </linearGradient>
+    <clipPath id="v-sedan-body"><path d="M9.4 51.4Q6.6 50.4 6.5 46.4L6.9 38.4Q7.3 33.2 12.2 31.8L30.4 29.6Q38.6 21.4 50.4 17.4Q57.6 15.2 71 15H87.6Q97.8 15.2 106.2 20.2L121.2 27.4L145 30.4Q151.8 31.4 153.4 35.6L154.2 43.4Q154.4 49.6 150.6 51.8H132.65A12.6 12.6 0 1 0 109.35 52H47.65A12.6 12.6 0 1 0 24.35 52H12Q10.2 52 9.4 51.4Z"/></clipPath>
+    <clipPath id="v-sedan-dlo"><path d="M34.2 29.2Q41.6 22 51.6 19Q58 17.6 70.4 17.6H86.8Q95.4 17.8 101.6 21.8L111.4 28.6Z"/></clipPath>
+  </defs>
+  <ellipse cx="80" cy="58" rx="77" ry="3.4" fill="url(#v-sedan-shadow)"/>
+  <circle cx="36" cy="47.2" r="12.4" fill="url(#v-sedan-well)"/><circle cx="121" cy="47.2" r="12.4" fill="url(#v-sedan-well)"/>
+  <path d="M9.4 51.4Q6.6 50.4 6.5 46.4L6.9 38.4Q7.3 33.2 12.2 31.8L30.4 29.6Q38.6 21.4 50.4 17.4Q57.6 15.2 71 15H87.6Q97.8 15.2 106.2 20.2L121.2 27.4L145 30.4Q151.8 31.4 153.4 35.6L154.2 43.4Q154.4 49.6 150.6 51.8H132.65A12.6 12.6 0 1 0 109.35 52H47.65A12.6 12.6 0 1 0 24.35 52H12Q10.2 52 9.4 51.4Z" fill="url(#v-sedan-paint)"/>
+  <g clip-path="url(#v-sedan-body)">
+    <rect x="0" y="47.2" width="160" height="10" fill="#0B0D10" opacity="0.55"/>
+    <rect x="0" y="46.7" width="160" height="0.5" fill="#FFFFFF" opacity="0.18"/>
+    <path d="M8 37Q70 35.6 152 37.6" fill="none" stroke="url(#v-sedan-sheen)" stroke-width="1.4"/>
+    <path d="M8 37Q70 35.6 152 37.6" fill="none" stroke="#000000" stroke-opacity="0.35" stroke-width="0.4" transform="translate(0 0.9)"/>
+    <path d="M150.8 41.4H154.4V44.4H151.3Z" fill="#14171B"/>
+  </g>
+  
+  <path d="M9.4 51.4Q6.6 50.4 6.5 46.4L6.9 38.4Q7.3 33.2 12.2 31.8L30.4 29.6Q38.6 21.4 50.4 17.4Q57.6 15.2 71 15H87.6Q97.8 15.2 106.2 20.2L121.2 27.4L145 30.4Q151.8 31.4 153.4 35.6L154.2 43.4Q154.4 49.6 150.6 51.8H132.65A12.6 12.6 0 1 0 109.35 52H47.65A12.6 12.6 0 1 0 24.35 52H12Q10.2 52 9.4 51.4Z" fill="none" stroke="#04060A" stroke-width="0.4" stroke-linejoin="round"/>
+  
+  <path d="M34.2 29.2Q41.6 22 51.6 19Q58 17.6 70.4 17.6H86.8Q95.4 17.8 101.6 21.8L111.4 28.6Z" fill="url(#v-sedan-glass)"/>
+  <rect x="74.6" y="0" width="3.2" height="40" fill="#0A0C0F" clip-path="url(#v-sedan-dlo)"/>
+  <path d="M34.2 29.2Q41.6 22 51.6 19Q58 17.6 70.4 17.6H86.8Q95.4 17.8 101.6 21.8L111.4 28.6Z" fill="url(#v-sedan-reflect)"/>
+  <path d="M34.2 29.2Q41.6 22 51.6 19Q58 17.6 70.4 17.6H86.8Q95.4 17.8 101.6 21.8L111.4 28.6Z" fill="none" stroke="#0A0C0F" stroke-width="0.9" stroke-linejoin="round"/>
+  <path d="M33.4 29.6L112.6 29" fill="none" stroke="#5D646D" stroke-width="0.5"/>
+  <path d="M76.2 29V51" fill="none" stroke="#000000" stroke-opacity="0.8" stroke-width="0.4"/><path d="M44 29.6Q46 40 49.2 44.6" fill="none" stroke="#000000" stroke-opacity="0.8" stroke-width="0.4"/>
+  <rect x="59.6" y="32.4" width="5.6" height="1.1" rx="0.55" fill="#31363D"/><rect x="59.9" y="32.5" width="5" height="0.35" rx="0.18" fill="#FFFFFF" opacity="0.3"/><rect x="96.0" y="32.2" width="5.6" height="1.1" rx="0.55" fill="#31363D"/><rect x="96.3" y="32.300000000000004" width="5" height="0.35" rx="0.18" fill="#FFFFFF" opacity="0.3"/>
+  <path d="M107.0 29.200000000000003Q106.39999999999999 26.8 109.0 26.400000000000002H112.0Q113.19999999999999 26.5 113.19999999999999 27.8V28.6Q113.0 29.6 111.6 29.6Z" fill="url(#v-sedan-paint)" stroke="#04060A" stroke-width="0.35"/><path d="M108.0 29.6L109.0 31.0" stroke="#15181C" stroke-width="0.9"/>
+  <path d="M141.6 31.2L152.4 32.6Q153.6 33 153.8 35L142.4 34.6Z" fill="url(#v-sedan-head)" stroke="#4E5864" stroke-width="0.3"/>
+  <path d="M7.2 33.6L14.4 32.8V35.6L7 36.4Z" fill="url(#v-sedan-tail)" stroke="#5F1414" stroke-width="0.2"/>
+  
+  <g>
+    <circle cx="36" cy="47.2" r="10.8" fill="url(#v-sedan-tire)"/>
+    <circle cx="36" cy="47.2" r="9.72" fill="none" stroke="#33373D" stroke-width="0.3"/>
+    <circle cx="36" cy="47.2" r="7.56" fill="url(#v-sedan-barrel)"/>
+    <path d="M38.42 42.51A5.29 5.29 0 0 1 40.99 46.60L39.18 46.60A3.48 3.48 0 0 0 37.66 44.18Z" fill="#5A6069"/>
+    <g fill="url(#v-sedan-rim)" stroke="#5E656D" stroke-width="0.12"><path d="M35.57 45.08 L35.47 40.09 L36.53 40.09 L36.43 45.08Z"/><path d="M36.90 45.24 L39.75 41.14 L40.61 41.76 L37.59 45.74Z"/><path d="M37.88 46.14 L42.60 44.50 L42.93 45.51 L38.15 46.95Z"/><path d="M38.15 47.45 L42.93 48.89 L42.60 49.90 L37.88 48.26Z"/><path d="M37.59 48.66 L40.61 52.64 L39.75 53.26 L36.90 49.16Z"/><path d="M36.43 49.32 L36.53 54.31 L35.47 54.31 L35.57 49.32Z"/><path d="M35.10 49.16 L32.25 53.26 L31.39 52.64 L34.41 48.66Z"/><path d="M34.12 48.26 L29.40 49.90 L29.07 48.89 L33.85 47.45Z"/><path d="M33.85 46.95 L29.07 45.51 L29.40 44.50 L34.12 46.14Z"/><path d="M34.41 45.74 L31.39 41.76 L32.25 41.14 L35.10 45.24Z"/></g>
+    <circle cx="36" cy="47.2" r="7.56" fill="none" stroke="url(#v-sedan-rim)" stroke-width="0.81"/>
+    <circle cx="36" cy="47.2" r="2.38" fill="url(#v-sedan-cap)" stroke="#6E757D" stroke-width="0.15"/>
+    <circle cx="36.83" cy="46.06" r="0.26" fill="#3A3F46"/><circle cx="37.34" cy="47.63" r="0.26" fill="#3A3F46"/><circle cx="36.00" cy="48.60" r="0.26" fill="#3A3F46"/><circle cx="34.66" cy="47.63" r="0.26" fill="#3A3F46"/><circle cx="35.17" cy="46.06" r="0.26" fill="#3A3F46"/>
+    <path d="M26.71 44.39A9.72 9.72 0 0 1 32.76 38.13" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="0.8" stroke-linecap="round"/>
+  </g>
+  <g>
+    <circle cx="121" cy="47.2" r="10.8" fill="url(#v-sedan-tire)"/>
+    <circle cx="121" cy="47.2" r="9.72" fill="none" stroke="#33373D" stroke-width="0.3"/>
+    <circle cx="121" cy="47.2" r="7.56" fill="url(#v-sedan-barrel)"/>
+    <path d="M123.42 42.51A5.29 5.29 0 0 1 125.99 46.60L124.18 46.60A3.48 3.48 0 0 0 122.66 44.18Z" fill="#5A6069"/>
+    <g fill="url(#v-sedan-rim)" stroke="#5E656D" stroke-width="0.12"><path d="M120.57 45.08 L120.47 40.09 L121.53 40.09 L121.43 45.08Z"/><path d="M121.90 45.24 L124.75 41.14 L125.61 41.76 L122.59 45.74Z"/><path d="M122.88 46.14 L127.60 44.50 L127.93 45.51 L123.15 46.95Z"/><path d="M123.15 47.45 L127.93 48.89 L127.60 49.90 L122.88 48.26Z"/><path d="M122.59 48.66 L125.61 52.64 L124.75 53.26 L121.90 49.16Z"/><path d="M121.43 49.32 L121.53 54.31 L120.47 54.31 L120.57 49.32Z"/><path d="M120.10 49.16 L117.25 53.26 L116.39 52.64 L119.41 48.66Z"/><path d="M119.12 48.26 L114.40 49.90 L114.07 48.89 L118.85 47.45Z"/><path d="M118.85 46.95 L114.07 45.51 L114.40 44.50 L119.12 46.14Z"/><path d="M119.41 45.74 L116.39 41.76 L117.25 41.14 L120.10 45.24Z"/></g>
+    <circle cx="121" cy="47.2" r="7.56" fill="none" stroke="url(#v-sedan-rim)" stroke-width="0.81"/>
+    <circle cx="121" cy="47.2" r="2.38" fill="url(#v-sedan-cap)" stroke="#6E757D" stroke-width="0.15"/>
+    <circle cx="121.83" cy="46.06" r="0.26" fill="#3A3F46"/><circle cx="122.34" cy="47.63" r="0.26" fill="#3A3F46"/><circle cx="121.00" cy="48.60" r="0.26" fill="#3A3F46"/><circle cx="119.66" cy="47.63" r="0.26" fill="#3A3F46"/><circle cx="120.17" cy="46.06" r="0.26" fill="#3A3F46"/>
+    <path d="M111.71 44.39A9.72 9.72 0 0 1 117.76 38.13" fill="none" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="0.8" stroke-linecap="round"/>
+  </g>
+</svg>

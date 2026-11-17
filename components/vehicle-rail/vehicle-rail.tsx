@@ -9,24 +9,28 @@ import type {
   MatchRailEmptyReason,
 } from "@/domains/match/presentation";
 import type { Opportunity } from "@/domains/opportunities/types";
-import { formatKm } from "@/domains/vehicles/stock";
+import { VehicleRender } from "./vehicle-render";
 import { VehicleVisual } from "./vehicle-visual";
 
 /*
  * Vehicle Rail: Top Match (resaltado con borde naranja de 2 px, DEC-055),
- * alternativa (borde celeste sutil) y trade-in. Tarjetas blancas apiladas con
- * pares clave-valor, como la columna derecha de la referencia.
+ * alternativa y trade-in. Tarjetas blancas apiladas con pares clave-valor,
+ * como la columna derecha de la referencia.
  * Lo que busca el cliente (la card "Busca") sale de la demanda estructurada
  * (H1.4, components/opportunities/demand-card.tsx).
  *
- * - `VehicleRail` es el contrato visual de B1 en /opportunities: sin fuente
- *   todavía, no se muestra con datos reales.
- * - `OpportunityMatches` muestra los matches reales de Match v0 (H1.5,
- *   DEC-031) en /opportunities/[id]: Top Match y alternativa con las razones
- *   del motor, o un "sin dato" honesto. Sin silueta: el inventario no tiene
- *   carrocería y no se inventa una. Desde Hito 2 (DEC-033) cada tarjeta
- *   puede llevar un pie: la acción de vincularla a la negociación, o la
- *   marca de que ya es la unidad vinculada.
+ * - `VehicleRail` es el contrato visual de B1 (fixtures): con datos reales
+ *   sus campos no llegan.
+ * - `StockMatchCards` muestra los matches reales de Match v0 (H1.5,
+ *   DEC-031): Top Match y alternativa con las razones del motor, o un "sin
+ *   dato" honesto. Desde DEC-058 los usa también la cola de /opportunities,
+ *   con el render genérico de la carrocería ("Representación"), el estado
+ *   (0 km o Usado), la diferencia contra el presupuesto y el saldo después
+ *   de la entrega inicial. La alternativa lleva borde azul acero sutil.
+ * - `OpportunityMatches` los envuelve con su título en /opportunities/[id].
+ *   Desde Hito 2 (DEC-033) cada tarjeta puede llevar un pie: la acción de
+ *   vincularla a la negociación, o la marca de que ya es la unidad
+ *   vinculada.
  */
 
 function Pill({
@@ -52,7 +56,7 @@ function Pill({
 
 function KeyValues({ rows }: { rows: readonly [string, ReactNode][] }) {
   return (
-    <dl className="grid flex-1 grid-cols-[5.5rem_1fr] gap-x-2 gap-y-1 text-label">
+    <dl className="grid min-w-56 flex-1 grid-cols-[6.25rem_1fr] gap-x-2 gap-y-1 text-label">
       {rows.map(([label, value]) => (
         <div key={label} className="contents">
           <dt className="text-text-muted">{label}</dt>
@@ -62,9 +66,6 @@ function KeyValues({ rows }: { rows: readonly [string, ReactNode][] }) {
     </dl>
   );
 }
-
-/** Kilometraje de una unidad nueva, con el mismo formato que Match v0. */
-const ZERO_KM = formatKm(0);
 
 /** Check del Top Match: círculo azul profundo, como en la referencia. */
 function TopMatchCheck() {
@@ -85,6 +86,65 @@ function NewBadge() {
       0 km
     </span>
   );
+}
+
+/** Estado de la unidad por su kilometraje: 0 km o Usado (dato real). */
+function ConditionBadge({ condition }: { condition: MatchCard["condition"] }) {
+  if (condition === "new") return <NewBadge />;
+  if (condition === "used") {
+    return (
+      <span className="rounded-sm bg-surface-inverse px-1.5 py-0.5 text-caption font-semibold text-text-inverse">
+        Usado
+      </span>
+    );
+  }
+  return null;
+}
+
+/** Precio contra el presupuesto: verde si está debajo, rojo si lo excede. */
+function BudgetDeltaValue({ delta }: { delta: MatchCard["budgetDelta"] }) {
+  if (delta === null) return <span className="text-text-muted">Sin dato</span>;
+  switch (delta.kind) {
+    case "under":
+      return (
+        <span className="font-semibold text-success">
+          {delta.amount} debajo
+        </span>
+      );
+    case "over":
+      return (
+        <span className="font-semibold text-danger">{delta.amount} arriba</span>
+      );
+    case "equal":
+      return <span className="font-semibold text-success">Justo</span>;
+  }
+}
+
+/** Filas de precio de una tarjeta de match (DEC-058). */
+function priceRows(
+  match: MatchCard,
+  { full }: { full: boolean },
+): [string, ReactNode][] {
+  const rows: [string, ReactNode][] = [
+    [
+      "Precio",
+      <span key="price" className="font-semibold">
+        {match.price ?? "Sin precio"}
+      </span>,
+    ],
+  ];
+  if (full) rows.push(["Km", match.km ?? "Sin dato"]);
+  if (match.budgetDelta) {
+    rows.push([
+      "Presupuesto",
+      <BudgetDeltaValue key="budget" delta={match.budgetDelta} />,
+    ]);
+  }
+  if (full && match.balance) {
+    rows.push(["Entrega", match.balance.downPayment]);
+    rows.push([match.balance.label, match.balance.amount]);
+  }
+  return rows;
 }
 
 export function VehicleRail({ opportunity }: { opportunity: Opportunity }) {
@@ -254,25 +314,16 @@ function TopMatchCard({
       <header className="flex items-center gap-2">
         <h3 className="text-body text-text-secondary">Top Match</h3>
         <TopMatchCheck />
-        {match.km === ZERO_KM ? <NewBadge /> : null}
+        <ConditionBadge condition={match.condition} />
         <span className="ml-auto">
           <MatchRing value={match.score.total} size={38} />
         </span>
       </header>
       <p className="mt-1 text-heading text-text-primary">{match.name}</p>
       <p className="text-caption text-text-muted">{match.detail}</p>
-      <div className="mt-3 flex">
-        <KeyValues
-          rows={[
-            [
-              "Precio",
-              <span key="price" className="font-semibold">
-                {match.price ?? "Sin precio"}
-              </span>,
-            ],
-            ["Km", match.km ?? "Sin dato"],
-          ]}
-        />
+      <div className="mt-3 flex flex-wrap items-end justify-end gap-3">
+        <KeyValues rows={priceRows(match, { full: true })} />
+        <VehicleRender body={match.body} className="w-28" />
       </div>
       <MatchReasons
         reasons={match.reasons}
@@ -293,11 +344,11 @@ function AlternativeMatchCard({
   return (
     <section
       aria-label="Alternativa"
-      className="shrink-0 rounded-lg border-2 border-info-border bg-surface-1 p-4 shadow-card"
+      className="shrink-0 rounded-lg border-2 border-brand/40 bg-surface-1 p-4 shadow-card"
     >
       <header className="flex items-center gap-2">
         <h3 className="text-body text-text-secondary">Alternativa</h3>
-        {match.km === ZERO_KM ? <NewBadge /> : null}
+        <ConditionBadge condition={match.condition} />
         <span className="ml-auto">
           <MatchRing value={match.score.total} size={30} />
         </span>
@@ -306,12 +357,45 @@ function AlternativeMatchCard({
         {match.name}
       </p>
       <p className="text-caption text-text-muted">{match.detail}</p>
-      <div className="mt-2 flex">
-        <KeyValues rows={[["Precio", match.price ?? "Sin precio"]]} />
+      <div className="mt-2 flex flex-wrap items-end justify-end gap-3">
+        <KeyValues rows={priceRows(match, { full: false })} />
+        <VehicleRender body={match.body} className="w-28" />
       </div>
       <MatchReasons reasons={match.reasons} className="mt-2" />
       {footer ? <div className="mt-3">{footer}</div> : null}
     </section>
+  );
+}
+
+/**
+ * Top Match y alternativa reales, apiladas, o por qué no hay (DEC-058): las
+ * tarjetas del rail derecho de la cola y del detalle.
+ */
+export function StockMatchCards({
+  rail,
+  cardFooter,
+}: {
+  rail: MatchRail;
+  cardFooter?: (card: MatchCard) => ReactNode;
+}) {
+  if (rail.kind === "empty") {
+    return (
+      <p className="shrink-0 rounded-lg border border-dashed border-border-default bg-surface-1 p-4 text-label text-text-secondary">
+        <span className="font-semibold text-text-primary">Top Match: </span>
+        {EMPTY_MATCHES[rail.reason]}
+      </p>
+    );
+  }
+  return (
+    <>
+      <TopMatchCard match={rail.top} footer={cardFooter?.(rail.top)} />
+      {rail.alternative ? (
+        <AlternativeMatchCard
+          match={rail.alternative}
+          footer={cardFooter?.(rail.alternative)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -350,13 +434,7 @@ export function OpportunityMatches({
             {hint ? (
               <p className="text-caption text-text-secondary">{hint}</p>
             ) : null}
-            <TopMatchCard match={rail.top} footer={cardFooter?.(rail.top)} />
-            {rail.alternative ? (
-              <AlternativeMatchCard
-                match={rail.alternative}
-                footer={cardFooter?.(rail.alternative)}
-              />
-            ) : null}
+            <StockMatchCards rail={rail} cardFooter={cardFooter} />
           </>
         )}
       </section>
