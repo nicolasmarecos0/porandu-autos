@@ -28,6 +28,8 @@ Porandú conecta inventario, conversaciones, intención de compra y operación c
 >
 > **Hito 23 — Rediseño ejecutivo y vista Tabla (DEC-055):** la banda superior y la tarjeta del prospecto pasan al azul marino ejecutivo `#0F1E36` (`#376B89` sigue como acento), el rail, la franja de scores y los encabezados de tabla al carbón `#383838`, y Opportunities toma la composición de la referencia con datos reales únicamente. Suma la vista Tabla (`/opportunities/table`) y el maestro/detalle en el teléfono. Sin migraciones (ver "Rediseño ejecutivo y vista Tabla (Hito 23)").
 >
+> **Login ejecutivo (DEC-057):** `/login` pasa a un split-screen con la tarjeta de acceso y "El Núcleo Porandú", un diagrama de marca de las fuentes y salidas reales del producto con el eslogan "El núcleo: ventas sin caos.". En el teléfono, el formulario primero con un encabezado compacto. Sin migraciones (ver "Login ejecutivo (DEC-057)").
+>
 > **Hito 21 — Logística y entregas (DEC-053):** el panel "Coordinación de Entrega" de `/opportunities/[id]` (solo con la oportunidad Ganada) programa la entrega de la unidad vendida, lleva el checklist físico (llaves, manuales, auxilio, limpieza y documentos) y, con todo verificado, "Completar Entrega y Dar Salida al Vehículo" completa el remito y pasa la unidad a Entregada en una sola transacción: sale del Inventario, del Catálogo y de las Métricas del salón. `0022_deliveries` se aplica a staging después del merge (ver "Logística y entregas (Hito 21)").
 
 ---
@@ -1286,6 +1288,16 @@ Rediseño visual sobre las capturas de referencia del fundador (DEC-055), con da
 - **Tests:** `tests/unit/domains/opportunities/table.test.ts` (orden, búsqueda, paginación, pago y señales) y `tests/unit/opportunities/table-view.test.ts` (columnas reales sin Lease, cuotas ni Outreach; orden inicial; destino de cada fila; "Sin dato" y "Sin asignar"; lista del teléfono). Verificado en Chromium a 1440, 1024 y 390 px, con los datos de prueba y con la forma de los datos reales (sin señales ni matches).
 - **Auditoría previa al deploy:** en el teléfono, el detalle tiene siempre "Volver" ("Volver a la tabla" si se abrió desde la tabla, `&from=table`) y una barra "Showroom" que abre el Catálogo visual (DEC-049) filtrado por el vehículo que busca el cliente. Los menús de Radix resaltan el ítem activo con fondo de marca (se ve con el teclado) y un avatar sin iniciales muestra una silueta.
 - **Fuera de este bloque (backlog, DEC-055 §7):** notificaciones, búsqueda global, cambiar la etapa desde la tarjeta, recientes y favoritos, el panel de filtros y la selección masiva de la tabla, Outreach, Campaign/Website Activity, Loyalty, el tile de IA, la calculadora Lease/Finance/Cash y el contrato del auto actual.
+
+## Login ejecutivo (DEC-057)
+
+`/login` sigue siendo email + password con la Server Action `signIn` (DEC-012). Cambia la composición:
+
+- **Desde `lg`:** split-screen 42 / 58. A la izquierda, la tarjeta de login (`components/auth/login-card.tsx`) sobre blanco. A la derecha, el eslogan ("El núcleo: ventas sin caos.") y "El Núcleo Porandú" (`components/auth/core-diagram.tsx`): cinco fuentes que el producto tiene (prospectos, historial y notas, reglas del motor, stock, demanda) convergen en el núcleo, que entrega Porandú Score, contacto, señales, cotización en PDF y cierre. Ningún canal de omnicanalidad. Hasta 1440 px el eslogan va arriba del diagrama; desde 1440 px, al lado.
+- **Debajo de `lg`:** el formulario primero, con un encabezado compacto del eslogan y sin diagrama. Campos de 44 px y 16 px, para que iOS no haga zoom.
+- **Motion:** los datos viajan por las curvas con SMIL y el núcleo late. Con reduced motion quedan puntos fijos. Los halos son translúcidos, sin blur (DEC-013).
+- **"Conexión segura verificada":** solo si la request llegó por HTTPS (`isSecureRequest()`, `lib/auth/secure-connection.ts`). En `next dev` sobre http no aparece.
+- **Tests:** `tests/unit/auth/login-page.test.ts`. Verificado en Chromium de 320 × 568 a 1920 × 1080 sin scroll.
 
 ## Convenciones
 

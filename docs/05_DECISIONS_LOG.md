@@ -70,6 +70,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-054 | Seguridad, refinamiento de roles y accesos: la gerencia aprueba, fija precios, anula y audita (Hito 22, cierre del MVP) | Aceptada | 2026-11-11 |
 | DEC-055 | Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23) | Aceptada | 2026-11-17 |
 | DEC-056 | Cliente del runtime para Supavisor desde Vercel (E3 parcial de ADR-001) | Aceptada en principio | 2026-11-17 |
+| DEC-057 | Login ejecutivo: split-screen con "El Núcleo Porandú" y eslogan de marca | Aceptada en principio | 2026-11-17 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1912,6 +1913,40 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Un deploy con la URL mal configurada falla al primer acceso a datos con un error que dice qué corregir, en lugar de `ENOTFOUND` o "Tenant or user not found".
   - `tests/db/tenant-session.test.ts` reserva `options.max` conexiones del pool del runtime en lugar de 10 fijas.
   - Decisiones abiertas para el fundador: `verify-full` con el certificado de Supabase; integrar el cierre del pool con el ciclo de vida de las funciones de Vercel (`@vercel/functions`, dependencia nueva) si el piloto lo exige.
+
+## DEC-057 — Login ejecutivo: split-screen con "El Núcleo Porandú" y eslogan de marca
+- **Estado:** Aceptada en principio · 2026-11-17. Formaliza el pedido del fundador del 17 nov 2026: llevar `/login` al estándar ejecutivo de DEC-055, con una composición visual al lado del formulario inspirada en una captura de referencia (el diagrama del núcleo de un CDP, con curvas punteadas, nodos de luz y tarjetas de íconos) y un eslogan de marca. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión.
+- **Contexto:**
+  - `/login` era una tarjeta blanca aislada debajo de la banda superior.
+  - La referencia conecta el núcleo con Instagram, teléfono, Google Ads, email y Facebook: omnicanalidad, que es un non-goal (Build Baseline §4, Master Context §6 y §38). El pedido ya la reemplazaba por fuentes y salidas que Porandú tiene.
+- **Decisión:**
+  1. **Composición.** Desde `lg`, split-screen 42 / 58: el formulario a la izquierda, sobre blanco, y la columna visual a la derecha, sobre el canvas `#F4F5F7` con un resplandor radial y una grilla de puntos tenues. Hasta 1440 px el eslogan va centrado arriba del diagrama; desde 1440 px, a la derecha del diagrama. Debajo de `lg` (teléfono y tablet), el formulario primero, con un encabezado compacto (etiqueta y eslogan) y sin diagrama.
+     - El formulario va antes que la columna visual en el DOM: el primer Tab llega al email.
+     - Sin scroll en 320 × 568 (iPhone SE), 390 × 844, 768 × 1024, 1024 × 768, 1280 × 800, 1440 × 900 y 1920 × 1080.
+  2. **"El Núcleo Porandú"** (`components/auth/core-diagram.tsx`): ilustración de marca, no datos.
+     - Fuentes que convergen en el núcleo: Prospectos, Historial y notas, Reglas del motor, Stock y unidades, Tendencias de demanda.
+     - Salidas para el salón: Porandú Score y prioridad, Contacto en el salón, Señales fuertes de compra, Cotización en PDF, Cierre y match de unidad.
+     - Ningún canal, integración ni marca de terceros. Cada nodo nombra algo que el producto ya hace (DEC-004, DEC-024, DEC-025, DEC-030, DEC-031, DEC-033, DEC-034, DEC-035, DEC-040, DEC-046).
+     - Las tarjetas son listas con nombre accesible. El rótulo de cada una aparece al pasar el mouse.
+  3. **Eslogan** (es-PY): "Inteligencia comercial automotriz" · **"El núcleo: ventas sin caos."** · el párrafo de respaldo del pedido · "4 Scores de Decisión", "Top Match de Stock" y "Velocidad en Salón".
+  4. **Motion.** Cinco datos viajan por las curvas (SMIL, sin JS; azul acero, celeste y un pulso naranja) y el núcleo late (`animate-core-pulse`). Con reduced motion no hay movimiento: quedan los mismos puntos, fijos sobre sus curvas.
+     - *Propuesta de implementación:* el "halo difuminado" del pedido es un círculo translúcido alrededor de cada punto, sin blur, `drop-shadow` ni neón. DEC-013 y DEC-055 siguen en "sin glow".
+  5. **Tarjeta.** Blanca, con borde y sombra suaves y un acento superior del azul marino al azul acero. "Iniciar sesión" y "Ingresá a tu sala de ventas inteligente con tu email y contraseña."
+     - Campos de 44 px de alto y 16 px de texto (token `text-lead`): iOS no hace zoom al enfocarlos.
+     - *Propuesta de implementación:* "Conexión segura verificada · Porandú Autos" se muestra solo si la request llegó por HTTPS (`isSecureRequest()`, `lib/auth/secure-connection.ts`, que lee `x-forwarded-proto`). En `next dev` sobre http no aparece: el indicador no afirma lo que no se comprobó. Es presentación, no autoriza nada.
+  6. **Tokens e íconos.**
+     - Tokens nuevos: `text-hero` (el eslogan desde `2xl`), `text-lead` y `animate-core-pulse`.
+     - Los colores del pedido ya eran tokens: `navy`, `brand`, `accent`, `success-bright`, `info-bright`, `bg-canvas` y `navy-soft`. Los íconos usan los tonos AA (`accent-strong`, `success`, `brand`, `navy`); los `*-bright` solo pintan puntos.
+     - Íconos propios nuevos: `GearIcon`, `TrendUpIcon`, `BoltIcon`, `KeyIcon` y `BrandGlyphIcon`, el monograma "P" que también usa la banda superior.
+- **Aclara / supersede:**
+  - DEC-012 y DEC-020: el login no cambia. Sigue siendo email + password contra la misma Server Action `signIn`, sin registro, magic link, OAuth ni reset de password.
+  - DEC-013 y DEC-055: la paleta no cambia. La animación decorativa queda acotada al login, la ve cada usuario al entrar y se apaga con reduced motion.
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere ADR: no hay datos ni accesos nuevos.
+- **Consecuencias:**
+  - Sin migraciones ni pasos de staging.
+  - `tests/unit/auth/login-page.test.ts` cubre el redirect con sesión, el indicador según el protocolo, el formulario, el copy, los nodos sin omnicanalidad, los tonos AA y reduced motion.
+  - Decisiones abiertas para el fundador: llevar `/no-access` y `/select-organization`, que siguen con la tarjeta simple, a la misma composición.
 
 ## ADR-001 — Tenant isolation y SaaS foundation
 - **Estado:** Aceptada · 2026-09-29. El principio se aceptó el 2026-09-21 (DEC-006); la implementación estuvo en validación hasta el cierre de E1 y E2.
