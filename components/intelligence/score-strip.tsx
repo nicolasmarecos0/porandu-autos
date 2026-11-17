@@ -31,19 +31,22 @@ function reading(
 }
 
 /**
- * Strip de scores: franja grafito con el Porandú Score elevado en color de
- * marca (con su anillo) y Intent, Vehicle Fit y Deal Readiness con su lectura.
- * Si el motor restó puntos (inactividad), el tile del Porandú lo dice: el
- * anillo dibuja los sub-scores y el número ya trae el descuento.
+ * Strip de scores: franja carbón con el Porandú Score elevado (con su anillo)
+ * e Intent, Vehicle Fit y Deal Readiness con su lectura, como la barra de
+ * puntajes de la referencia (DEC-055). Si el motor restó puntos
+ * (inactividad), el tile del Porandú lo dice: el anillo dibuja los
+ * sub-scores y el número ya trae el descuento.
  */
 export function ScoreStrip({
   scores,
   composition,
   explanation,
+  className,
 }: {
   scores: ScoreSet;
   composition: ScoreComposition;
   explanation?: ScoreExplanation;
+  className?: string;
 }) {
   const tiles: {
     part: SubScoreKey;
@@ -72,7 +75,12 @@ export function ScoreStrip({
   ];
 
   return (
-    <div className="grid h-24 shrink-0 grid-cols-[1.55fr_repeat(3,minmax(0,1fr))] rounded-lg bg-surface-inverse text-text-inverse shadow-card">
+    <div
+      className={cn(
+        "grid h-24 shrink-0 grid-cols-[1.55fr_repeat(3,minmax(0,1fr))] rounded-lg bg-surface-inverse text-text-inverse shadow-card",
+        className,
+      )}
+    >
       <Tooltip
         content={
           <ScoreBreakdown
@@ -82,21 +90,21 @@ export function ScoreStrip({
           />
         }
       >
-        <div className="relative z-[1] -my-2 flex items-center justify-center gap-3.5 rounded-lg bg-brand px-4 shadow-lg">
+        <div className="relative z-[1] -my-2 flex items-center justify-center gap-3.5 rounded-lg bg-surface-inverse-raised px-4 shadow-lg ring-1 ring-border-inverse">
           <PoranduRing
             scores={scores}
             composition={composition}
             size={68}
             stroke={6}
-            tone="onBrand"
+            tone="onDark"
           >
-            <span className="text-[1.375rem] leading-none font-semibold tracking-tight tabular-nums">
+            <span className="text-[1.375rem] leading-none font-bold tracking-tight tabular-nums">
               {scores.porandu ?? "—"}
             </span>
           </PoranduRing>
           <span className="flex flex-col gap-0.5">
             <span className="text-overline uppercase">Porandú</span>
-            <span className="text-caption whitespace-nowrap text-brand-inverse">
+            <span className="text-caption whitespace-nowrap text-text-inverse-muted">
               Cobertura {Math.round(scores.coverage * 100)}%
             </span>
             {explanation?.penalties.map((penalty) => (
@@ -131,7 +139,7 @@ export function ScoreStrip({
             </span>
             <span
               className={cn(
-                "text-metric tabular-nums",
+                "text-metric font-bold tabular-nums",
                 tile.value === null && "text-text-inverse-muted",
               )}
             >
@@ -144,5 +152,52 @@ export function ScoreStrip({
         </Tooltip>
       ))}
     </div>
+  );
+}
+
+/**
+ * Barra de scores del teléfono (DEC-055): los cuatro bloques oscuros fijos
+ * al borde inferior del detalle de una oportunidad, con el Porandú elevado.
+ * Solo existe por debajo de `md`; el desglose con tooltips es de la franja.
+ */
+export function ScoreDock({ scores }: { scores: ScoreSet }) {
+  const blocks: { label: string; value: ScoreValue }[] = [
+    { label: "Porandú", value: scores.porandu },
+    { label: "Intent", value: scores.intent },
+    { label: "Vehicle Fit", value: scores.fit },
+    { label: "Deal", value: scores.deal },
+  ];
+  return (
+    <dl
+      aria-label="Scores"
+      className="fixed right-0 bottom-0 left-nav-rail z-20 grid grid-cols-4 bg-surface-inverse pb-[env(safe-area-inset-bottom)] text-text-inverse shadow-lg md:hidden"
+    >
+      {blocks.map((block, index) => (
+        <div
+          key={block.label}
+          className={cn(
+            "flex flex-col items-center justify-center gap-0.5 px-1 py-2 text-center",
+            index === 0
+              ? "bg-surface-inverse-raised"
+              : "border-l border-border-inverse",
+          )}
+        >
+          <dt className="text-overline leading-tight text-text-inverse-muted uppercase">
+            {block.label}
+          </dt>
+          <dd
+            className={cn(
+              "text-title font-bold tabular-nums",
+              block.value === null && "text-text-inverse-muted",
+            )}
+          >
+            {block.value ?? "—"}
+            {block.value === null ? (
+              <span className="sr-only"> sin dato</span>
+            ) : null}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }

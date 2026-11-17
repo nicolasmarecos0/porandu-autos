@@ -9,11 +9,13 @@ import type {
   MatchRailEmptyReason,
 } from "@/domains/match/presentation";
 import type { Opportunity } from "@/domains/opportunities/types";
+import { formatKm } from "@/domains/vehicles/stock";
 import { VehicleVisual } from "./vehicle-visual";
 
 /*
- * Vehicle Rail: Top Match (resaltado), alternativa y trade-in. Tarjetas
- * apiladas con pares clave-valor, como la columna derecha de la referencia.
+ * Vehicle Rail: Top Match (resaltado con borde naranja de 2 px, DEC-055),
+ * alternativa (borde celeste sutil) y trade-in. Tarjetas blancas apiladas con
+ * pares clave-valor, como la columna derecha de la referencia.
  * Lo que busca el cliente (la card "Busca") sale de la demanda estructurada
  * (H1.4, components/opportunities/demand-card.tsx).
  *
@@ -61,6 +63,30 @@ function KeyValues({ rows }: { rows: readonly [string, ReactNode][] }) {
   );
 }
 
+/** Kilometraje de una unidad nueva, con el mismo formato que Match v0. */
+const ZERO_KM = formatKm(0);
+
+/** Check del Top Match: círculo azul profundo, como en la referencia. */
+function TopMatchCheck() {
+  return (
+    <span
+      aria-hidden="true"
+      className="flex size-4.5 items-center justify-center rounded-full bg-navy-strong text-text-inverse"
+    >
+      <CheckIcon className="size-3" strokeWidth={2.5} />
+    </span>
+  );
+}
+
+/** Unidad 0 km: badge verde sólido (el "New" de la referencia), dato real. */
+function NewBadge() {
+  return (
+    <span className="rounded-sm bg-success px-1.5 py-0.5 text-caption font-semibold text-text-inverse">
+      0 km
+    </span>
+  );
+}
+
 export function VehicleRail({ opportunity }: { opportunity: Opportunity }) {
   const { topMatch: match, alternative, tradeIn } = opportunity;
   return (
@@ -68,13 +94,11 @@ export function VehicleRail({ opportunity }: { opportunity: Opportunity }) {
       {match ? (
         <section
           aria-label="Top Match"
-          className="shrink-0 rounded-lg border-2 border-brand bg-brand-soft/40 p-4 shadow-card"
+          className="shrink-0 rounded-lg border-2 border-accent bg-surface-1 p-4 shadow-md"
         >
           <header className="flex items-center gap-2">
-            <h3 className="text-label font-semibold text-brand-strong">
-              Top Match
-            </h3>
-            <CheckIcon className="size-3.5 text-brand" />
+            <h3 className="text-body text-text-secondary">Top Match</h3>
+            <TopMatchCheck />
             <span className="ml-auto">
               <MatchRing value={match.match} size={38} />
             </span>
@@ -105,7 +129,7 @@ export function VehicleRail({ opportunity }: { opportunity: Opportunity }) {
               Cuota estimada {match.installment}
             </p>
           ) : null}
-          <ul className="mt-3 flex flex-col gap-0.5 border-t border-brand-border pt-2.5">
+          <ul className="mt-3 flex flex-col gap-0.5 border-t border-border-subtle pt-2.5">
             {match.reasons.map((reason) => (
               <li
                 key={reason}
@@ -127,10 +151,10 @@ export function VehicleRail({ opportunity }: { opportunity: Opportunity }) {
       {alternative ? (
         <section
           aria-label="Alternativa"
-          className="shrink-0 rounded-lg border border-brand-border/70 bg-brand-soft/20 p-4 shadow-card"
+          className="shrink-0 rounded-lg border-2 border-info-border bg-surface-1 p-4 shadow-card"
         >
           <header className="flex items-center gap-2">
-            <h3 className="text-label text-text-muted">Alternativa</h3>
+            <h3 className="text-body text-text-secondary">Alternativa</h3>
             <span className="ml-auto">
               <MatchRing value={alternative.match} size={30} />
             </span>
@@ -225,13 +249,12 @@ function TopMatchCard({
   return (
     <section
       aria-label="Top Match"
-      className="shrink-0 rounded-lg border-2 border-brand bg-brand-soft/40 p-4 shadow-card"
+      className="shrink-0 rounded-lg border-2 border-accent bg-surface-1 p-4 shadow-md"
     >
       <header className="flex items-center gap-2">
-        <h3 className="text-label font-semibold text-brand-strong">
-          Top Match
-        </h3>
-        <CheckIcon className="size-3.5 text-brand" />
+        <h3 className="text-body text-text-secondary">Top Match</h3>
+        <TopMatchCheck />
+        {match.km === ZERO_KM ? <NewBadge /> : null}
         <span className="ml-auto">
           <MatchRing value={match.score.total} size={38} />
         </span>
@@ -253,7 +276,7 @@ function TopMatchCard({
       </div>
       <MatchReasons
         reasons={match.reasons}
-        className="mt-3 border-t border-brand-border pt-2.5"
+        className="mt-3 border-t border-border-subtle pt-2.5"
       />
       {footer ? <div className="mt-3">{footer}</div> : null}
     </section>
@@ -270,10 +293,11 @@ function AlternativeMatchCard({
   return (
     <section
       aria-label="Alternativa"
-      className="shrink-0 rounded-lg border border-brand-border/70 bg-brand-soft/20 p-4 shadow-card"
+      className="shrink-0 rounded-lg border-2 border-info-border bg-surface-1 p-4 shadow-card"
     >
       <header className="flex items-center gap-2">
-        <h3 className="text-label text-text-muted">Alternativa</h3>
+        <h3 className="text-body text-text-secondary">Alternativa</h3>
+        {match.km === ZERO_KM ? <NewBadge /> : null}
         <span className="ml-auto">
           <MatchRing value={match.score.total} size={30} />
         </span>

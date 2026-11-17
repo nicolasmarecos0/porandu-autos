@@ -28,7 +28,7 @@ function Pill({
   tone,
   children,
 }: {
-  tone: "neutral" | "brand" | "warning";
+  tone: "neutral" | "info" | "warning";
   children: ReactNode;
 }) {
   return (
@@ -36,7 +36,7 @@ function Pill({
       className={cn(
         "rounded-sm px-1.5 py-0.5 text-caption font-semibold",
         tone === "neutral" && "bg-surface-3 text-text-secondary",
-        tone === "brand" && "bg-brand-soft text-brand-strong",
+        tone === "info" && "bg-info-soft text-info",
         tone === "warning" && "bg-warning-soft text-warning",
       )}
     >
@@ -85,12 +85,12 @@ export function DemandCard({ opportunityId, demand }: DemandCardProps) {
   return (
     <section
       aria-label="Lo que busca"
-      className="shrink-0 rounded-lg bg-surface-1 p-4 shadow-card"
+      className="shrink-0 rounded-lg border border-border-subtle bg-surface-1 p-4 shadow-card"
     >
       <header className="flex items-center gap-2">
-        <h3 className="text-label text-text-muted">Busca</h3>
+        <h3 className="text-body text-text-secondary">Busca</h3>
         {facts.trade_in_intent.input.tradeIn === "yes" ? (
-          <Pill tone="brand">Con trade-in</Pill>
+          <Pill tone="info">Con trade-in</Pill>
         ) : null}
         <span className="ml-auto flex items-center gap-2">
           <Link

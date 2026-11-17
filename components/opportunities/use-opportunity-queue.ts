@@ -14,7 +14,8 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 /**
  * Estado de UI de la cola: filtro por urgencia, oportunidad seleccionada y
- * acciones marcadas como hechas (estado simulado en cliente, B1 §3.2).
+ * acciones marcadas como hechas (estado simulado en cliente, B1 §3.2). Un id
+ * inicial que no está en la cola no rompe nada: se selecciona la primera.
  *
  * `J`/`K` recorren la cola desde cualquier lugar de la página. Sin animación:
  * es una acción de teclado que se repite cientos de veces por día.
@@ -22,9 +23,13 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function useOpportunityQueue(
   opportunities: readonly Opportunity[],
   idPrefix: string,
+  /** Oportunidad elegida al abrir (p. ej. desde la tabla, DEC-055). */
+  initialSelectedId: string | null = null,
 ) {
   const [tab, setTab] = useState<QueueTab>("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialSelectedId,
+  );
   const [done, setDone] = useState<ReadonlySet<string>>(() => new Set());
 
   const groups = groupQueue(opportunities, tab);

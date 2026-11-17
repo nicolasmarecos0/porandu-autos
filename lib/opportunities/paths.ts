@@ -1,7 +1,7 @@
 /*
- * Rutas de Opportunities (DEC-001): la cola y el embudo de ventas, que es
- * una vista de Opportunities y no un ítem de la navegación global. Puras y
- * aptas para el navegador: las usan los enlaces de la UI y las Server
+ * Rutas de Opportunities (DEC-001): la cola, el embudo de ventas y la tabla,
+ * que son vistas de Opportunities y no ítems de la navegación global. Puras
+ * y aptas para el navegador: las usan los enlaces de la UI y las Server
  * Actions que revalidan.
  */
 
@@ -10,3 +10,21 @@ export const OPPORTUNITIES_PATH = "/opportunities";
 
 /** Embudo de ventas: el tablero de oportunidades por etapa (DEC-048). */
 export const PIPELINE_PATH = "/opportunities/pipeline";
+
+/** Tabla de oportunidades con sus scores por columna (DEC-055). */
+export const TABLE_PATH = "/opportunities/table";
+
+/**
+ * Parámetro que abre la cola con una oportunidad seleccionada (DEC-055): lo
+ * usa la tabla para llevar a la ficha de decisión. Solo elige entre las
+ * oportunidades que la cola ya leyó; no se consulta con él.
+ */
+export const SELECTED_OPPORTUNITY_PARAM = "op";
+
+/** La cola con esa oportunidad seleccionada. */
+export function queueSelectionHref(opportunityId: string): string {
+  const query = new URLSearchParams({
+    [SELECTED_OPPORTUNITY_PARAM]: opportunityId,
+  });
+  return `${OPPORTUNITIES_PATH}?${query.toString()}`;
+}

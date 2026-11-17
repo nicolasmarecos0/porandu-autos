@@ -42,14 +42,16 @@ type WhyNowCardProps = {
 
 /**
  * ¿Por qué ahora?: drivers agrupados en "Señales fuertes" y "A validar", cada
- * uno con su peso, fuente y momento.
+ * uno con su peso, fuente y momento. Composición de la referencia (DEC-055):
+ * título de color sobre una línea completa de 2 px y un tile cuadrado por
+ * driver con su peso en la esquina.
  */
 export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
   const sections = [
     {
       title: "Señales fuertes",
       text: "text-success",
-      rule: "from-success",
+      rule: "border-success-bright",
       items: drivers.filter(
         (driver) => driver.strength >= MOCK_STRONG_SIGNAL_CUTOFF,
       ),
@@ -57,7 +59,7 @@ export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
     {
       title: "A validar",
       text: "text-warning",
-      rule: "from-warning",
+      rule: "border-warning-bright",
       items: drivers.filter(
         (driver) => driver.strength < MOCK_STRONG_SIGNAL_CUTOFF,
       ),
@@ -65,39 +67,39 @@ export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
   ].filter((section) => section.items.length > 0);
 
   return (
-    <section className="shrink-0 rounded-lg bg-surface-1 px-5 pt-4 pb-4 shadow-card">
+    <section className="shrink-0 rounded-lg border border-border-subtle bg-surface-1 px-6 pt-5 pb-4 shadow-card">
       {sections.map((section) => (
-        <div key={section.title} className="[&+&]:mt-6">
-          <div className="flex items-baseline justify-between">
-            <h3 className={cn("text-body font-semibold", section.text)}>
+        <div key={section.title} className="[&+&]:mt-7">
+          <div
+            className={cn(
+              "flex items-baseline justify-between border-b-2 pb-2",
+              section.rule,
+            )}
+          >
+            <h3 className={cn("text-heading font-medium", section.text)}>
               {section.title}
             </h3>
             <span className="text-caption text-text-muted tabular-nums">
               {section.items.length}
             </span>
           </div>
-          <div
-            aria-hidden="true"
-            className={cn(
-              "mt-1.5 h-0.5 bg-linear-to-r to-transparent",
-              section.rule,
-            )}
-          />
-          <ul className="mt-4 flex flex-col gap-4">
+          <ul className="mt-5 flex flex-col gap-5">
             {section.items.map((driver) => {
               const kind = DRIVER_KINDS[driver.kind];
               const Icon = kind.icon;
               return (
-                <li key={driver.label} className="flex items-center gap-4">
-                  <span className="relative flex size-18 shrink-0 flex-col items-center justify-center gap-1.5 rounded-md border border-border-default bg-surface-1 text-text-primary shadow-sm">
-                    <Icon className="size-6" />
-                    <span className="text-caption">{kind.label}</span>
-                    <span className="absolute -top-1.5 -right-1.5 rounded-xs bg-text-muted px-1 text-[0.625rem] leading-4 font-semibold text-text-inverse tabular-nums">
+                <li key={driver.label} className="flex items-center gap-5">
+                  <span className="relative flex size-24 shrink-0 flex-col items-center justify-center gap-2 rounded-lg border border-border-default bg-surface-1 p-2 text-text-primary shadow-sm sm:size-28">
+                    <Icon className="size-7" />
+                    <span className="text-label font-semibold">
+                      {kind.label}
+                    </span>
+                    <span className="absolute top-1.5 right-1.5 rounded-sm bg-text-muted px-1.5 py-0.5 text-caption font-bold text-text-inverse tabular-nums">
                       <span className="sr-only">Peso </span>
                       {driver.strength}
                     </span>
                   </span>
-                  <div className="min-w-0 text-label text-text-secondary">
+                  <div className="min-w-0 text-body text-text-secondary">
                     <p>
                       <span className="font-semibold text-text-primary">
                         {driver.label}:

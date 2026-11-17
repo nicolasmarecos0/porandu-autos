@@ -19,13 +19,18 @@ type OpportunityQueueProps = {
   idPrefix: string;
   referenceMinuteOfDay: number;
   scoreComposition: ScoreComposition;
+  /**
+   * Abrir una oportunidad (click o Enter). En el teléfono lleva al detalle
+   * (DEC-055); sin él, abrir es solo seleccionar.
+   */
+  onOpen?: (opportunityId: string) => void;
 };
 
 /**
  * Cola operativa: filtro por urgencia y filas agrupadas ("Actuar ahora",
  * "Durante el día", "En seguimiento") ordenadas por Porandú Score. Es un
  * listbox: `↑`/`↓`, `Inicio`/`Fin` con foco en la lista; `J`/`K` desde
- * cualquier lugar.
+ * cualquier lugar; `Enter` abre la seleccionada.
  */
 export function OpportunityQueue({
   opportunities,
@@ -33,13 +38,18 @@ export function OpportunityQueue({
   idPrefix,
   referenceMinuteOfDay,
   scoreComposition,
+  onOpen = queue.select,
 }: OpportunityQueueProps) {
   const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const selectedId = queue.selected?.id;
     const keys: Record<string, () => void> = {
       ArrowDown: () => queue.move(1),
       ArrowUp: () => queue.move(-1),
       Home: () => queue.selectEdge("first"),
       End: () => queue.selectEdge("last"),
+      Enter: () => {
+        if (selectedId) onOpen(selectedId);
+      },
     };
     const action = keys[event.key];
     if (!action) return;
@@ -131,7 +141,7 @@ export function OpportunityQueue({
                   op.lastActivity.minutes,
                   referenceMinuteOfDay,
                 )}
-                onSelect={() => queue.select(op.id)}
+                onSelect={() => onOpen(op.id)}
               />
             ))}
           </div>
