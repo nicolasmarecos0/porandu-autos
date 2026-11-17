@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { initialsOf, maskPhone } from "@/domains/opportunities/prospect";
+import {
+  initialsOf,
+  maskPhone,
+  PROSPECT_AVATARS,
+  prospectAvatar,
+} from "@/domains/opportunities/prospect";
 
 describe("initialsOf", () => {
   it.each([
@@ -34,5 +39,29 @@ describe("maskPhone", () => {
   it("sin dígitos es sin dato", () => {
     expect(maskPhone("")).toBeUndefined();
     expect(maskPhone(" - ")).toBeUndefined();
+  });
+});
+
+describe("prospectAvatar (DEC-058)", () => {
+  const IDS = Array.from(
+    { length: 64 },
+    (_, index) =>
+      `30000000-0000-4000-8000-${String(index * 7919).padStart(12, "0")}`,
+  );
+
+  it("el mismo contacto, siempre la misma ilustración", () => {
+    for (const id of IDS) {
+      expect(prospectAvatar(id)).toBe(prospectAvatar(id));
+      expect(prospectAvatar(id.toUpperCase())).toBe(prospectAvatar(id));
+    }
+  });
+
+  it("solo usa las ilustraciones locales y las reparte", () => {
+    const used = new Set(IDS.map(prospectAvatar));
+    for (const path of used) {
+      expect(PROSPECT_AVATARS).toContain(path);
+      expect(path).toMatch(/^\/avatars\/prospect-\d{2}\.svg$/);
+    }
+    expect(used.size).toBeGreaterThan(4);
   });
 });

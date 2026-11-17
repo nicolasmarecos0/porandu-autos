@@ -13,10 +13,14 @@ import { resolveDemand } from "@/domains/demand/resolver";
 import type { MatchableVehicle } from "@/domains/match";
 import { bucketFromRecency } from "@/domains/opportunities/queue";
 import type { Opportunity } from "@/domains/opportunities/types";
+import { demandSnapshot } from "@/domains/demand/snapshot";
+import { prospectAvatar } from "@/domains/opportunities/prospect";
+import { deriveOpportunityDrivers } from "@/domains/scoring/drivers";
 import {
   evaluateOpportunity,
   PORANDU_SCORE_COMPOSITION,
 } from "@/domains/scoring/engine";
+import { NO_INTENT_SIGNALS } from "@/domains/scoring/signals";
 import { OPPORTUNITY_FIXTURES } from "@/mocks/opportunities";
 
 /*
@@ -34,8 +38,12 @@ import { OPPORTUNITY_FIXTURES } from "@/mocks/opportunities";
  * - la inteligencia (Hito 3, DEC-035): el stock disponible y la última nota
  *   de cada oportunidad se leen por lote en la misma transacción, filtrados
  *   por organización, y el motor deriva recencia, Porandú Score, su
- *   explicación y la NBA. Las señales, los matches de la cola, el trade-in y
- *   el responsable siguen sin dato.
+ *   explicación y la NBA;
+ * - las señales (DEC-058): pruebas de manejo, cotizaciones, el último mensaje
+ *   del cliente y la toma vigente se leen por lote en la misma transacción y
+ *   filtradas por organización; con ellas el motor calcula Intent, el
+ *   derivador arma "¿Por qué ahora?" y Match v0 hidrata el Top Match y la
+ *   alternativa. El responsable y la conversación en vivo siguen sin dato.
  */
 
 vi.mock("server-only", () => ({}));
@@ -47,6 +55,10 @@ const mocks = vi.hoisted(() => ({
   demandRows: [] as unknown[],
   vehicleRows: [] as unknown[],
   noteRows: [] as unknown[],
+  testDriveRows: [] as unknown[],
+  quoteRows: [] as unknown[],
+  inboundRows: [] as unknown[],
+  tradeInRows: [] as unknown[],
   requireTenant: vi.fn(),
   withTenant: vi.fn(),
 }));
@@ -72,6 +84,10 @@ beforeEach(() => {
   mocks.demandRows = [];
   mocks.vehicleRows = [];
   mocks.noteRows = [];
+  mocks.testDriveRows = [];
+  mocks.quoteRows = [];
+  mocks.inboundRows = [];
+  mocks.tradeInRows = [];
   mocks.withTenant.mockReset();
   mocks.withTenant.mockImplementation(
     async (_ctx: unknown, fn: (tx: unknown) => Promise<unknown>) => {
@@ -82,6 +98,10 @@ beforeEach(() => {
           mocks.demandRows,
           mocks.vehicleRows,
           mocks.noteRows,
+          mocks.testDriveRows,
+          mocks.quoteRows,
+          mocks.inboundRows,
+          mocks.tradeInRows,
         ]),
       );
     },
@@ -160,7 +180,7 @@ describe("getOpportunityQueue: requireTenant() → withTenant()", () => {
 
     const [query] = mocks.queries;
     expect(query?.sql).toMatch(
-      /^select "opportunities"\."id", "opportunities"\."stage", "opportunities"\."source", "opportunities"\."interest_model", "opportunities"\."interest_version", "opportunities"\."last_activity_at", "opportunities"\."vehicle_id", "contacts"\."name", "contacts"\."phone", "contacts"\."city" from "opportunities"/,
+      /^select "opportunities"\."id", "opportunities"\."stage", "opportunities"\."source", "opportunities"\."interest_model", "opportunities"\."interest_version", "opportunities"\."last_activity_at", "opportunities"\."vehicle_id", "contacts"\."id", "contacts"\."name", "contacts"\."phone", "contacts"\."city" from "opportunities"/,
     );
   });
 
@@ -253,6 +273,131 @@ describe("getOpportunityQueue: requireTenant() → withTenant()", () => {
     expect(opportunities[1]?.nba?.code).toBe("on_track");
   });
 
+  it("lee las señales de la cola por lote, en la misma transacción y filtradas por organización (DEC-058)", async () => {
+    mocks.rows = [
+      rowOf(OPPORTUNITY_FIXTURES[0]!),
+      rowOf(OPPORTUNITY_FIXTURES[1]!),
+    ];
+    await getOpportunityQueue(NOW);
+
+    expect(mocks.withTenant).toHaveBeenCalledTimes(1);
+    const [, , , , drives, quotes, inbound, tradeIns] = mocks.queries;
+    const ids = [OPPORTUNITY_FIXTURES[0]!.id, OPPORTUNITY_FIXTURES[1]!.id];
+    expect(drives?.sql).toBe(
+      'select "opportunity_id", "status", "scheduled_at" from "test_drives" where ("test_drives"."organization_id" = $1 and "test_drives"."opportunity_id" in ($2, $3) and "test_drives"."status" <> $4)',
+    );
+    expect(drives?.params).toEqual([ORG, ...ids, "cancelled"]);
+    expect(quotes?.sql).toBe(
+      'select "opportunity_id", "number", "status", "currency", "total_price", "valid_until" from "quotes" where ("quotes"."organization_id" = $1 and "quotes"."opportunity_id" in ($2, $3) and "quotes"."status" <> $4)',
+    );
+    expect(quotes?.params).toEqual([ORG, ...ids, "withdrawn"]);
+    // Del mensaje solo el momento: ni el texto ni el autor.
+    expect(inbound?.sql).toBe(
+      'select "opportunity_id", max("created_at") from "messages" where ("messages"."organization_id" = $1 and "messages"."opportunity_id" in ($2, $3) and "messages"."direction" = $4) group by "messages"."opportunity_id"',
+    );
+    expect(inbound?.params).toEqual([ORG, ...ids, "inbound"]);
+    expect(inbound?.sql).not.toMatch(/"content"|"recorded_by"/);
+    // De la toma, el estado y el usado: ni la chapa ni los importes.
+    expect(tradeIns?.sql).toBe(
+      'select "opportunity_id", "status", "brand", "model", "year" from "trade_ins" where ("trade_ins"."organization_id" = $1 and "trade_ins"."opportunity_id" in ($2, $3) and "trade_ins"."status" in ($4, $5, $6))',
+    );
+    expect(tradeIns?.params).toEqual([
+      ORG,
+      ...ids,
+      "pending",
+      "appraised",
+      "accepted",
+    ]);
+  });
+
+  it("con las señales calcula Intent, ¿Por qué ahora? y las tarjetas de match (DEC-058)", async () => {
+    const hilux = {
+      ...rowOf(OPPORTUNITY_FIXTURES[1]!), // En negociación
+      lastActivityAt: new Date(NOW.getTime() - 10 * 60_000),
+    };
+    mocks.rows = [hilux];
+    mocks.demandRows = [
+      demandRecord(hilux.id, { brand: "Toyota", model: "Hilux" }),
+    ];
+    mocks.vehicleRows = [
+      {
+        id: "20000000-0000-4000-8000-000000000002",
+        organizationId: ORG,
+        brand: "Toyota",
+        model: "Hilux",
+        version: "SRV",
+        year: 2025,
+        km: 0,
+        price: "49900.00",
+        currency: "USD",
+        status: "available",
+      },
+    ];
+    mocks.testDriveRows = [
+      {
+        opportunityId: hilux.id,
+        status: "confirmed",
+        scheduledAt: new Date(NOW.getTime() + 24 * 3_600_000),
+      },
+    ];
+    mocks.quoteRows = [
+      {
+        opportunityId: hilux.id,
+        number: 12,
+        status: "sent",
+        currency: "USD",
+        totalPrice: "48500.00",
+        validUntil: "2026-10-15",
+      },
+    ];
+    mocks.inboundRows = [
+      {
+        opportunityId: hilux.id,
+        lastInboundAt: new Date(NOW.getTime() - 2 * 3_600_000),
+      },
+    ];
+    mocks.tradeInRows = [
+      {
+        opportunityId: hilux.id,
+        status: "pending",
+        brand: "Toyota",
+        model: "Fortuner",
+        year: 2019,
+      },
+    ];
+
+    const [mapped] = (await getOpportunityQueue(NOW)).opportunities;
+
+    // 45 + 5 (activa) + 15 (escribió hace 2 h) + 15 (prueba) + 15 (cotización).
+    expect(mapped?.scores.intent).toBe(95);
+    expect(mapped?.scores.coverage).toBe(1);
+    expect(mapped?.stockMatches).toMatchObject({
+      kind: "matches",
+      top: {
+        name: "Toyota Hilux",
+        condition: "new",
+        body: "pickup",
+        km: "0 km",
+      },
+      alternative: null,
+    });
+    // Fuertes del mayor peso al menor; a validar, la tasación y el match
+    // parcial (solo marca y modelo: 45 pts).
+    expect(
+      mapped?.drivers.map((driver) => [driver.kind, driver.strength]),
+    ).toEqual([
+      ["testDrive", 92],
+      ["quote", 90],
+      ["engagement", 90],
+      ["tradeIn", 85],
+      ["appraisal", 70],
+      ["stock", 45],
+    ]);
+    expect(mapped?.drivers.find((d) => d.kind === "tradeIn")?.detail).toBe(
+      "Ofrece su Toyota Fortuner 2019 en parte de pago: reduce el saldo a pagar.",
+    );
+  });
+
   it("sin oportunidades no lee la demanda, el stock ni la bitácora", async () => {
     await getOpportunityQueue(NOW);
     expect(mocks.queries).toHaveLength(1);
@@ -319,6 +464,7 @@ function rowOf(fixture: Opportunity): OpportunityQueueRow {
       NOW.getTime() - fixture.lastActivity.minutes * 60_000,
     ),
     vehicleId: null,
+    contactId: `30000000-0000-4000-8000-${fixture.id.replace(/\D/g, "").padStart(12, "0")}`,
     contactName: fixture.prospect.name,
     // El fixture ya viene enmascarado: la base guarda el número completo.
     contactPhone: fixture.prospect.phone?.replace(" ··· ", " 555 ") ?? null,
@@ -345,6 +491,19 @@ describe("toOpportunity: contrato visual de B1", () => {
           lastNoteAt: null,
           hasLinkedVehicle: false,
           stockFit: { kind: "no_demand" },
+          signals: NO_INTENT_SIGNALS,
+        },
+        NOW,
+      );
+      const drivers = deriveOpportunityDrivers(
+        {
+          stage: fixture.stage,
+          demand: demandSnapshot(resolveDemand([])),
+          rail: { kind: "empty", reason: "no_demand" },
+          hasLinkedVehicle: false,
+          recency: intelligence.recency,
+          signals: NO_INTENT_SIGNALS,
+          tradeIn: null,
         },
         NOW,
       );
@@ -361,6 +520,7 @@ describe("toOpportunity: contrato visual de B1", () => {
           city: prospect.city,
           channel: prospect.channel,
           live: false,
+          avatar: prospectAvatar(row.contactId),
         },
         demand: mapped.demand,
         // El legado no es fuente de verdad: solo el vehículo "Dato anterior".
@@ -374,7 +534,8 @@ describe("toOpportunity: contrato visual de B1", () => {
         stage: fixture.stage,
         bucket: bucketFromRecency(lastActivity.minutes),
         nba: intelligence.nba,
-        drivers: [],
+        drivers,
+        stockMatches: { kind: "empty", reason: "no_demand" },
       });
     },
   );
@@ -383,17 +544,23 @@ describe("toOpportunity: contrato visual de B1", () => {
     const fixture = OPPORTUNITY_FIXTURES[0]!;
     const mapped = toOpportunity(rowOf(fixture), NOW);
 
-    // Sin conversaciones ni demanda evaluable: Intent y Vehicle Fit sin dato,
-    // y la cobertura dice que solo se evaluó Deal Readiness (DEC-005).
+    // Sin demanda evaluable: Vehicle Fit sin dato y la cobertura dice que se
+    // evaluaron Intent (etapa y recencia, DEC-058) y Deal Readiness (DEC-005).
+    // Intent 35 + 5; (40·40 + 30·45) / 70 = 42.
     expect(mapped.scores).toEqual({
-      porandu: 45,
-      coverage: 0.3,
-      intent: null,
+      porandu: 42,
+      coverage: 0.7,
+      intent: 40,
       fit: null,
       deal: 45,
     });
     expect(mapped.prospect.live).toBe(false);
+    // Sin demanda, sin señales y activa: ninguna señal que mostrar.
     expect(mapped.drivers).toEqual([]);
+    expect(mapped.stockMatches).toEqual({
+      kind: "empty",
+      reason: "no_demand",
+    });
     for (const key of [
       "topMatch",
       "alternative",
@@ -446,11 +613,12 @@ describe("toOpportunity: contrato visual de B1", () => {
       minutes: 6 * 24 * 60,
       state: "stale",
     });
-    // Fit 45 (marca y modelo) y Deal 75: base 60, menos 40 por inactividad.
+    // Intent 30 (45 − 15), Fit 45 (marca y modelo) y Deal 75: base 48,
+    // menos 40 por inactividad.
     expect(mapped.scores).toEqual({
-      porandu: 20,
-      coverage: 0.6,
-      intent: null,
+      porandu: 8,
+      coverage: 1,
+      intent: 30,
       fit: 45,
       deal: 75,
     });

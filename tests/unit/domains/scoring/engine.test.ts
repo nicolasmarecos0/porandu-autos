@@ -10,6 +10,11 @@ import { OPPORTUNITY_STAGES, type Stage } from "@/domains/opportunities/stages";
 import {
   DEAL_READINESS_BY_STAGE,
   evaluateOpportunity,
+  INTENT_ACTIVITY_POINTS,
+  INTENT_BASE_BY_STAGE,
+  INTENT_INBOUND_POINTS,
+  INTENT_QUOTE_POINTS,
+  INTENT_TEST_DRIVE_POINTS,
   evaluateRecency,
   LINKED_VEHICLE_FIT,
   NOTE_RECENT_DAYS,
@@ -21,14 +26,18 @@ import {
   recencyState,
   scoreOpportunity,
   stockFit,
+  stockFitFromRail,
   type ScoringInput,
 } from "@/domains/scoring/engine";
+import type { IntentSignals } from "@/domains/scoring/signals";
 import { RECENCY_STATE_LABELS, type StockFit } from "@/domains/scoring/types";
 
 /*
  * Motor de inteligencia v0 (Hito 3, DEC-035): recencia, Porandú Score (el
  * Health Score de la oportunidad) y Next Best Action. Lógica pura: cada caso
  * fija `now` y combina fechas, etapas, unidad vinculada, Match v0 y bitácora.
+ * Desde DEC-058, Intent v0: la etapa, la recencia, los mensajes del cliente,
+ * la prueba de manejo y la cotización.
  */
 
 const NOW = new Date("2026-10-12T15:00:00Z");
@@ -266,69 +275,215 @@ describe("stockFit: Match v0 de la demanda contra el stock", () => {
 /** Porandú Score con la recencia que corresponde a la entrada. */
 function score(overrides: Partial<ScoringInput>) {
   const data = input(overrides);
-  return scoreOpportunity(data, evaluateRecency(data.lastActivityAt, NOW));
+  return scoreOpportunity(data, evaluateRecency(data.lastActivityAt, NOW), NOW);
 }
 
-describe("Porandú Score (Health Score) v0", () => {
-  it("Intent es sin dato hasta las conversaciones y no penaliza", () => {
+/** Señales de Intent: ninguna, salvo las dadas. */
+function signals(overrides: Partial<IntentSignals> = {}): IntentSignals {
+  return { lastInboundAt: null, testDrive: null, quote: null, ...overrides };
+}
+
+const QUOTE = {
+  number: 12,
+  total: { amount: "48500.00", currency: "USD" },
+  validUntil: "2026-10-30",
+} as const;
+
+describe("Intent v0 (DEC-058)", () => {
+  it("las bases y los puntos de cada señal son los aprobados", () => {
+    expect(INTENT_BASE_BY_STAGE).toEqual({
+      new: 25,
+      qualifying: 35,
+      negotiating: 45,
+    });
+    expect(INTENT_ACTIVITY_POINTS).toEqual({
+      active: 5,
+      warning: 0,
+      stale: -15,
+    });
+    expect(INTENT_INBOUND_POINTS).toEqual({ day: 15, threeDays: 8 });
+    expect(INTENT_TEST_DRIVE_POINTS).toEqual({
+      completed: 20,
+      upcoming: 15,
+      overdue: 0,
+      no_show: -10,
+    });
+    expect(INTENT_QUOTE_POINTS).toEqual({
+      accepted: 25,
+      sent: 15,
+      pending: 5,
+      expired: 0,
+      rejected: -10,
+    });
+  });
+
+  it("sin señales: la etapa y la recencia, nunca sin dato en una abierta", () => {
     const { scores, explanation } = score({});
-    expect(scores.intent).toBeNull();
+    // En calificación (35) y activa (+5).
+    expect(scores.intent).toBe(40);
     expect(explanation.factors.intent).toBe(
-      "Sin dato: llega con las conversaciones",
+      "Etapa En calificación 35 · actividad al día +5",
     );
-    // Fit 85 y Deal 45 pesan igual (30 % y 30 %): (85 + 45) / 2 = 65.
+    // (40·40 + 30·85 + 30·45) / 100 = 55.
     expect(scores).toEqual({
-      porandu: 65,
-      coverage: 0.6,
-      intent: null,
+      porandu: 55,
+      coverage: 1,
+      intent: 40,
       fit: 85,
       deal: 45,
     });
   });
 
+  it("cada señal del cliente suma o resta y el motivo enumera los aportes", () => {
+    const { scores, explanation } = score({
+      stage: "negotiating",
+      signals: signals({
+        lastInboundAt: ago(2 * HOUR),
+        testDrive: { state: "upcoming", at: ago(-DAY), confirmed: true },
+        quote: { state: "sent", ...QUOTE },
+      }),
+    });
+    // 45 + 5 + 15 + 15 + 15.
+    expect(scores.intent).toBe(95);
+    expect(explanation.factors.intent).toBe(
+      "Etapa En negociación 45 · actividad al día +5 · escribió en las últimas 24 h +15 · prueba de manejo agendada +15 · cotización enviada +15",
+    );
+  });
+
   it.each([
-    // etapa, unidad, Match v0, hace, Fit, Deal, Porandú
-    ["new", false, { kind: "no_demand" }, 1 * HOUR, null, 20, 20],
-    ["new", false, MATCH_85, 1 * HOUR, 85, 20, 53],
-    ["new", false, { kind: "match", score: 100 }, 1 * HOUR, 100, 20, 60],
-    ["qualifying", false, { kind: "no_match" }, 1 * HOUR, 0, 45, 23],
-    ["qualifying", false, { kind: "no_stock" }, 1 * HOUR, null, 45, 45],
-    ["negotiating", true, MATCH_85, 1 * HOUR, 100, 75, 88],
-    ["negotiating", true, { kind: "no_match" }, 1 * HOUR, 100, 75, 88],
-    ["negotiating", false, MATCH_85, 1 * HOUR, 85, 75, 80],
-    // Enfriándose: −15.
-    ["negotiating", true, MATCH_85, 3 * DAY, 100, 75, 73],
-    ["qualifying", false, { kind: "no_stock" }, 3 * DAY, null, 45, 30],
-    // Inactiva: −40.
-    ["negotiating", true, MATCH_85, 8 * DAY, 100, 75, 48],
-    ["new", false, MATCH_85, 8 * DAY, 85, 20, 13],
-    ["new", false, { kind: "no_demand" }, 8 * DAY, null, 20, 0],
-    ["negotiating", false, { kind: "no_match" }, 8 * DAY, 0, 75, 0],
+    [ago(23 * HOUR), 40 + 15],
+    [ago(30 * HOUR), 40 + 8],
+    [ago(71 * HOUR), 40 + 8],
+    [ago(72 * HOUR), 40],
+    [null, 40],
   ] as const)(
-    "%s · vinculada %s · %o · hace %i ms → Fit %s, Deal %s, Porandú %i",
-    (stage, linked, fit, elapsed, fitValue, dealValue, porandu) => {
+    "el último mensaje del cliente (%o) deja Intent en %i",
+    (lastInboundAt, intent) => {
+      expect(score({ signals: signals({ lastInboundAt }) }).scores.intent).toBe(
+        intent,
+      );
+    },
+  );
+
+  it.each([
+    ["completed", 60],
+    ["upcoming", 55],
+    ["overdue", 40],
+    ["no_show", 30],
+  ] as const)("prueba de manejo %s → Intent %i", (state, intent) => {
+    const testDrive = { state, at: NOW, confirmed: false };
+    expect(score({ signals: signals({ testDrive }) }).scores.intent).toBe(
+      intent,
+    );
+  });
+
+  it.each([
+    ["accepted", 65],
+    ["sent", 55],
+    ["pending", 45],
+    ["expired", 40],
+    ["rejected", 30],
+  ] as const)("cotización %s → Intent %i", (state, intent) => {
+    const quote = { state, ...QUOTE };
+    expect(score({ signals: signals({ quote }) }).scores.intent).toBe(intent);
+  });
+
+  it("se acota entre 0 y 100", () => {
+    const hot = score({
+      stage: "negotiating",
+      signals: signals({
+        lastInboundAt: ago(HOUR),
+        testDrive: { state: "completed", at: ago(DAY), confirmed: false },
+        quote: { state: "accepted", ...QUOTE },
+      }),
+    });
+    expect(hot.scores.intent).toBe(100);
+    const cold = score({
+      stage: "new",
+      lastActivityAt: ago(9 * DAY),
+      signals: signals({
+        testDrive: { state: "no_show", at: ago(8 * DAY), confirmed: false },
+        quote: { state: "rejected", ...QUOTE },
+      }),
+    });
+    // 25 − 15 − 10 − 10 = −10 → 0.
+    expect(cold.scores.intent).toBe(0);
+  });
+
+  it.each([
+    ["won", 100],
+    ["lost", 0],
+  ] as const)("%s: Intent es el resultado (%i)", (stage, intent) => {
+    const { scores, explanation } = score({ stage });
+    expect(scores.intent).toBe(intent);
+    expect(explanation.factors.intent).toBe(
+      stage === "won" ? "Etapa Ganada" : "Etapa Perdida",
+    );
+  });
+
+  it("un mensaje con fecha inválida falla en vez de inventar un estado", () => {
+    expect(() =>
+      score({ signals: signals({ lastInboundAt: new Date("nope") }) }),
+    ).toThrow("invalid lastInboundAt");
+  });
+});
+
+describe("Porandú Score (Health Score) v0", () => {
+  it.each([
+    // etapa, unidad, Match v0, hace, Intent, Fit, Deal, Porandú
+    ["new", false, { kind: "no_demand" }, 1 * HOUR, 30, null, 20, 26],
+    ["new", false, MATCH_85, 1 * HOUR, 30, 85, 20, 44],
+    ["new", false, { kind: "match", score: 100 }, 1 * HOUR, 30, 100, 20, 48],
+    ["qualifying", false, { kind: "no_match" }, 1 * HOUR, 40, 0, 45, 30],
+    ["qualifying", false, { kind: "no_stock" }, 1 * HOUR, 40, null, 45, 42],
+    ["negotiating", true, MATCH_85, 1 * HOUR, 50, 100, 75, 73],
+    ["negotiating", true, { kind: "no_match" }, 1 * HOUR, 50, 100, 75, 73],
+    ["negotiating", false, MATCH_85, 1 * HOUR, 50, 85, 75, 68],
+    // Enfriándose: Intent sin el +5 de la actividad y −15 al Porandú.
+    ["negotiating", true, MATCH_85, 3 * DAY, 45, 100, 75, 56],
+    ["qualifying", false, { kind: "no_stock" }, 3 * DAY, 35, null, 45, 24],
+    // Inactiva: Intent −15 y −40 al Porandú.
+    ["negotiating", true, MATCH_85, 8 * DAY, 30, 100, 75, 25],
+    ["new", false, MATCH_85, 8 * DAY, 10, 85, 20, 0],
+    ["new", false, { kind: "no_demand" }, 8 * DAY, 10, null, 20, 0],
+    ["negotiating", false, { kind: "no_match" }, 8 * DAY, 30, 0, 75, 0],
+  ] as const)(
+    "%s · vinculada %s · %o · hace %i ms → Intent %i, Fit %s, Deal %s, Porandú %i",
+    (
+      stage,
+      linked,
+      fit,
+      elapsed,
+      intentValue,
+      fitValue,
+      dealValue,
+      porandu,
+    ) => {
       const { scores } = score({
         stage,
         hasLinkedVehicle: linked,
         stockFit: fit,
         lastActivityAt: ago(elapsed),
       });
+      expect(scores.intent).toBe(intentValue);
       expect(scores.fit).toBe(fitValue);
       expect(scores.deal).toBe(dealValue);
       expect(scores.porandu).toBe(porandu);
-      expect(scores.coverage).toBe(fitValue === null ? 0.3 : 0.6);
+      expect(scores.coverage).toBe(fitValue === null ? 0.7 : 1);
     },
   );
 
-  it("el redondeo es exacto: 87,5 sube a 88 (pesos enteros, sin coma flotante)", () => {
+  it("el redondeo es exacto: 72,5 sube a 73 (pesos enteros, sin coma flotante)", () => {
+    // (40·50 + 30·100 + 30·75) / 100 = 72,5.
     const { scores } = score({ stage: "negotiating", hasLinkedVehicle: true });
-    expect(scores.porandu).toBe(88);
+    expect(scores.porandu).toBe(73);
   });
 
   it("un Fit sin dato no penaliza; un Fit que no coincide sí (DEC-005)", () => {
     const unknown = score({ stockFit: { kind: "no_stock" } }).scores;
     const mismatch = score({ stockFit: { kind: "no_match" } }).scores;
-    expect(unknown.porandu).toBe(DEAL_READINESS_BY_STAGE.qualifying);
+    // Sin Fit: (40·40 + 30·45) / 70 = 42,1.
+    expect(unknown.porandu).toBe(42);
     expect(mismatch.porandu).toBeLessThan(unknown.porandu ?? 0);
     expect(unknown.coverage).toBeLessThan(mismatch.coverage);
   });
@@ -362,7 +517,8 @@ describe("Porandú Score (Health Score) v0", () => {
     );
     expect(active).toBeGreaterThan(warning!);
     expect(warning).toBeGreaterThan(stale!);
-    expect(active! - stale!).toBe(RECENCY_PENALTY.stale);
+    // −40 de penalización y 20 puntos menos de Intent (+5 → −15) por su 40 %.
+    expect(active! - stale!).toBe(RECENCY_PENALTY.stale + 8);
   });
 
   it("explica cada sub-score y la penalización, con su motivo", () => {
@@ -374,7 +530,7 @@ describe("Porandú Score (Health Score) v0", () => {
       }).explanation,
     ).toEqual({
       factors: {
-        intent: "Sin dato: llega con las conversaciones",
+        intent: "Etapa En negociación 45 · sin actividad −15",
         fit: "Top Match en stock: 85 pts",
         deal: "Etapa En negociación",
       },
@@ -640,14 +796,14 @@ describe("evaluateOpportunity", () => {
       recency: { state: "stale", minutes: 6 * 24 * 60, hours: 144, days: 6 },
       scores: {
         porandu: 0,
-        coverage: 0.6,
-        intent: null,
+        coverage: 1,
+        intent: 30,
         fit: 0,
         deal: 75,
       },
       explanation: {
         factors: {
-          intent: "Sin dato: llega con las conversaciones",
+          intent: "Etapa En negociación 45 · sin actividad −15",
           fit: "Ninguna unidad disponible coincide",
           deal: "Etapa En negociación",
         },
@@ -691,7 +847,9 @@ describe("evaluateOpportunity", () => {
     expect(later.recency.state).toBe("stale");
     expect(later.scores.fit).toBe(today.scores.fit);
     expect(later.scores.deal).toBe(today.scores.deal);
-    expect(later.scores.porandu).toBe((today.scores.porandu ?? 0) - 40);
+    // Intent baja 20 (de +5 a −15): 8 puntos de su 40 %, más los −40.
+    expect(later.scores.intent).toBe((today.scores.intent ?? 0) - 20);
+    expect(later.scores.porandu).toBe((today.scores.porandu ?? 0) - 48);
     expect(later.nba?.code).toBe("recover_stale");
   });
 
@@ -703,4 +861,34 @@ describe("evaluateOpportunity", () => {
       expect(result.scores.porandu).not.toBeNull();
     },
   );
+});
+
+describe("stockFitFromRail (DEC-058)", () => {
+  it("lee del rail ya calculado lo mismo que stockFit()", () => {
+    expect(stockFitFromRail({ kind: "empty", reason: "no_demand" })).toEqual({
+      kind: "no_demand",
+    });
+    expect(stockFitFromRail({ kind: "empty", reason: "no_stock" })).toEqual({
+      kind: "no_stock",
+    });
+    expect(stockFitFromRail({ kind: "empty", reason: "no_match" })).toEqual({
+      kind: "no_match",
+    });
+    const top = {
+      vehicleId: "v-hilux",
+      name: "Toyota Hilux",
+      detail: "2022",
+      price: "USD 30.000",
+      km: null,
+      score: { total: 70, vehicle: 45, year: 25, budget: 0 },
+      reasons: [],
+      condition: null,
+      body: "pickup",
+      budgetDelta: null,
+      balance: null,
+    } as const;
+    expect(
+      stockFitFromRail({ kind: "matches", top, alternative: null }),
+    ).toEqual({ kind: "match", score: 70 });
+  });
 });

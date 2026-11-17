@@ -66,11 +66,14 @@ export function intentBand(value: ScoreValue): string {
 export type DriverKind =
   | "timing"
   | "budget"
+  | "downPayment"
   | "tradeIn"
+  | "appraisal"
   | "financing"
   | "vehicle"
   | "engagement"
   | "testDrive"
+  | "quote"
   | "stock";
 
 /** Señal que explica un score ("¿Por qué ahora?"), con fuente y momento. */
@@ -78,10 +81,17 @@ export type Driver = {
   kind: DriverKind;
   label: string;
   detail: string;
+  /** De dónde sale el dato ("Lo que busca", "Agenda", "Cotizaciones"…). */
   source: string;
-  at: string;
-  /** Peso de la señal en el score (0–100). */
+  /** Cuándo ocurrió, si el dato tiene momento ("hace 2 h", "jue 19 nov"). */
+  at?: string;
+  /**
+   * Peso de la señal (0–100): fijo por regla en el derivador de DEC-058.
+   * Desde 75 es una señal fuerte; por debajo, un punto a validar.
+   */
   strength: number;
+  /** Fragmentos de `detail` que la UI resalta: las cifras reales. */
+  emphasis?: readonly string[];
 };
 
 /*

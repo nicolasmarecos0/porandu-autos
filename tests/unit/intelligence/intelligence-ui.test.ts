@@ -210,18 +210,19 @@ describe("ScoreBreakdown con la explicación del motor", () => {
       }),
     );
 
-    expect(scores.porandu).toBe(48);
+    // Intent 30, Fit 100 y Deal 75: 64,5 − 40 = 24,5 → 25 (DEC-058).
+    expect(scores.porandu).toBe(25);
     expect(html).toContain("Porandú Score");
-    expect(html).toContain(">48<");
+    expect(html).toContain(">25<");
     expect(html).toContain("Intent · 40%");
-    expect(html).toContain("Sin dato: llega con las conversaciones");
+    expect(html).toContain("Etapa En negociación 45 · sin actividad −15");
     expect(html).toContain("Vehicle Fit · 30%");
     expect(html).toContain("Unidad del stock vinculada");
     expect(html).toContain("Deal Readiness · 30%");
     expect(html).toContain("Etapa En negociación");
     expect(html).toContain("Inactiva hace 8 días · riesgo de pérdida");
     expect(html).toContain("−40");
-    expect(html).toContain("Cobertura 60% · el dato faltante no penaliza");
+    expect(html).toContain("Cobertura 100%");
   });
 
   it("activa: sin penalización", () => {
@@ -233,7 +234,7 @@ describe("ScoreBreakdown con la explicación del motor", () => {
         explanation,
       }),
     );
-    expect(html).toContain(">88<");
+    expect(html).toContain(">73<");
     expect(html).not.toContain("−");
   });
 
@@ -269,25 +270,26 @@ function strip(overrides: Partial<ScoringInput> = {}) {
 describe("ScoreStrip con los scores reales", () => {
   it("el Porandú Score, la cobertura y las lecturas del motor", () => {
     const html = strip();
-    expect(html).toContain(">88<");
-    expect(html).toContain("Cobertura 60%");
+    expect(html).toContain(">73<");
+    expect(html).toContain("Cobertura 100%");
     expect(html).toContain("Unidad del stock vinculada");
     expect(html).toContain("Etapa En negociación");
-    // Intent sin dato: guion y "Sin dato", sin inventar un valor.
-    expect(html).toContain(">—<");
-    expect(html).toContain("Sin dato");
+    // Intent real (DEC-058): su valor y la banda del Visual Blueprint §3.
+    expect(html).toContain(">50<");
+    expect(html).toContain("Interés");
+    expect(html).not.toContain(">—<");
     expect(html).not.toContain("Inactividad");
   });
 
   it("inactiva: el tile del Porandú dice cuánto restó la inactividad", () => {
     const html = strip({ lastActivityAt: new Date(NOW.getTime() - 8 * DAY) });
-    expect(html).toContain(">48<");
+    expect(html).toContain(">25<");
     expect(html).toContain("Inactividad −40");
   });
 
   it("enfriándose: −15", () => {
     const html = strip({ lastActivityAt: new Date(NOW.getTime() - 3 * DAY) });
-    expect(html).toContain(">73<");
+    expect(html).toContain(">56<");
     expect(html).toContain("Inactividad −15");
   });
 });

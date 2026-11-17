@@ -200,10 +200,12 @@ describe("la cola real deriva recencia, Porandú Score y NBA", () => {
 
     // Hilux 2025 de ORG_1: marca y modelo (45); USD 49.900 excede el
     // presupuesto en más del 10 % (0). La Hilux de ORG_2 (75) no participa.
+    // Intent 40 (En calificación y activa, DEC-058): (40·40 + 30·45 + 30·45)
+    // / 100 = 43.
     expect(ramon.scores).toEqual({
-      porandu: 45,
-      coverage: 0.6,
-      intent: null,
+      porandu: 43,
+      coverage: 1,
+      intent: 40,
       fit: 45,
       deal: 45,
     });
@@ -223,8 +225,13 @@ describe("la cola real deriva recencia, Porandú Score y NBA", () => {
     const celeste = pick(await queueAt(NOW), CELESTE);
 
     expect(celeste.nba).toMatchObject({ code: "on_track", secondary: [] });
-    // Sin demanda: solo Deal Readiness (Nueva).
-    expect(celeste.scores).toMatchObject({ porandu: 20, fit: null, deal: 20 });
+    // Sin demanda: Intent 30 (Nueva y activa) y Deal 20 → 25,7 → 26.
+    expect(celeste.scores).toMatchObject({
+      porandu: 26,
+      intent: 30,
+      fit: null,
+      deal: 20,
+    });
     // Dos días después, la nota de hace 1 h ya tiene 2 días.
     const later = pick(
       await queueAt(new Date(NOW.getTime() + 2 * DAY)),
@@ -253,10 +260,11 @@ describe("la cola real deriva recencia, Porandú Score y NBA", () => {
     request(USER_C, ORG_3);
     const agro = pick(await queueAt(NOW), AGROGANADERA);
 
+    // Intent 50 (En negociación y activa): 72,5 → 73.
     expect(agro.scores).toEqual({
-      porandu: 88,
-      coverage: 0.6,
-      intent: null,
+      porandu: 73,
+      coverage: 1,
+      intent: 50,
       fit: 100,
       deal: 75,
     });
@@ -274,8 +282,9 @@ describe("la cola real deriva recencia, Porandú Score y NBA", () => {
       expect(op.lastActivity.state).toBe("stale");
       expect(op.nba).toMatchObject({ code: "recover_stale", urgent: true });
     }
-    // Ramón: base 45, menos 40.
-    expect(pick(queue, RAMON).scores.porandu).toBe(5);
+    // Ramón: Intent 20 (35 − 15), base 35, menos 40 → 0.
+    expect(pick(queue, RAMON).scores.intent).toBe(20);
+    expect(pick(queue, RAMON).scores.porandu).toBe(0);
     expect(pick(queue, RAMON).scoreExplanation?.penalties).toEqual([
       {
         kind: "inactivity",

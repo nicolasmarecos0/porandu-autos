@@ -24,6 +24,10 @@ import type { MatchableVehicle } from "@/domains/match/types";
 import type { Money } from "@/domains/money";
 import { evaluateOpportunity, stockFit } from "@/domains/scoring/engine";
 import {
+  NO_INTENT_SIGNALS,
+  type IntentSignals,
+} from "@/domains/scoring/signals";
+import {
   RECENCY_STATE_LABELS,
   type Recency,
   type RecencyState,
@@ -218,6 +222,11 @@ export type PipelineSource = Readonly<{
   testDrives: ReadonlyMap<string, TestDriveSignals>;
   /** La toma vigente de cada abierta, si tiene (DEC-052). */
   tradeIns: ReadonlyMap<string, PipelineTradeIn>;
+  /**
+   * Mensajes del cliente, prueba de manejo y cotización de cada abierta
+   * (DEC-058): las señales de Intent, las mismas que lee la cola.
+   */
+  intent?: ReadonlyMap<string, IntentSignals>;
 }>;
 
 /* ── ViewModel ──────────────────────────────────────────────────────── */
@@ -527,6 +536,7 @@ function openCard(
       lastNoteAt: source.lastNotes.get(row.id) ?? null,
       hasLinkedVehicle: row.vehicle !== null,
       stockFit: stockFit(demandSnapshot(truth), source.stock),
+      signals: source.intent?.get(row.id) ?? NO_INTENT_SIGNALS,
     },
     now,
   );

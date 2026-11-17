@@ -402,6 +402,12 @@ describe("matches en /opportunities/[id] con el loader real", () => {
           "Precio dentro del presupuesto",
           "Unidad disponible en stock",
         ],
+        // DEC-058: usada por el km, pickup por el modelo y USD 7.000 debajo
+        // del presupuesto. Sin entrega inicial cargada, sin saldo.
+        condition: "used",
+        body: "pickup",
+        budgetDelta: { kind: "under", amount: "USD 7.000" },
+        balance: null,
       },
       alternative: {
         vehicleId: HILUX_2025,
@@ -416,6 +422,10 @@ describe("matches en /opportunities/[id] con el loader real", () => {
           "Año dentro del rango buscado",
           "Unidad disponible en stock",
         ],
+        condition: "new",
+        body: "pickup",
+        budgetDelta: { kind: "over", amount: "USD 4.900" },
+        balance: null,
       },
     });
   });

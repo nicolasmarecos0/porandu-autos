@@ -83,3 +83,60 @@ export function formatAmount(amount: string): string {
 export function formatMoney({ amount, currency }: Money): string {
   return `${CURRENCY_PREFIX[currency]} ${formatAmount(amount)}`;
 }
+
+/*
+ * Aritmética exacta (DEC-058): diferencias y proporciones entre montos de la
+ * misma moneda, en centavos enteros (BigInt), nunca en float. Monedas
+ * distintas no se comparan: el resultado es null (sin FX).
+ */
+
+const MINOR_UNITS = BigInt(100);
+const ZERO = BigInt(0);
+
+/** Monto decimal en centavos exactos ("49900.5" → 4990050). */
+export function toMinorUnits(amount: string): bigint {
+  const match = DECIMAL.exec(amount.trim());
+  const cents = match?.[2] ?? "";
+  if (!match || cents.length > 2) {
+    throw new Error("invalid money amount");
+  }
+  return BigInt(match[1]!) * MINOR_UNITS + BigInt(cents.padEnd(2, "0"));
+}
+
+/** Centavos no negativos como decimal canónico (8100 → "81.00"). */
+function fromMinorUnits(minor: bigint): string {
+  const integer = minor / MINOR_UNITS;
+  const cents = (minor % MINOR_UNITS).toString().padStart(2, "0");
+  return `${integer.toString()}.${cents}`;
+}
+
+/**
+ * `a − b` con su signo: `sign` es 1 si `a` es mayor, −1 si es menor y 0 si
+ * son iguales; `amount`, la diferencia absoluta. Null con monedas distintas.
+ */
+export function moneyDifference(
+  a: Money,
+  b: Money,
+): Readonly<{ sign: -1 | 0 | 1; amount: Money }> | null {
+  if (a.currency !== b.currency) return null;
+  const delta = toMinorUnits(a.amount) - toMinorUnits(b.amount);
+  const sign = delta > ZERO ? 1 : delta < ZERO ? -1 : 0;
+  return {
+    sign,
+    amount: {
+      amount: fromMinorUnits(delta < ZERO ? -delta : delta),
+      currency: a.currency,
+    },
+  };
+}
+
+/**
+ * Qué porcentaje entero (truncado) de `whole` es `part`. Null con monedas
+ * distintas o con `whole` en cero.
+ */
+export function moneyPercent(part: Money, whole: Money): number | null {
+  if (part.currency !== whole.currency) return null;
+  const base = toMinorUnits(whole.amount);
+  if (base === ZERO) return null;
+  return Number((toMinorUnits(part.amount) * MINOR_UNITS) / base);
+}

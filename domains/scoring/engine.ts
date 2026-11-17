@@ -1,12 +1,21 @@
 import type { DemandSnapshot } from "@/domains/demand/snapshot";
 import { findMatchesForDemand } from "@/domains/match/engine";
-import { hasMatchableDemand } from "@/domains/match/presentation";
+import {
+  hasMatchableDemand,
+  type MatchRail,
+} from "@/domains/match/presentation";
 import type { MatchableVehicle } from "@/domains/match/types";
 import { stageLabel } from "@/domains/opportunities/labels";
 import { minutesSince } from "@/domains/opportunities/recency";
 import { isTerminalStage, type Stage } from "@/domains/opportunities/stages";
 import type { NbaKind, NextBestAction } from "@/domains/opportunities/types";
 
+import {
+  NO_INTENT_SIGNALS,
+  type IntentSignals,
+  type QuoteSignal,
+  type TestDriveSignal,
+} from "./signals";
 import type {
   NbaCode,
   Recency,
@@ -28,12 +37,17 @@ import type {
  * nunca se persiste, así que no puede desincronizarse de los hechos.
  *
  *   last_activity_at ─► recencia ─────────────────┐
- *   etapa ───────────► Deal Readiness ─┐          ├─► penalización
+ *   etapa + recencia ┐                            │
+ *   mensajes ────────┼► Intent ────────┐          │
+ *   agenda, cotiz. ──┘                 │          │
+ *   etapa ───────────► Deal Readiness ─┤          ├─► penalización
  *   unidad vinculada ┐                 ├─► base ──┴─► Porandú Score
  *   Match v0 ────────┴► Vehicle Fit ───┘
- *   (Intent: sin dato hasta las conversaciones)
  *
  *   recencia + etapa + unidad + Match v0 + bitácora ─► Next Best Action
+ *
+ * Intent v0 (DEC-058): la etapa, la recencia de la actividad, los mensajes
+ * del cliente, la prueba de manejo y la cotización vigentes.
  *
  * Los cuatro scores son los de DEC-004. Un sub-score sin dato no penaliza:
  * la base es el promedio ponderado de los conocidos y la cobertura dice qué
@@ -80,6 +94,59 @@ export const RECENCY_PENALTY: Readonly<Record<RecencyState, number>> = {
 /** Una nota de la bitácora es reciente si tiene menos de estos días. */
 export const NOTE_RECENT_DAYS = 2;
 
+/**
+ * Intent v0 (DEC-058): la base de la etapa abierta, más o menos los puntos
+ * de cada señal del cliente. Una señal que no existe suma 0: no penaliza
+ * (DEC-005). Solo restan los hechos contrarios: la inactividad, no asistir
+ * a la prueba de manejo y rechazar la cotización.
+ */
+export const INTENT_BASE_BY_STAGE: Readonly<
+  Record<"new" | "qualifying" | "negotiating", number>
+> = {
+  new: 25,
+  qualifying: 35,
+  negotiating: 45,
+};
+
+/** Puntos de Intent por la recencia de la actividad. */
+export const INTENT_ACTIVITY_POINTS: Readonly<Record<RecencyState, number>> = {
+  active: 5,
+  warning: 0,
+  stale: -15,
+};
+
+/** Puntos de Intent por el último mensaje del cliente, según su edad. */
+export const INTENT_INBOUND_POINTS = {
+  /** Escribió en las últimas 24 h. */
+  day: 15,
+  /** Escribió en las últimas 72 h. */
+  threeDays: 8,
+} as const;
+
+/** Horas que definen las bandas del mensaje del cliente. */
+export const INTENT_INBOUND_HOURS = { day: 24, threeDays: 72 } as const;
+
+/** Puntos de Intent por la prueba de manejo que cuenta. */
+export const INTENT_TEST_DRIVE_POINTS: Readonly<
+  Record<TestDriveSignal["state"], number>
+> = {
+  completed: 20,
+  upcoming: 15,
+  overdue: 0,
+  no_show: -10,
+};
+
+/** Puntos de Intent por la cotización que cuenta. */
+export const INTENT_QUOTE_POINTS: Readonly<
+  Record<QuoteSignal["state"], number>
+> = {
+  accepted: 25,
+  sent: 15,
+  pending: 5,
+  expired: 0,
+  rejected: -10,
+};
+
 /** Porandú Score de una etapa terminal: el resultado ya se conoce. */
 const OUTCOME_SCORE: Readonly<Record<"won" | "lost", number>> = {
   won: 100,
@@ -100,6 +167,12 @@ export type ScoringInput = Readonly<{
   hasLinkedVehicle: boolean;
   /** Match v0 de la demanda vigente contra el stock disponible. */
   stockFit: StockFit;
+  /**
+   * Mensajes del cliente, prueba de manejo y cotización (DEC-058). Sin
+   * ellas, Intent se evalúa con la etapa y la recencia: lo que falta no
+   * suma ni resta.
+   */
+  signals?: IntentSignals;
 }>;
 
 /** Todo lo que el motor deriva de una oportunidad en un momento dado. */
@@ -193,15 +266,120 @@ export function stockFit(
   return top ? { kind: "match", score: top.score.total } : { kind: "no_match" };
 }
 
+/**
+ * La lectura de stockFit() desde el rail de matches ya calculado (DEC-058):
+ * la cola arma el rail una vez y de él salen Vehicle Fit y las tarjetas.
+ */
+export function stockFitFromRail(rail: MatchRail): StockFit {
+  return rail.kind === "matches"
+    ? { kind: "match", score: rail.top.score.total }
+    : { kind: rail.reason };
+}
+
 type Factor = Readonly<{ value: ScoreValue; reason: string }>;
 
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
-/** Intent: sin dato hasta que existan conversaciones (Hito 2). */
-function intentFactor(): Factor {
-  return { value: null, reason: "Sin dato: llega con las conversaciones" };
+/** "+15", "−10": los puntos con su signo, para el motivo. */
+function signedPoints(points: number): string {
+  return points < 0 ? `−${Math.abs(points)}` : `+${points}`;
+}
+
+const INTENT_ACTIVITY_LABELS: Readonly<Record<RecencyState, string>> = {
+  active: "actividad al día",
+  warning: "actividad enfriándose",
+  stale: "sin actividad",
+};
+
+const INTENT_TEST_DRIVE_LABELS: Readonly<
+  Record<TestDriveSignal["state"], string>
+> = {
+  completed: "prueba de manejo realizada",
+  upcoming: "prueba de manejo agendada",
+  overdue: "prueba de manejo sin resultado",
+  no_show: "no asistió a la prueba",
+};
+
+const INTENT_QUOTE_LABELS: Readonly<Record<QuoteSignal["state"], string>> = {
+  accepted: "cotización aceptada",
+  sent: "cotización enviada",
+  pending: "cotización sin enviar",
+  expired: "cotización vencida",
+  rejected: "cotización rechazada",
+};
+
+/** Puntos por el último mensaje del cliente, o null si no suma. */
+function inboundContribution(
+  lastInboundAt: Date | null,
+  now: Date,
+): Readonly<{ label: string; points: number }> | null {
+  if (lastInboundAt === null) return null;
+  assertValidDate(lastInboundAt, "lastInboundAt");
+  const hours = minutesSince(lastInboundAt, now) / MINUTES_PER_HOUR;
+  if (hours < INTENT_INBOUND_HOURS.day) {
+    return {
+      label: "escribió en las últimas 24 h",
+      points: INTENT_INBOUND_POINTS.day,
+    };
+  }
+  if (hours < INTENT_INBOUND_HOURS.threeDays) {
+    return {
+      label: "escribió en los últimos 3 días",
+      points: INTENT_INBOUND_POINTS.threeDays,
+    };
+  }
+  return null;
+}
+
+/**
+ * Intent v0 (DEC-058). Abierta: la base de la etapa y los puntos de cada
+ * señal, entre 0 y 100; el motivo enumera cada aporte. Cerrada: el
+ * resultado (Ganada 100, Perdida 0).
+ */
+function intentFactor(
+  input: ScoringInput,
+  recency: Recency,
+  now: Date,
+): Factor {
+  if (input.stage === "won" || input.stage === "lost") {
+    return {
+      value: OUTCOME_SCORE[input.stage],
+      reason: `Etapa ${stageLabel(input.stage)}`,
+    };
+  }
+  const signals = input.signals ?? NO_INTENT_SIGNALS;
+  const base = INTENT_BASE_BY_STAGE[input.stage];
+  const parts: { label: string; points: number }[] = [
+    {
+      label: INTENT_ACTIVITY_LABELS[recency.state],
+      points: INTENT_ACTIVITY_POINTS[recency.state],
+    },
+  ];
+  const inbound = inboundContribution(signals.lastInboundAt, now);
+  if (inbound) parts.push(inbound);
+  if (signals.testDrive) {
+    parts.push({
+      label: INTENT_TEST_DRIVE_LABELS[signals.testDrive.state],
+      points: INTENT_TEST_DRIVE_POINTS[signals.testDrive.state],
+    });
+  }
+  if (signals.quote) {
+    parts.push({
+      label: INTENT_QUOTE_LABELS[signals.quote.state],
+      points: INTENT_QUOTE_POINTS[signals.quote.state],
+    });
+  }
+  const counted = parts.filter((part) => part.points !== 0);
+  const value = clampScore(
+    counted.reduce((total, part) => total + part.points, base),
+  );
+  const reason = [
+    `Etapa ${stageLabel(input.stage)} ${base}`,
+    ...counted.map((part) => `${part.label} ${signedPoints(part.points)}`),
+  ].join(" · ");
+  return { value, reason };
 }
 
 /**
@@ -285,8 +463,9 @@ function inactivityPenalty(recency: Recency): ScorePenalty | null {
 export function scoreOpportunity(
   input: ScoringInput,
   recency: Recency,
+  now: Date,
 ): Readonly<{ scores: ScoreSet; explanation: ScoreExplanation }> {
-  const intent = intentFactor();
+  const intent = intentFactor(input, recency, now);
   const fit = fitFactor(input);
   const deal = dealFactor(input.stage);
   const values = { intent: intent.value, fit: fit.value, deal: deal.value };
@@ -441,7 +620,7 @@ export function evaluateOpportunity(
   now: Date,
 ): OpportunityIntelligence {
   const recency = evaluateRecency(input.lastActivityAt, now);
-  const { scores, explanation } = scoreOpportunity(input, recency);
+  const { scores, explanation } = scoreOpportunity(input, recency, now);
   return {
     recency,
     scores,

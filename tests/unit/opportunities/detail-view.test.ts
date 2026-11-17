@@ -67,6 +67,10 @@ function card(vehicleId: string, name: string, total: number): MatchCard {
     km: "0 km",
     score: { total, vehicle: 45, year: 25, budget: total - 70 },
     reasons: ["Marca y modelo coinciden exactamente"],
+    condition: "new",
+    body: name.endsWith("Hilux") ? "pickup" : "suv",
+    budgetDelta: { kind: "under", amount: "USD 8.100" },
+    balance: null,
   };
 }
 

@@ -7,8 +7,12 @@
 export { evaluateMatch, findMatchesForDemand, MATCH_THRESHOLD } from "./engine";
 export { MATCH_POINTS } from "./evaluators";
 export {
+  budgetDelta,
   hasMatchableDemand,
+  matchBalance,
   matchRail,
+  type BudgetDelta,
+  type MatchBalance,
   type MatchCandidate,
   type MatchCard,
   type MatchRail,

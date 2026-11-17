@@ -6,9 +6,11 @@ import type {
   DemandSnapshotFact,
 } from "@/domains/demand/snapshot";
 import {
+  budgetDelta,
   findMatchesForDemand,
   hasMatchableDemand,
   MATCH_REASONS,
+  matchBalance,
   matchRail,
   type MatchCandidate,
 } from "@/domains/match";
@@ -154,6 +156,12 @@ describe("Top Match y alternativa", () => {
           MATCH_REASONS.priceWithinBudget,
           MATCH_REASONS.available,
         ],
+        // DEC-058: estado por el km, carrocería por el modelo y USD 7.000
+        // debajo del presupuesto de USD 45.000. Sin entrega, sin saldo.
+        condition: "used",
+        body: "pickup",
+        budgetDelta: { kind: "under", amount: "USD 7.000" },
+        balance: null,
       },
       alternative: {
         vehicleId: "v-hilux-2025",
@@ -168,8 +176,75 @@ describe("Top Match y alternativa", () => {
           MATCH_REASONS.yearInRange,
           MATCH_REASONS.available,
         ],
+        condition: "new",
+        body: "pickup",
+        budgetDelta: { kind: "over", amount: "USD 4.900" },
+        balance: null,
       },
     });
+  });
+
+  it("precio contra presupuesto en la misma moneda; sin FX es sin dato (DEC-058)", () => {
+    const usd = (amount: string) => ({ amount, currency: "USD" as const });
+    expect(budgetDelta(usd("49900.00"), usd("58000.00"))).toEqual({
+      kind: "under",
+      amount: "USD 8.100",
+    });
+    expect(budgetDelta(usd("58000.00"), usd("58000.00"))).toEqual({
+      kind: "equal",
+      amount: "USD 0",
+    });
+    expect(budgetDelta(usd("60000.50"), usd("58000.00"))).toEqual({
+      kind: "over",
+      amount: "USD 2.000,50",
+    });
+    expect(
+      budgetDelta(usd("49900.00"), { amount: "300000000", currency: "PYG" }),
+    ).toBeNull();
+    expect(budgetDelta(null, usd("58000.00"))).toBeNull();
+    expect(budgetDelta(usd("49900.00"), null)).toBeNull();
+  });
+
+  it("saldo después de la entrega inicial: una resta, sin tasa ni cuota (DEC-058)", () => {
+    const price = { amount: "49900.00", currency: "USD" as const };
+    const withDown = snapshot({
+      down_payment: { amount: "20000.00", currency: "USD" },
+    });
+    expect(matchBalance(price, withDown)).toEqual({
+      label: "Saldo",
+      downPayment: "USD 20.000",
+      amount: "USD 29.900",
+    });
+    expect(
+      matchBalance(
+        price,
+        snapshot({
+          down_payment: { amount: "20000.00", currency: "USD" },
+          trade_in_intent: true,
+        }),
+      )?.label,
+    ).toBe("Saldo sin usado");
+    // Sin entrega, en cero, en otra moneda o que cubre el precio: sin saldo.
+    expect(matchBalance(price, snapshot())).toBeNull();
+    expect(
+      matchBalance(
+        price,
+        snapshot({ down_payment: { amount: "0.00", currency: "USD" } }),
+      ),
+    ).toBeNull();
+    expect(
+      matchBalance(
+        price,
+        snapshot({ down_payment: { amount: "1000000", currency: "PYG" } }),
+      ),
+    ).toBeNull();
+    expect(
+      matchBalance(
+        price,
+        snapshot({ down_payment: { amount: "49900.00", currency: "USD" } }),
+      ),
+    ).toBeNull();
+    expect(matchBalance(null, withDown)).toBeNull();
   });
 
   it("un solo match: sin alternativa", () => {

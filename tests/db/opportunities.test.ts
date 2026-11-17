@@ -213,6 +213,8 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
         city: "Luque",
         channel: "WhatsApp",
         live: false,
+        // DEC-058: ilustración genérica asignada por el id del contacto.
+        avatar: expect.stringMatching(/^\/avatars\/prospect-0\d\.svg$/),
       },
       // H1.4: el legado solo es el vehículo "Dato anterior" mientras nunca
       // se cargó un vehículo.
@@ -220,18 +222,19 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
         vehicle: { title: "Toyota Hilux SRV 2.8 4x4 AT", source: "legacy" },
       }),
       interest: {},
-      // Hito 3 (DEC-035): sin demanda evaluable ni conversaciones, solo se
-      // evalúa Deal Readiness (En calificación) y la cobertura lo dice.
+      // Hito 3 (DEC-035) y DEC-058: sin demanda evaluable, se evalúan
+      // Intent (etapa y recencia) y Deal Readiness (En calificación), y la
+      // cobertura lo dice: (40·40 + 30·45) / 70 = 42.
       scores: {
-        porandu: 45,
-        coverage: 0.3,
-        intent: null,
+        porandu: 42,
+        coverage: 0.7,
+        intent: 40,
         fit: null,
         deal: 45,
       },
       scoreExplanation: {
         factors: {
-          intent: "Sin dato: llega con las conversaciones",
+          intent: "Etapa En calificación 35 · actividad al día +5",
           fit: "Sin dato: falta lo que busca",
           deal: "Etapa En calificación",
         },
@@ -249,7 +252,10 @@ describe("loader real: requireTenant() → withTenant() → RLS", () => {
         secondary: [],
         urgent: false,
       },
+      // DEC-058: sin demanda, sin señales y activa, no hay qué mostrar; el
+      // rail dice por qué no hay matches.
       drivers: [],
+      stockMatches: { kind: "empty", reason: "no_demand" },
     });
     expect(queue.opportunities.map((op) => op.bucket)).toEqual([
       "now",

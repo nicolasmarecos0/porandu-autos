@@ -4,6 +4,8 @@ import {
   BoxIcon,
   CalendarIcon,
   ConversationsIcon,
+  DocumentIcon,
+  KeyIcon,
   PercentIcon,
   StockIcon,
   SteeringIcon,
@@ -11,13 +13,8 @@ import {
   WalletIcon,
   type IconProps,
 } from "@/components/ui/icons";
+import { STRONG_DRIVER_MIN_STRENGTH } from "@/domains/scoring/drivers";
 import type { Driver, DriverKind } from "@/domains/scoring/types";
-
-/**
- * Corte visual temporal del mock de B1 entre "Señales fuertes" y "A validar".
- * No es una regla de negocio ni parte del scoring aprobado.
- */
-const MOCK_STRONG_SIGNAL_CUTOFF = 75;
 
 const DRIVER_KINDS: Record<
   DriverKind,
@@ -25,13 +22,48 @@ const DRIVER_KINDS: Record<
 > = {
   timing: { label: "Plazo", icon: CalendarIcon },
   budget: { label: "Presupuesto", icon: WalletIcon },
-  tradeIn: { label: "Trade-in", icon: SwapIcon },
-  financing: { label: "Financiación", icon: PercentIcon },
+  downPayment: { label: "Entrega", icon: WalletIcon },
+  tradeIn: { label: "Trade-in", icon: KeyIcon },
+  appraisal: { label: "Tasación", icon: SwapIcon },
+  financing: { label: "Pago", icon: PercentIcon },
   vehicle: { label: "Vehículo", icon: StockIcon },
   engagement: { label: "Interacción", icon: ConversationsIcon },
   testDrive: { label: "Test drive", icon: SteeringIcon },
+  quote: { label: "Cotización", icon: DocumentIcon },
   stock: { label: "Stock", icon: BoxIcon },
 };
+
+/**
+ * El texto de una señal con sus cifras reales en negrita (`emphasis`, en el
+ * orden en que aparecen). Un fragmento que no está en el texto se ignora.
+ */
+function emphasize(detail: string, emphasis: readonly string[] = []) {
+  const parts: ReactNode[] = [];
+  let rest = detail;
+  let key = 0;
+  for (;;) {
+    let at = -1;
+    let found = "";
+    for (const fragment of emphasis) {
+      if (fragment === "") continue;
+      const index = rest.indexOf(fragment);
+      if (index !== -1 && (at === -1 || index < at)) {
+        at = index;
+        found = fragment;
+      }
+    }
+    if (at === -1) break;
+    if (at > 0) parts.push(rest.slice(0, at));
+    parts.push(
+      <strong key={key++} className="font-semibold text-text-primary">
+        {found}
+      </strong>,
+    );
+    rest = rest.slice(at + found.length);
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
 
 type WhyNowCardProps = {
   drivers: readonly Driver[];
@@ -44,7 +76,9 @@ type WhyNowCardProps = {
  * ¿Por qué ahora?: drivers agrupados en "Señales fuertes" y "A validar", cada
  * uno con su peso, fuente y momento. Composición de la referencia (DEC-055):
  * título de color sobre una línea completa de 2 px y un tile cuadrado por
- * driver con su peso en la esquina.
+ * driver con su peso en la esquina. Desde DEC-058 los drivers los deriva
+ * `deriveOpportunityDrivers()` de los datos reales, y el corte entre los dos
+ * grupos es su regla (STRONG_DRIVER_MIN_STRENGTH).
  */
 export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
   const sections = [
@@ -53,7 +87,7 @@ export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
       text: "text-success",
       rule: "border-success-bright",
       items: drivers.filter(
-        (driver) => driver.strength >= MOCK_STRONG_SIGNAL_CUTOFF,
+        (driver) => driver.strength >= STRONG_DRIVER_MIN_STRENGTH,
       ),
     },
     {
@@ -61,13 +95,13 @@ export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
       text: "text-warning",
       rule: "border-warning-bright",
       items: drivers.filter(
-        (driver) => driver.strength < MOCK_STRONG_SIGNAL_CUTOFF,
+        (driver) => driver.strength < STRONG_DRIVER_MIN_STRENGTH,
       ),
     },
   ].filter((section) => section.items.length > 0);
 
   return (
-    <section className="shrink-0 rounded-lg border border-border-subtle bg-surface-1 px-6 pt-5 pb-4 shadow-card">
+    <section className="shrink-0 rounded-lg border border-border-subtle bg-surface-1 px-4 pt-5 pb-4 shadow-card sm:px-6">
       {sections.map((section) => (
         <div key={section.title} className="[&+&]:mt-7">
           <div
@@ -88,10 +122,13 @@ export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
               const kind = DRIVER_KINDS[driver.kind];
               const Icon = kind.icon;
               return (
-                <li key={driver.label} className="flex items-center gap-5">
-                  <span className="relative flex size-24 shrink-0 flex-col items-center justify-center gap-2 rounded-lg border border-border-default bg-surface-1 p-2 text-text-primary shadow-sm sm:size-28">
-                    <Icon className="size-7" />
-                    <span className="text-label font-semibold">
+                <li
+                  key={driver.label}
+                  className="flex items-center gap-3 sm:gap-5"
+                >
+                  <span className="relative flex size-20 shrink-0 flex-col items-center justify-center gap-1.5 rounded-lg border border-border-default bg-surface-1 p-2 text-text-primary shadow-sm sm:size-24 sm:gap-2 xl:size-28">
+                    <Icon className="size-6 sm:size-7" />
+                    <span className="text-caption font-semibold sm:text-label">
                       {kind.label}
                     </span>
                     <span className="absolute top-1.5 right-1.5 rounded-sm bg-text-muted px-1.5 py-0.5 text-caption font-bold text-text-inverse tabular-nums">
@@ -104,11 +141,13 @@ export function WhyNowCard({ drivers, showSources, footer }: WhyNowCardProps) {
                       <span className="font-semibold text-text-primary">
                         {driver.label}:
                       </span>{" "}
-                      {driver.detail}
+                      {emphasize(driver.detail, driver.emphasis)}
                     </p>
                     {showSources ? (
                       <p className="mt-1 text-caption text-text-muted">
-                        {driver.source} · {driver.at}
+                        {driver.at
+                          ? `${driver.source} · ${driver.at}`
+                          : driver.source}
                       </p>
                     ) : null}
                   </div>

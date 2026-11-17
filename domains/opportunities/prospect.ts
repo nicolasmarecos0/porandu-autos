@@ -51,3 +51,37 @@ export function maskPhone(phone: string): string | undefined {
     : digits.slice(0, 4);
   return `${prefix} ··· ${last}`;
 }
+
+/**
+ * Avatares ilustrados del prospecto (DEC-058): retratos genéricos, no fotos
+ * de la persona, en `/public/avatars/`. Se asignan por el id del contacto,
+ * siempre el mismo para el mismo contacto, sin inferir nada del nombre. La
+ * UI conserva las iniciales como respaldo si la imagen no carga.
+ */
+export const PROSPECT_AVATARS = [
+  "/avatars/prospect-01.svg",
+  "/avatars/prospect-02.svg",
+  "/avatars/prospect-03.svg",
+  "/avatars/prospect-04.svg",
+  "/avatars/prospect-05.svg",
+  "/avatars/prospect-06.svg",
+  "/avatars/prospect-07.svg",
+  "/avatars/prospect-08.svg",
+] as const;
+
+/** FNV-1a de 32 bits: el mismo texto, el mismo número, en cualquier runtime. */
+function hash(text: string): number {
+  let value = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    value ^= text.charCodeAt(index);
+    value = Math.imul(value, 0x01000193) >>> 0;
+  }
+  return value;
+}
+
+/** El avatar ilustrado de un contacto, determinístico por su id. */
+export function prospectAvatar(contactId: string): string {
+  return PROSPECT_AVATARS[
+    hash(contactId.toLowerCase()) % PROSPECT_AVATARS.length
+  ]!;
+}

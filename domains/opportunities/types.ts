@@ -1,4 +1,5 @@
 import type { DemandSummary } from "@/domains/demand/presentation";
+import type { MatchRail } from "@/domains/match/presentation";
 import type {
   Driver,
   NbaCode,
@@ -82,6 +83,11 @@ export type Opportunity = {
     /** Conversación de WhatsApp activa (`● En vivo`). */
     live: boolean;
     company?: { contact: string };
+    /**
+     * Avatar ilustrado (DEC-058): un retrato genérico asignado por el id del
+     * contacto, no una foto de la persona. Sin él, se ven las iniciales.
+     */
+    avatar?: string;
   };
   /**
    * Lo que busca, estructurado (H1.4, DEC-030): Current Truth resumida por
@@ -119,7 +125,14 @@ export type Opportunity = {
   stage: Stage;
   bucket: Bucket;
   nba?: NextBestAction;
+  /** "¿Por qué ahora?": desde DEC-058, derivadas de los datos reales. */
   drivers: readonly Driver[];
+  /**
+   * Top Match y alternativa reales de Match v0 contra el stock disponible,
+   * o por qué no hay (DEC-058). Lo trae la fuente real; los fixtures de B1
+   * usan `topMatch` y `alternative`.
+   */
+  stockMatches?: MatchRail;
   topMatch?: VehicleMatch;
   alternative?: AlternativeMatch;
   tradeIn?: TradeIn;

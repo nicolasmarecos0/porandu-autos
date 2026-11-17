@@ -31,6 +31,7 @@ import {
 import { withTenant, type ScopedTransaction } from "../tenant";
 import { selectDemandRows } from "./demand-rows";
 import { selectLastNoteTimes } from "./opportunity-notes";
+import { selectIntentSignals } from "./opportunity-signals";
 import { selectMatchCandidates, statusFromDb } from "./vehicles";
 
 /*
@@ -65,6 +66,10 @@ import { selectMatchCandidates, statusFromDb } from "./vehicles";
  *      que la confirmación de Ganada avisa · índice trade_ins
  *      (organization_id, opportunity_id); a lo sumo una vigente por
  *      oportunidad (`trade_ins_active_opportunity_key`).
+ *  10. Las señales de Intent de las abiertas (selectIntentSignals(),
+ *      DEC-058): pruebas de manejo, cotizaciones y el último mensaje del
+ *      cliente, las mismas que lee la cola, para que el Porandú Score sea
+ *      el mismo en las tres vistas.
  *
  * Cada lectura filtra por `organization_id` además de RLS (ADR-001 §2: con
  * varias memberships activas, RLS deja ver todas y el filtro deja solo la
@@ -396,6 +401,8 @@ export async function getOpportunityPipeline(
       organizationId,
       openIds,
     );
+    // Las señales de Intent de la cola (DEC-058): el mismo Porandú Score.
+    const intent = await selectIntentSignals(tx, organizationId, openIds, now);
     return {
       open,
       won,
@@ -406,6 +413,7 @@ export async function getOpportunityPipeline(
       quotes: quoteSignals,
       testDrives: testDriveSignals,
       tradeIns: tradeInSignals,
+      intent,
     };
   });
 

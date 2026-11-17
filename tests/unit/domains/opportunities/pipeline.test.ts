@@ -139,13 +139,13 @@ describe("pipelineBoard: columnas", () => {
   it("cada abierta va a la columna de su etapa, ordenada por Porandú Score", () => {
     const qualifying = column("qualifying", {
       open: [
-        // Inactiva: 45 − 40 = 5.
+        // Inactiva: Intent 20 y Deal 45 → 30,7 − 40 → 0.
         row(1, "qualifying", {
           lastActivityAt: minutesAgo(6 * MINUTES_PER_DAY),
         }),
-        // Activa: 45.
+        // Activa: Intent 40 y Deal 45 → 42 (DEC-058).
         row(2, "qualifying", { lastActivityAt: minutesAgo(10) }),
-        // Enfriándose: 45 − 15 = 30.
+        // Enfriándose: Intent 35 y Deal 45 → 39,3 − 15 = 24.
         row(3, "qualifying", {
           lastActivityAt: minutesAgo(3 * MINUTES_PER_DAY),
         }),
@@ -153,9 +153,9 @@ describe("pipelineBoard: columnas", () => {
       ],
     });
     expect(qualifying.cards.map((item) => [item.id, item.score])).toEqual([
-      [id(2), 45],
-      [id(3), 30],
-      [id(1), 5],
+      [id(2), 42],
+      [id(3), 24],
+      [id(1), 0],
     ]);
     expect(qualifying.total).toBe(3);
     expect(qualifying.stale).toBe(1);
@@ -296,8 +296,9 @@ describe("pipelineBoard: tarjeta abierta", () => {
       acceptedQuoteTotal: { amount: "47500.00", currency: "USD" },
       pending: [],
     });
-    // Unidad vinculada: Vehicle Fit 100; con En negociación (75) → 88.
-    expect(result.score).toBe(88);
+    // Unidad vinculada: Vehicle Fit 100; En negociación (Deal 75) y activa
+    // (Intent 50, DEC-058) → 72,5 → 73.
+    expect(result.score).toBe(73);
   });
 
   it.each([
