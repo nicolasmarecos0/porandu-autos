@@ -5,8 +5,8 @@
 -- Para el SQL Editor de Supabase (corre como `postgres`) o `psql`.
 -- Carga en TU organización un lote realista en es-PY:
 --
---   · 8 unidades (3 0 km y 5 usadas, en USD): 6 disponibles, 1 reservada
---     y 1 vendida;
+--   · 8 unidades en USD (tres 0 km y cinco usadas): 6 disponibles, 1
+--     reservada y 1 vendida;
 --   · 12 prospectos con su oportunidad en las cinco etapas, con lo que
 --     busca cada uno (el contrato de demanda de DEC-030);
 --   · 5 conversaciones de WhatsApp (3 con mensajes sin leer), 2 notas de
@@ -23,7 +23,7 @@
 --   1. Supabase → SQL Editor → New query. Pegá este archivo entero y Run.
 --   2. Si tu usuario es admin de una sola organización, no hay que tocar
 --      nada. Si no, completá v_admin_email (o v_organization_id) abajo.
---   3. Vuelve a correr sin duplicar nada: cada fila tiene un id
+--   3. Se puede volver a correr sin duplicar nada: cada fila tiene un id
 --      determinista y `ON CONFLICT DO NOTHING`. Para refrescar las fechas
 --      (las pruebas "de mañana" dejan de serlo), corré
 --      scripts/demo/cleanup-demo.sql y después este archivo.
