@@ -71,6 +71,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-055 | Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23) | Aceptada | 2026-11-17 |
 | DEC-056 | Cliente del runtime para Supavisor desde Vercel (E3 parcial de ADR-001) | Aceptada en principio | 2026-11-17 |
 | DEC-057 | Login ejecutivo: split-screen con "El Núcleo Porandú" y eslogan de marca | Aceptada en principio | 2026-11-17 |
+| DEC-058 | Velocidad del panel: funciones en `gru1`, estados de carga por ruta y lote de demostración | Aceptada en principio | 2026-11-17 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1947,6 +1948,44 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Sin migraciones ni pasos de staging.
   - `tests/unit/auth/login-page.test.ts` cubre el redirect con sesión, el indicador según el protocolo, el formulario, el copy, los nodos sin omnicanalidad, los tonos AA y reduced motion.
   - Decisiones abiertas para el fundador: llevar `/no-access` y `/select-organization`, que siguen con la tarjeta simple, a la misma composición.
+
+## DEC-058 — Velocidad del panel: funciones en `gru1`, estados de carga por ruta y lote de demostración
+- **Estado:** Aceptada en principio · 2026-11-17. Formaliza el pedido del fundador del 17 nov 2026, antes de la landing comercial: (1) resolver la navegación lenta entre vistas del panel en producción (`porandu-autos.vercel.app`), con las funciones de Vercel en `gru1` junto a Supabase (`sa-east-1`), auditando el paralelismo de las lecturas y el pool, y con estados de transición instantáneos (`loading.tsx` con skeletons ejecutivos); (2) un script SQL idempotente, para el SQL Editor de Supabase, que cargue un lote de demostración realista en es-PY en su organización, sin violar DEC-023 en la UI. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión.
+- **Contexto:**
+  - ADR-001 §7 deja para E3 la topología "Vercel → Supabase en la misma región". Sin configuración, Vercel crea las funciones en `iad1` (Washington D. C.), a unos 110–130 ms de RTT de São Paulo.
+  - Medición (harness local con un proxy TCP que agrega latencia): con `prepare: false` (Supavisor en modo transacción, ADR-001 §4), postgres-js manda cada query con parámetros en dos round trips (describe y después bind/execute) y no la pipelinea con las siguientes sobre la conexión de la transacción. Una transacción de `withTenant()` con sus claims y cinco lecturas cuesta ~14 RTT, en serie o con `Promise.all` (14,3 RTT medidos en los dos casos). `withTenant()` agrega 4 RTT (BEGIN, `set_config` con parámetro y COMMIT), no los ~3 que estimaba E1.
+  - Una navegación al Cockpit suma ~20 RTT de base (memberships con `withUser()` y el feed): ~2,5 s desde `iad1` y ~40 ms desde `gru1`.
+  - Sin Cache Components, Next no prefetchea una ruta dinámica que no tenga `loading.js`, y ninguna ruta del panel lo tenía: al tocar el rail no cambiaba nada en pantalla hasta que terminaba el render del servidor.
+  - La organización del fundador en staging está recién creada: Cockpit, Opportunities, Stock y Agenda se ven vacíos.
+- **Decisión:**
+  1. **Región** (E3 punto 1 de ADR-001, topología). `vercel.json` con `regions: ["gru1"]`: todas las funciones del proyecto (páginas, Server Actions, Route Handlers y el webhook) corren en São Paulo, la región AWS de Supabase. *Propuesta de implementación:* `vercel.json` y no `preferredRegion` por ruta, para tener una sola fuente para todo el proyecto.
+  2. **Lecturas y pool** (auditoría, sin cambios de código).
+     - Las páginas ya resuelven en paralelo los loaders independientes (el Cockpit pide el feed y las capacidades con `Promise.all`), y cada loader de lectura abre una sola transacción.
+     - Se mantiene una transacción por loader (DEC-047 §2). No se agrega `Promise.all` dentro de `withTenant()`, porque no reduce round trips (medido). Partir las lecturas en transacciones paralelas sí ahorraría tiempo, pero cambia DEC-047 §2, ocupa hasta cinco conexiones por request y en `gru1` ahorra milisegundos: queda en backlog.
+     - `getDb()` ya reutiliza un pool por proceso: singleton perezoso, cubierto por el test "reutiliza la misma instancia", con `idle_timeout` de 20 s (DEC-056). *Propuesta de implementación:* no se pasa a `globalThis`, porque dejaría el cliente alcanzable sin importar `db/client`, que es lo que vigila el guard de ESLint (DEC-019).
+  3. **Estados de carga.**
+     - Un `loading.tsx` por ruta del panel: Cockpit, Métricas, Cola, Tabla, Embudo, detalle de la oportunidad, Stock, Catálogo, Conversaciones, Calendario, Recuperación, Inteligencia y Configuración. Cada skeleton repite la composición y los breakpoints de su vista (`components/shell/route-skeletons.tsx`, con las primitivas `Skeleton`, `Panel` y `SummaryBand` y los skeletons de región de B1).
+     - Sin datos: solo el nombre de la sección, un único anuncio `role="status"` ("Cargando …"), `aria-busy` y bloques decorativos que laten con `motion-safe` (opacidad, sin glow).
+     - *Propuesta de implementación:* las rutas con subrutas (`/cockpit`, `/opportunities`, `/stock`) llevan su `page.tsx` y su `loading.tsx` en un route group (`(feed)`, `(queue)`, `(list)`). El prefetch baja hasta el primer `loading.js` y, sin el grupo, el skeleton del padre taparía el de sus subrutas. Las URLs y `revalidatePath()` no cambian. No hay un `loading.tsx` en `(app)`, porque taparía a todos.
+  4. **Lote de demostración** (`scripts/demo/seed-demo.sql` y `scripts/demo/cleanup-demo.sql`).
+     - Fuera de la aplicación: se corre a mano en el SQL Editor de Supabase como `postgres` (o con `psql`). Ninguna ruta, Server Action ni loader lo importa.
+     - **Solo insumos persistidos:** unidades, contactos, oportunidades con su cierre, el contrato de demanda (actos humanos `confirmed` firmados por el admin), conversaciones, mensajes con sus estados de entrega, notas, pruebas de manejo y cotizaciones. Nunca puntajes, matches ni señales: los calculan los motores al leer (DEC-023, DEC-031, DEC-035).
+     - Respeta todos los CHECK, FK y triggers. No usa DDL ni desactiva triggers. La recencia se fija al insertar, porque el trigger de actividad solo la adelanta a `now()` (DEC-036): solo dos oportunidades "calientes" tienen mensajes o notas vinculados. La ganada tiene su unidad vendida y sus metadatos de cierre (DEC-034, DEC-051).
+     - *Propuesta de implementación* (marca y seguridad):
+       - el id de cada fila es `md5('porandu-demo:v1:<organization_id>:<clave>')::uuid`, con `ON CONFLICT DO NOTHING`: es idempotente y la limpieza sabe qué borrar sin columnas nuevas;
+       - los contactos tienen un teléfono visible ficticio y `phone_normalized` vacío, así que el envío por WhatsApp responde `no_recipient` y nunca le escribe a una persona real;
+       - elige la organización del único admin activo, o la del email configurado, y falla sin escribir nada si hay más de una posible;
+       - la limpieza borra los ids demo y lo que cuelga de ellos, y se niega si una entrega completada (DEC-054) o una oportunidad propia depende de la demo.
+     - Cubierto por `tests/db/demo-seed.test.ts`: corre los dos scripts como `postgres` sobre las migraciones y pasa los loaders reales por la demo.
+- **Aclara / supersede:**
+  - ADR-001 §7 (E3 punto 1): queda fijada la topología, `gru1` con `sa-east-1`. La medición de latencia real en Vercel sigue pendiente: este entorno no llega al deploy. ADR-001 §6 (E1): con `prepare: false`, el overhead de `withTenant()` son 4 RTT.
+  - DEC-022: el lote demo no es una operación del workflow Staging DB ni son datos sintéticos de acceptance: son datos de producto en la organización del fundador. No crea usuarios ni organizaciones, así que el preflight no lo ve.
+  - DEC-047 §2: sin cambios, con una transacción por loader.
+  - DEC-009: sin dependencias nuevas. Prevalece según DEC-002. No requiere un ADR nuevo.
+- **Consecuencias:**
+  - Sin migraciones. Las funciones pasan a `gru1` con el próximo deploy, que se verifica con el header `x-vercel-id`.
+  - El lote demo no puede mostrar lo que todavía no tiene motor ni decisión: Intent ("Sin dato"), "¿Por qué ahora?" de la cola (`drivers` vacío), las tarjetas de Top Match del rail de la cola (los matches reales están en `/opportunities/[id]`) y "WhatsApp en vivo". Las notas del equipo aparecen en el Cockpit solo si la organización tiene otro miembro activo.
+  - Decisiones abiertas para el fundador: el motor de Intent y de "¿Por qué ahora?" sobre las conversaciones; Top Match y alternativa en el rail de la cola; lecturas en transacciones paralelas.
 
 ## ADR-001 — Tenant isolation y SaaS foundation
 - **Estado:** Aceptada · 2026-09-29. El principio se aceptó el 2026-09-21 (DEC-006); la implementación estuvo en validación hasta el cierre de E1 y E2.

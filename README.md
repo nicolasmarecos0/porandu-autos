@@ -1299,6 +1299,33 @@ Rediseño visual sobre las capturas de referencia del fundador (DEC-055), con da
 - **"Conexión segura verificada":** solo si la request llegó por HTTPS (`isSecureRequest()`, `lib/auth/secure-connection.ts`). En `next dev` sobre http no aparece.
 - **Tests:** `tests/unit/auth/login-page.test.ts`. Verificado en Chromium de 320 × 568 a 1920 × 1080 sin scroll.
 
+## Velocidad del panel y lote demo (DEC-058)
+
+**Región.** `vercel.json` fija las funciones de Vercel en `gru1` (São Paulo), la misma región AWS que Supabase (`sa-east-1`), como pide ADR-001 §7 (E3). Para verificar un deploy, mirá el header `x-vercel-id` de una página del panel: el último segmento antes del id es la región de la función (`…::gru1::…`).
+
+Por qué pesa tanto: con `prepare: false` (Supavisor en modo transacción) cada query con parámetros cuesta 2 round trips, y postgres-js no puede pipelinearlas sobre la conexión de la transacción. Medido con latencia artificial: una transacción de `withTenant()` con sus claims y 5 lecturas son ~14 RTT, en serie o con `Promise.all` (da lo mismo). Una navegación al Cockpit suma ~20 RTT de base: unos 2,5 s desde `iad1` (~120 ms de RTT a São Paulo) y unos 40 ms desde `gru1`.
+
+**Lecturas.** Cada loader sigue con una transacción (DEC-047 §2). Las páginas ya resuelven en paralelo los loaders independientes. `getDb()` reutiliza un pool por proceso (perezoso, hasta 5 conexiones, ociosas cerradas a los 20 s).
+
+**Estados de carga.** Cada ruta del panel tiene su `loading.tsx` con un skeleton de su composición (`components/shell/route-skeletons.tsx`). Sin Cache Components, Next no prefetchea una ruta dinámica que no tenga `loading.js`: con el boundary, tocar el rail pinta el skeleton al instante mientras responde el loader.
+
+- `/cockpit`, `/opportunities` y `/stock` tienen subrutas, así que su `page.tsx` y su `loading.tsx` viven en un route group (`(feed)`, `(queue)`, `(list)`). El prefetch baja hasta el primer `loading.js`: sin el grupo, el skeleton de la cola taparía el de la Tabla. Las URLs no cambian.
+- Sin datos: solo el nombre de la sección, un anuncio `status` ("Cargando …") y bloques decorativos que laten con `motion-safe`.
+- **Tests:** `tests/unit/shell/route-loading.test.ts`. Verificado en Chromium a 1440 y 390 px, sin scroll horizontal.
+
+**Lote de demostración** (`scripts/demo/`). Para mostrar el producto con datos en una organización recién creada:
+
+1. Supabase → SQL Editor → New query → pegar `scripts/demo/seed-demo.sql` → Run. Si sos admin de una sola organización no hay que configurar nada; si no, completá `v_admin_email` (o `v_organization_id`) al principio.
+2. Carga 8 unidades (USD; 3 0 km), 12 prospectos con su oportunidad en las cinco etapas y lo que busca cada uno, 5 conversaciones de WhatsApp (3 sin leer), 2 notas, 6 pruebas de manejo (próximas, vencida, hecha y ausente) y 5 cotizaciones (borrador, aprobada, enviada, aceptada y rechazada).
+3. Para quitarla o refrescar sus fechas: `scripts/demo/cleanup-demo.sql` y, si querés, el seed otra vez.
+
+- **Solo insumos, nunca resultados:** no escribe puntajes, matches ni señales (DEC-023, DEC-031, DEC-035). Los motores los calculan al leer: Porandú entre 0 y 100 según el match, la etapa y la recencia; el Top Match y la alternativa reales en `/opportunities/[id]`.
+- **Lo que la demo no enciende** (no hay motor que lo produzca todavía): Intent ("Sin dato" hasta que las conversaciones alimenten el motor), "¿Por qué ahora?" en la cola, las tarjetas de Top Match del rail de la cola y "WhatsApp en vivo". Las notas del equipo aparecen en el Cockpit solo si la organización tiene otro miembro activo, que es quien las firma.
+- **Seguridad:** solo `INSERT` en la organización elegida, sin DDL ni triggers desactivados, en una sola transacción. Los contactos tienen un teléfono visible ficticio y `phone_normalized` vacío: el envío por WhatsApp responde `no_recipient` y nunca le escribe a nadie real.
+- **Marca de demo:** el id de cada fila es `md5('porandu-demo:v1:<organization_id>:<clave>')::uuid`. Volver a correr el seed no duplica nada (`ON CONFLICT DO NOTHING`). La limpieza borra esos ids y lo que cuelga de ellos (también lo que se hizo sobre la demo desde la app) y se niega si una entrega completada o una oportunidad propia depende de la demo.
+- No es una operación del workflow Staging DB (DEC-022): no crea usuarios ni organizaciones, así que su preflight no lo ve.
+- **Tests:** `tests/db/demo-seed.test.ts` corre los dos scripts como `postgres` sobre las migraciones y pasa los loaders reales sobre la demo (puntajes, matches, embudo y Cockpit).
+
 ## Convenciones
 
 - Código, rutas, DB e identificadores en inglés. Copy de UI en español es-PY (DEC-011).
