@@ -85,6 +85,64 @@ export function databaseRole(url: URL): string {
   return decodeURIComponent(url.username).split(".")[0] ?? "";
 }
 
+/** Puerto del pooler Supavisor en modo transacción (ADR-001 §2). */
+export const TRANSACTION_POOLER_PORT = 6543;
+
+/**
+ * Conexión directa de Supabase (`db.<project_ref>.supabase.co`): solo IPv6.
+ * Desde Vercel (IPv4) falla con `getaddrinfo ENOTFOUND`.
+ */
+const SUPABASE_DIRECT_HOST = /^db\.[a-z0-9]+\.supabase\.co$/i;
+
+/** Pooler compartido de Supabase (`aws-N-<region>.pooler.supabase.com`). */
+const SUPABASE_POOLER_HOST = /\.pooler\.supabase\.com$/i;
+
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set([
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "::1",
+]);
+
+/** ¿La base corre en la misma máquina (Supabase local, harness de tests)? */
+export function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname.toLowerCase());
+}
+
+/**
+ * Problemas de conexión del runtime que se detectan antes de conectar
+ * (ADR-001 §2: Supavisor en modo transacción). Cada uno se ve en Vercel como
+ * un error opaco al primer request (`ENOTFOUND`, "Tenant or user not
+ * found", estado de sesión compartido): acá se nombran sin exponer el valor.
+ */
+function runtimeConnectionIssues(url: URL): string[] {
+  const issues: string[] = [];
+  if (SUPABASE_DIRECT_HOST.test(url.hostname)) {
+    issues.push(
+      `RUNTIME_DATABASE_URL points to the direct Supabase connection (db.<project_ref>.supabase.co), which is IPv6-only and unreachable from Vercel. Use the Supavisor transaction pooler: app_runtime.<project_ref>@aws-N-<region>.pooler.supabase.com:${TRANSACTION_POOLER_PORT} (ADR-001).`,
+    );
+  }
+  if (SUPABASE_POOLER_HOST.test(url.hostname)) {
+    if (url.port !== String(TRANSACTION_POOLER_PORT)) {
+      issues.push(
+        `RUNTIME_DATABASE_URL must use the Supavisor transaction pooler port ${TRANSACTION_POOLER_PORT} (ADR-001). The session pooler (5432) holds one database connection per client.`,
+      );
+    }
+    if (!decodeURIComponent(url.username).includes(".")) {
+      issues.push(
+        `RUNTIME_DATABASE_URL must authenticate as ${RUNTIME_ROLE}.<project_ref> on the Supabase pooler.`,
+      );
+    }
+  }
+  const sslmode = url.searchParams.get("sslmode");
+  if (sslmode === "disable" && !isLoopbackHost(url.hostname)) {
+    issues.push(
+      "RUNTIME_DATABASE_URL must not disable TLS (sslmode=disable) outside localhost.",
+    );
+  }
+  return issues;
+}
+
 export function parsePublicEnv(source: EnvSource): PublicEnv {
   const issues: string[] = [];
 
@@ -137,6 +195,8 @@ export function parseServerEnv(source: EnvSource): ServerEnv {
       issues.push(
         `RUNTIME_DATABASE_URL must connect as ${RUNTIME_ROLE} (ADR-001). The postgres role is reserved for migrations.`,
       );
+    } else {
+      issues.push(...runtimeConnectionIssues(url));
     }
   }
 

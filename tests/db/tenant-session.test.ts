@@ -282,13 +282,16 @@ describe("concurrencia: varios backends compartidos entre usuarios", () => {
       });
     }
 
-    // Después de 300 transacciones, cada conexión del pool está limpia.
+    // Después de 300 transacciones, cada conexión del pool está limpia: se
+    // reservan todas las que permite el pool del runtime (db/client.ts).
+    const size = pool.options.max;
+    expect(size).toBeGreaterThan(1);
     const reserved = await Promise.all(
-      Array.from({ length: 10 }, () => pool.reserve()),
+      Array.from({ length: size }, () => pool.reserve()),
     );
     try {
       const states = await Promise.all(reserved.map((c) => sessionState(c)));
-      expect(new Set(states.map((s) => s.pid)).size).toBe(10);
+      expect(new Set(states.map((s) => s.pid)).size).toBe(size);
       for (const state of states) expect(withoutPid(state)).toEqual(CLEAN);
     } finally {
       reserved.forEach((c) => c.release());
