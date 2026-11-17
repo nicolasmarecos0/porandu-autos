@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
+import { ChevronRightIcon } from "@/components/ui/icons";
 import { signIn } from "@/lib/auth/actions";
 import type { LoginError, LoginFormState } from "@/lib/auth/login";
 
@@ -22,8 +23,12 @@ const ERROR_MESSAGES: Record<LoginError, string> = {
 
 const ERROR_ID = "login-error";
 
+/*
+ * 44 px de alto (objetivo táctil) y 16 px de texto: iOS no hace zoom al
+ * enfocar el campo en el piso de ventas (DEC-057).
+ */
 const inputClassName =
-  "h-9 w-full rounded-md border border-border-default bg-surface-1 px-3 text-body text-text-primary transition-[border-color] hover:border-border-strong focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring";
+  "h-11 w-full rounded-md border border-border-default bg-surface-1 px-3.5 text-lead text-text-primary transition-[border-color] hover:border-border-strong focus-visible:border-brand focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus-ring";
 
 export function LoginForm() {
   const [state, action, pending] = useActionState<LoginFormState, FormData>(
@@ -35,10 +40,6 @@ export function LoginForm() {
 
   return (
     <form action={action} className="flex flex-col gap-4">
-      <p className="text-body text-text-secondary">
-        Ingresá con tu email y tu contraseña.
-      </p>
-
       {message ? (
         <p
           id={ERROR_ID}
@@ -84,9 +85,19 @@ export function LoginForm() {
         type="submit"
         variant="primary"
         disabled={pending}
-        className="h-9 w-full disabled:cursor-wait disabled:opacity-70"
+        className="group mt-1 h-11 w-full disabled:cursor-wait disabled:opacity-70"
       >
-        {pending ? "Ingresando…" : "Ingresar"}
+        {/* El texto va en un span: el botón base fija text-label. */}
+        <span className="text-body font-semibold">
+          {pending ? "Ingresando…" : "Ingresar"}
+        </span>
+        {pending ? null : (
+          <ChevronRightIcon
+            width={16}
+            height={16}
+            className="transition-transform duration-150 ease-out-strong group-hover:translate-x-0.5 motion-reduce:transition-none"
+          />
+        )}
       </Button>
     </form>
   );
