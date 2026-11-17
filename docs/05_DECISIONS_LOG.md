@@ -71,6 +71,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-055 | Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23) | Aceptada | 2026-11-17 |
 | DEC-056 | Cliente del runtime para Supavisor desde Vercel (E3 parcial de ADR-001) | Aceptada en principio | 2026-11-17 |
 | DEC-057 | Login ejecutivo: split-screen con "El Núcleo Porandú" y eslogan de marca | Aceptada en principio | 2026-11-17 |
+| DEC-058 | Señales reales en Opportunities: Intent v0, "¿Por qué ahora?", Top Match y Alternativa en la cola, renders genéricos y avatares ilustrados | Aceptada | 2026-11-17 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1947,6 +1948,84 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Sin migraciones ni pasos de staging.
   - `tests/unit/auth/login-page.test.ts` cubre el redirect con sesión, el indicador según el protocolo, el formulario, el copy, los nodos sin omnicanalidad, los tonos AA y reduced motion.
   - Decisiones abiertas para el fundador: llevar `/no-access` y `/select-organization`, que siguen con la tarjeta simple, a la misma composición.
+
+## DEC-058 — Señales reales en Opportunities: Intent v0, "¿Por qué ahora?", Top Match y Alternativa en la cola, renders genéricos y avatares ilustrados
+- **Estado:** Aceptada · 2026-11-17. El fundador pidió registrarla como Aceptada el 17 nov 2026, después de ejecutar el seed en Supabase y comparar `/opportunities` en producción con la captura de referencia. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y quedan aceptados con la decisión.
+- **Contexto:** con datos reales, `/opportunities` se veía incompleta frente a la referencia por cuatro motivos, todos por decisiones vigentes:
+  - el rail derecho solo mostraba "Busca": la cola no hidrataba el Top Match ni la alternativa (DEC-031 §5, DEC-035 §6);
+  - "¿Por qué ahora?" decía siempre "Sin señales registradas todavía.": `drivers: []` (DEC-023, DEC-035 §8);
+  - Intent mostraba "— Sin dato" (DEC-035 §3);
+  - las tarjetas no tenían imagen del vehículo (DEC-031: "sin silueta") y el avatar del prospecto eran sus iniciales (DEC-055 §5).
+
+  El fundador fijó la regla de honestidad: derivar y calcular las señales, los matches y el Intent de los datos que ya existen (presupuesto, trade-in, entrega inicial, forma de pago, stock, pruebas de manejo, cotizaciones y recencia), nunca mocks estáticos.
+- **Decisión:**
+  1. **Intent v0** (`domains/scoring/engine.ts`, supersede DEC-035 §3 en Intent). Estado derivado, en cada lectura, con `now` explícito; nada se persiste.
+     - Abierta: la base de la etapa (Nueva 25, En calificación 35, En negociación 45) más los puntos de cada señal, acotado entre 0 y 100:
+       - recencia de la actividad: Activa +5, Enfriándose 0, Inactiva −15;
+       - último mensaje recibido del cliente: en las últimas 24 h +15, en las últimas 72 h +8;
+       - prueba de manejo que cuenta: realizada +20, agendada por delante +15, vencida sin resultado 0, no asistió −10;
+       - cotización que cuenta: aceptada +25, enviada y vigente +15, sin enviar +5, vencida 0, rechazada −10.
+     - Una señal que no existe suma 0 (DEC-005). Solo restan los hechos contrarios: la inactividad, la ausencia a la prueba y el rechazo de la cotización.
+     - Cerrada: el resultado, Ganada 100 y Perdida 0.
+     - El motivo enumera cada aporte ("Etapa En negociación 45 · actividad al día +5 · …") y se ve en el desglose del anillo. La franja carbón muestra el valor y la banda del Visual Blueprint §3.
+     - Qué prueba y qué cotización cuentan (`domains/scoring/signals.ts`): la próxima prueba por delante, si no la última realizada, la última vencida y la última a la que no asistió; la cotización aceptada, si no la enviada y vigente, la sin enviar, la vencida y la rechazada. Las canceladas y anuladas no cuentan.
+     - Consecuencia en el Porandú Score: Intent entra con su 40 % y la cobertura llega al 100 %. Las bases, penalizaciones y pesos de DEC-035 no cambian. Todo es provisorio y se recalibra con el piloto (DEC-004).
+     - *Propuesta de implementación:* el embudo (`/opportunities/pipeline`) lee las mismas señales para que el Porandú sea el mismo en Cola, Tabla y Embudo.
+  2. **"¿Por qué ahora?"** (`deriveOpportunityDrivers()`, `domains/scoring/drivers.ts`; supersede DEC-035 §8 y, para Why Now, DEC-023 "sin outputs inventados"). Derivador puro y determinista.
+     - Cada regla tiene un peso fijo (`DRIVER_STRENGTH`, 0–100), que es el número del tile. Desde 75 es una señal fuerte ("Señales fuertes", título verde sobre línea `success-bright`); por debajo, un punto a validar ("A validar", título ámbar sobre línea `warning-bright`).
+     - Reglas:
+       - entrega inicial sobre el presupuesto (misma moneda): 30 % o más, 90; 15 % o más, 80; menos, 65 ("Entrega inicial baja"); sin presupuesto comparable, 78; sin entrega y financiado, 60;
+       - forma de pago: contado 92; financiado 70 ("validar las condiciones del crédito"); a definir 60;
+       - usado: toma aceptada 95, tasada 88, declarado o pendiente 85, más "Tasación pendiente" 70;
+       - stock: unidad vinculada 95; Top Match de 70 pts o más, con su puntaje como peso, la unidad, el precio y la diferencia contra el presupuesto; menos de 70, "Match parcial" a validar;
+       - prueba de manejo: realizada 95, confirmada 92, agendada 90, vencida sin resultado 60, no asistió 55;
+       - cotización: aceptada 100, enviada 90, sin enviar 65, vencida 60, rechazada 50;
+       - último mensaje del cliente: en 24 h 90, en 72 h 80;
+       - recencia: Enfriándose 65 ("Interés a confirmar"), Inactiva 50 ("Riesgo de pérdida").
+     - Hasta 6 señales fuertes y 3 a validar, del mayor peso al menor. Un dato que falta no genera señal. Una oportunidad cerrada no tiene señales.
+     - Solo cifras reales; las que el texto resalta en negrita viajan aparte (`emphasis`). Cada señal dice su fuente y, si tiene, su momento (hora de Asunción).
+  3. **Top Match y Alternativa en la cola** (supersede DEC-031 "la card Busca y el Vehicle Rail de /opportunities no cambian" y DEC-035 §6 "la cola no muestra tarjetas de match").
+     - Match v0 corre una vez por oportunidad: del mismo rail salen Vehicle Fit y las tarjetas. Sin demanda evaluable, sin stock o sin match, el rail dice cuál de los tres casos es.
+     - Tarjetas apiladas en la columna derecha, las mismas de `/opportunities/[id]`:
+       - Top Match: borde naranja de 2 px (`accent`), check azul profundo, badge sólido "0 km" (verde) o "Usado" (carbón) según el km real, precio, km, la diferencia contra el presupuesto ("USD 8.100 debajo" en verde, "USD 2.000 arriba" en rojo) y, con entrega inicial, "Entrega" y "Saldo" (precio menos la entrega; "Saldo sin usado" si entrega uno);
+       - Alternativa: borde azul acero sutil (`brand/40`, supersede el celeste de DEC-055 §2), su estado, precio y diferencia;
+       - las razones de Match v0 siguen en cada tarjeta (DEC-031 §4).
+     - La diferencia y el saldo son aritmética exacta en centavos, en la misma moneda y sin FX. El saldo es una resta: sin tasa, plazo ni cuota (DEC-003; el motor financiero sigue fuera de P1).
+  4. **Renders genéricos por carrocería** (aclara DEC-031 "sin silueta: el inventario no tiene carrocería"). *Propuesta de implementación:*
+     - Cuatro ilustraciones laterales de estudio, locales y estáticas (`public/vehicles/{pickup,suv,sedan,hatch}.svg`), sin URLs externas.
+     - La carrocería se elige por el modelo con una tabla cerrada del mercado paraguayo (`bodyTypeOf()`, `domains/vehicles/body-type.ts`): Hilux, Frontier o Amarok son pickup; Sportage, Corolla Cross, Tucson o Kicks, SUV; Corolla o Sentra, sedán; Yaris u Onix, hatchback. Un modelo que la tabla no conoce no muestra render: no se inventa una carrocería.
+     - Van abajo a la derecha de "Busca", Top Match y Alternativa, siempre con la etiqueta "Representación" (CLAUDE.md §2). No son fotos de la unidad: las fotos reales siguen solo en Stock.
+     - La carrocería no se persiste ni participa de Match ni de los scores.
+  5. **Avatares ilustrados** (supersede DEC-055 §5 "nunca una foto inventada" en lo que hace a la tarjeta del prospecto y la cola). *Propuesta de implementación:*
+     - Ocho retratos ilustrados, no fotográficos (`public/avatars/prospect-0N.svg`), con tonos de piel, peinados y fondos variados, en traje ejecutivo.
+     - Se asignan por el id del contacto (`prospectAvatar()`, FNV-1a): el mismo contacto ve siempre el mismo. No se infiere nada del nombre (ni género ni edad).
+     - No es una foto de la persona: es decorativo (`aria-hidden`), el nombre visible acompaña siempre y las iniciales quedan debajo como respaldo si la imagen no carga.
+     - Se ven en la tarjeta azul marino (64 px) y en cada fila de la cola.
+  6. **Tarjeta "Busca"**: píldoras arriba ("Con trade-in" y la forma de pago definida), "Editar" con borde azul acero (variante `outline` del botón), la grilla a la izquierda y el render abajo a la derecha. En el teléfono las píldoras, las acciones y el render se acomodan en otra línea; el maestro/detalle de DEC-055 no cambia.
+  7. **Lecturas** (`db/queries/opportunity-signals.ts`). En la misma transacción `withTenant()` de la cola (y del embudo), por lote y con filtro explícito por `organization_id` sobre RLS:
+     - las pruebas de manejo, salvo las canceladas;
+     - las cotizaciones, salvo las anuladas;
+     - el momento del último mensaje recibido de cada oportunidad (`max(created_at)`), nunca su texto ni su autor;
+     - la toma vigente: estado y usado (marca, modelo y año), sin chapa ni importes de la tasación.
+
+     Calcular no escribe nada: ni `last_activity_at`, ni estados, ni scores.
+  8. **Colores.** Los valores del pedido ya son tokens de DEC-055: `#F58220` es `accent`, `#376B89` es `brand`, `#10B981` es `success-bright`, `#F59E0B` es `warning-bright` y `#383838` es la superficie carbón. Se usan los tokens, no hex sueltos (CLAUDE.md §3). Las ilustraciones SVG llevan sus colores dentro del archivo, como cualquier imagen.
+- **Aclara / supersede:**
+  - DEC-035 §3 (Intent sin dato), §6 (la cola sin tarjetas de match) y §8 (Why Now e Intent fuera del bloque).
+  - DEC-023: Why Now e Intent dejan de ser "sin dato" porque los deriva un motor aprobado; siguen sin persistirse. El responsable y `● En vivo` siguen sin dato.
+  - DEC-031: la cola muestra el Top Match y la alternativa, y las tarjetas suman el render genérico.
+  - DEC-055 §2 (alternativa con borde celeste) y §5 (avatar sin foto inventada): ver §3 y §5.
+  - DEC-004 y DEC-005: la fórmula v0 de Intent es la de §1; sigue siendo provisoria y explicable, y el dato faltante no penaliza.
+  - DEC-009: sin dependencias nuevas. Prevalece según DEC-002. No requiere un ADR nuevo: no hay datos nuevos ni accesos nuevos, y ADR-001 alcanza.
+- **Consecuencias:**
+  - El Porandú Score de toda oportunidad abierta cambia (Intent entra con su 40 % y la cobertura sube). El orden de la cola, la tabla y el embudo se reacomoda.
+  - Sin migraciones ni pasos de staging. La cola hace cuatro lecturas más por request y el embudo tres, todas por índices que empiezan por `organization_id`.
+  - Tests: unitarios del motor de Intent, del derivador, de la selección de señales, de la carrocería, del dinero exacto, del avatar y de las tarjetas; de base real, `tests/db/opportunity-signals.test.ts` (lectura por lote, aislamiento entre organizaciones, contexto falsificado y que calcular no escribe).
+  - Decisiones abiertas para el fundador:
+    - recalibrar los puntos de Intent y los pesos de las señales con datos del piloto;
+    - una foto real del contacto (campo y consentimiento) para reemplazar la ilustración;
+    - llevar los avatares a la vista Tabla y al Embudo;
+    - fotos reales de las unidades cuando exista `vehicle_media` (DEC-025 §9), que seguirían solo en Stock salvo una decisión nueva.
 
 ## ADR-001 — Tenant isolation y SaaS foundation
 - **Estado:** Aceptada · 2026-09-29. El principio se aceptó el 2026-09-21 (DEC-006); la implementación estuvo en validación hasta el cierre de E1 y E2.

@@ -598,7 +598,7 @@ evaluateOpportunity(): recencia → Porandú Score + explicación → NBA
 
 | Sub-score | Peso | v0 |
 |---|---|---|
-| Intent | 40 % | Sin dato: llega con las conversaciones |
+| Intent | 40 % | Desde DEC-058: etapa, recencia, mensajes del cliente, prueba de manejo y cotización (ver "Señales reales en Opportunities (DEC-058)") |
 | Vehicle Fit | 30 % | Unidad vinculada 100 · si no, Top Match v0 (40–100) · ninguna coincide 0 · sin demanda o sin stock, sin dato |
 | Deal Readiness | 30 % | Nueva 20 · En calificación 45 · En negociación 75 · Ganada 100 · Perdida 0 |
 
@@ -1298,6 +1298,24 @@ Rediseño visual sobre las capturas de referencia del fundador (DEC-055), con da
 - **Motion:** los datos viajan por las curvas con SMIL y el núcleo late. Con reduced motion quedan puntos fijos. Los halos son translúcidos, sin blur (DEC-013).
 - **"Conexión segura verificada":** solo si la request llegó por HTTPS (`isSecureRequest()`, `lib/auth/secure-connection.ts`). En `next dev` sobre http no aparece.
 - **Tests:** `tests/unit/auth/login-page.test.ts`. Verificado en Chromium de 320 × 568 a 1920 × 1080 sin scroll.
+
+## Señales reales en Opportunities (DEC-058)
+
+`/opportunities` muestra lo que la referencia muestra, derivado solo de datos reales: nada se inventa ni se persiste.
+
+```text
+requireTenant() → withTenant() → cola + demanda + stock + notas + pruebas de
+manejo + cotizaciones + último mensaje del cliente + toma vigente (por lote,
+filtro por organización → RLS) → Match v0 (un rail por oportunidad) →
+Intent v0 → Porandú Score → deriveOpportunityDrivers() → ViewModel
+```
+
+- **Intent v0** (`domains/scoring/engine.ts`): base por etapa (Nueva 25, En calificación 35, En negociación 45) más la actividad (Activa +5, Inactiva −15), el último mensaje del cliente (24 h +15, 72 h +8), la prueba de manejo (realizada +20, agendada +15, no asistió −10) y la cotización (aceptada +25, enviada +15, sin enviar +5, rechazada −10). Acotado entre 0 y 100; cerradas: Ganada 100, Perdida 0. Lo que falta no suma ni resta. La cobertura del Porandú llega al 100 %. El embudo lee las mismas señales: el Porandú es el mismo en Cola, Tabla y Embudo.
+- **"¿Por qué ahora?"** (`domains/scoring/drivers.ts`): reglas con peso fijo (`DRIVER_STRENGTH`). Desde 75, "Señales fuertes"; por debajo, "A validar". Hasta 6 y 3 señales, del mayor peso al menor. Fuentes: lo que busca (entrega inicial sobre presupuesto, forma de pago, usado), la toma, el Top Match o la unidad vinculada, la agenda, la cotización, los mensajes y la recencia. Las cifras van en negrita (`emphasis`). Una cerrada no tiene señales.
+- **Top Match y Alternativa en la cola:** las tarjetas de Match v0 (las mismas de `/opportunities/[id]`) con 0 km o Usado (por el km), precio, km, la diferencia contra el presupuesto en verde o rojo (misma moneda, sin FX) y el saldo después de la entrega inicial (una resta: sin tasa ni cuota, DEC-003).
+- **Renders genéricos** (`public/vehicles/*.svg`): pickup, SUV, sedán y hatchback, elegidos por el modelo (`domains/vehicles/body-type.ts`). Modelo desconocido, sin render. Siempre con "Representación".
+- **Avatares ilustrados** (`public/avatars/*.svg`): ocho retratos genéricos, no fotos, asignados por el id del contacto (`prospectAvatar()`), sin inferir nada del nombre. Las iniciales quedan como respaldo si la imagen no carga.
+- **Lecturas nuevas:** pruebas de manejo, cotizaciones, el momento del último mensaje recibido (nunca el texto) y la toma vigente (estado y usado, sin chapa ni importes). Sin migraciones ni escrituras.
 
 ## Convenciones
 
