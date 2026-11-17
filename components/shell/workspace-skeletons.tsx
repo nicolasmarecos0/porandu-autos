@@ -4,9 +4,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SummaryBand, SummaryTile } from "@/components/ui/summary-band";
 
 /*
- * Skeletons de estructura para las rutas del vertical slice de B1.
- * Muestran la composición de cada región sin datos, rótulos ni contenido
- * comercial. Se reemplazan por los componentes reales de cada módulo; la
+ * Skeletons de estructura de las regiones del workspace (B1). Muestran la
+ * composición de cada región sin datos, rótulos ni contenido comercial. Los
+ * usan los estados de carga de las rutas (route-skeletons.tsx, DEC-058); la
  * cantidad de tiles, filas y columnas no es una decisión de producto.
  */
 

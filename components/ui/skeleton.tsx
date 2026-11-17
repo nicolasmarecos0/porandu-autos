@@ -24,7 +24,11 @@ type SkeletonProps = {
   className?: string;
 };
 
-/** Bloque de estructura sin datos. Decorativo: oculto para lectores de pantalla. */
+/**
+ * Bloque de estructura sin datos. Decorativo: oculto para lectores de
+ * pantalla. Late suave mientras carga (opacidad, sin glow); con reduced
+ * motion queda fijo.
+ */
 export function Skeleton({
   tone = "default",
   radius = "sm",
@@ -34,7 +38,7 @@ export function Skeleton({
     <span
       aria-hidden="true"
       className={cn(
-        "block shrink-0",
+        "block shrink-0 motion-safe:animate-pulse",
         toneClasses[tone],
         radiusClasses[radius],
         className,
