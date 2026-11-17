@@ -107,7 +107,8 @@ Ver `.env.example`, que solo contiene placeholders. **Nunca commitear `.env*` co
 
 Separación runtime / migraciones (ADR-001):
 
-- El runtime lee **solo** `RUNTIME_DATABASE_URL`, a través de `lib/env.server.ts` (`import "server-only"`). La validación rechaza cualquier rol distinto de `app_runtime`. En staging apunta a Supavisor en modo transacción (puerto 6543, usuario `app_runtime.<project_ref>`).
+- El runtime lee **solo** `RUNTIME_DATABASE_URL`, a través de `lib/env.server.ts` (`import "server-only"`). La validación rechaza cualquier rol distinto de `app_runtime`. En staging y en Vercel apunta a Supavisor en modo transacción (puerto 6543, usuario `app_runtime.<project_ref>`, `?sslmode=require`).
+- **Vercel (DEC-056):** la conexión directa `db.<project_ref>.supabase.co` es solo IPv6 y desde Vercel falla con `getaddrinfo ENOTFOUND`. La validación la rechaza con un mensaje claro, igual que el pooler en modo sesión (5432), un usuario del pooler sin `.<project_ref>` y `sslmode=disable` fuera de localhost. El cliente (`db/client.ts`) usa `prepare: false`, hasta 5 conexiones por instancia, cierra las ociosas a los 20 s, espera 10 s para conectar y exige TLS fuera de loopback si la URL no dice `sslmode`.
 - `MIGRATION_DATABASE_URL` la usa únicamente `drizzle-kit`. En staging apunta a Supavisor en modo sesión (puerto 5432, usuario `postgres.<project_ref>`). ESLint prohíbe leerla desde código de la aplicación.
 - No existe un `DATABASE_URL` genérico: ninguna herramienta puede tomar la credencial equivocada por defecto.
 - Las variables públicas se leen con `lib/env.public.ts`. Solo lo que lleva prefijo `NEXT_PUBLIC_` llega al browser; una variable server-only nunca lleva ese prefijo.
@@ -1283,6 +1284,7 @@ Rediseño visual sobre las capturas de referencia del fundador (DEC-055), con da
 - **Banda superior:** el menú de la cuenta (Radix) muestra el email de la sesión y "Cerrar sesión".
 - **Se mantiene:** copy en es-PY, los nombres de los scores de DEC-004 (no BPS / In Market), las 8 entradas del rail, íconos propios y ningún logo de terceros.
 - **Tests:** `tests/unit/domains/opportunities/table.test.ts` (orden, búsqueda, paginación, pago y señales) y `tests/unit/opportunities/table-view.test.ts` (columnas reales sin Lease, cuotas ni Outreach; orden inicial; destino de cada fila; "Sin dato" y "Sin asignar"; lista del teléfono). Verificado en Chromium a 1440, 1024 y 390 px, con los datos de prueba y con la forma de los datos reales (sin señales ni matches).
+- **Auditoría previa al deploy:** en el teléfono, el detalle tiene siempre "Volver" ("Volver a la tabla" si se abrió desde la tabla, `&from=table`) y una barra "Showroom" que abre el Catálogo visual (DEC-049) filtrado por el vehículo que busca el cliente. Los menús de Radix resaltan el ítem activo con fondo de marca (se ve con el teclado) y un avatar sin iniciales muestra una silueta.
 - **Fuera de este bloque (backlog, DEC-055 §7):** notificaciones, búsqueda global, cambiar la etapa desde la tarjeta, recientes y favoritos, el panel de filtros y la selección masiva de la tabla, Outreach, Campaign/Website Activity, Loyalty, el tile de IA, la calculadora Lease/Finance/Cash y el contrato del auto actual.
 
 ## Convenciones

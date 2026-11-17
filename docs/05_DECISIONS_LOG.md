@@ -69,6 +69,7 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-053 | Logística y entregas: remito con checklist físico y salida atómica de la unidad vendida (Hito 21) | Aceptada | 2026-11-11 |
 | DEC-054 | Seguridad, refinamiento de roles y accesos: la gerencia aprueba, fija precios, anula y audita (Hito 22, cierre del MVP) | Aceptada | 2026-11-11 |
 | DEC-055 | Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23) | Aceptada en principio | 2026-11-17 |
+| DEC-056 | Cliente del runtime para Supavisor desde Vercel (E3 parcial de ADR-001) | Aceptada en principio | 2026-11-17 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1834,6 +1835,9 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
      - De `md` a `xl`: la columna izquierda y una sola columna con scroll, con la decisión y, debajo, "¿Qué ofrecerle?".
      - En el teléfono, maestro/detalle: la cola a pantalla completa. Abrir una oportunidad muestra su detalle con "Volver", la tarjeta del prospecto y los cuatro scores fijos en el borde inferior.
      - `Enter` abre la oportunidad seleccionada. En el teléfono el foco acompaña el cambio de región.
+     - *Propuesta de implementación* (auditoría previa al deploy, pedido del fundador del 17 nov 2026):
+       - el detalle del teléfono tiene siempre "Volver", aunque la selección haya desaparecido; abierto desde la tabla (`&from=table`), dice "Volver a la tabla" y regresa a ella;
+       - una barra "Showroom" lleva al Catálogo visual del stock (DEC-049, la galería para mostrar en el salón), filtrado por el vehículo que busca el cliente (`/stock/catalog?q=…`). Es un atajo a una vista existente: no arma ofertas ni cuotas.
   4. **Vista Tabla** (`/opportunities/table`): la tercera vista de Opportunities, junto a Cola y Embudo (DEC-001, DEC-048).
      - Lee la misma cola (`getOpportunityQueue()`: `requireTenant()` → `withTenant()` → RLS). Buscar, ordenar y paginar trabajan sobre esa lectura con lógica pura (`domains/opportunities/table.ts`). No hay lecturas, migraciones ni índices nuevos.
      - Columnas:
@@ -1848,6 +1852,8 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
      - Abrir una fila lleva a la cola con esa oportunidad seleccionada (`/opportunities?op=<id>`), así la ficha de decisión sigue en un solo lugar (DEC-017). `?op=` solo elige entre las oportunidades que la cola ya leyó; no se consulta con él.
      - En el teléfono, la tabla es una lista de filas compactas con el color de la recencia, la inicial de la forma de pago y el Porandú.
   5. **Banda superior.** *Propuesta de implementación:* un menú de la cuenta (Radix) reemplaza al botón suelto. Muestra el email de los claims ya verificados, sin otra lectura, y "Cerrar sesión" con la misma Server Action `signOut`.
+     - El ítem resaltado de todos los menús de Radix (mouse o flechas) pasa a fondo y texto de marca: el gris anterior (~1,03:1 sobre blanco) no se veía con el teclado.
+     - Un avatar sin iniciales muestra una silueta, nunca un círculo vacío ni una foto inventada.
   6. **Lo que se mantiene por las decisiones vigentes:**
      - copy en es-PY (DEC-011);
      - los nombres de DEC-004 (Porandú · Intent · Vehicle Fit · Deal) en lugar de BPS · In Market · Vehicle · Deal ("BPS®" es además marca registrada de automotiveMastermind);
@@ -1877,6 +1883,35 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Sin migraciones ni pasos de staging.
   - Todo lo que usa los tokens cambia de tono: Cockpit, Embudo, Stock, Agenda, Bandeja, Configuración, el login y el PDF de cotizaciones.
   - Decisiones abiertas para el fundador: los ítems de §7.
+
+## DEC-056 — Cliente del runtime para Supavisor desde Vercel (E3 parcial de ADR-001)
+- **Estado:** Aceptada en principio · 2026-11-17. Formaliza el pedido del fundador del 17 nov 2026 de dejar el cliente de base de datos "100 % compatible con el pooler de Supabase" después del error `getaddrinfo ENOTFOUND db.<project_ref>.supabase.co` en `/cockpit` en Vercel. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:**
+  - El error es de configuración: `RUNTIME_DATABASE_URL` apuntaba a la conexión directa de Supabase, que solo tiene IPv6. Vercel resuelve por IPv4 y no la encuentra. ADR-001 §2 ya fija el runtime en Supavisor en modo transacción (puerto 6543, usuario `app_runtime.<project_ref>`).
+  - ADR-001 §7 dejó para E3 el tamaño de pool, los límites y el comportamiento de las conexiones desde funciones serverless, y TLS `verify-full`.
+  - `db/client.ts` solo fijaba `prepare: false`. El resto eran los defaults de postgres-js: hasta 10 conexiones por instancia, conexiones ociosas que nunca se cierran, 30 s para conectar y TLS solo si la URL lo pedía.
+- **Decisión:**
+  1. **Validación antes de conectar** (`lib/env.ts`, `parseServerEnv()`). Rechaza, con mensajes que nombran la variable y nunca su valor:
+     - la conexión directa (`db.<project_ref>.supabase.co`);
+     - el pooler de Supabase (`*.pooler.supabase.com`) fuera del puerto 6543 (modo sesión);
+     - el pooler con un usuario sin `.<project_ref>`;
+     - `sslmode=disable` fuera de loopback.
+  2. **Opciones del cliente** (`runtimeClientOptions()` en `db/client.ts`). *Propuesta de implementación:*
+     - `prepare: false`, como antes;
+     - `max: 5` conexiones por instancia (Fluid compute atiende varios requests por instancia; Supavisor multiplexa);
+     - `idle_timeout: 20` s, para que una instancia suspendida no conserve sockets que el pooler ya cerró;
+     - `connect_timeout: 10` s;
+     - `application_name: porandu-runtime`;
+     - TLS `require` por defecto fuera de loopback si la URL no dice `sslmode`. Un `sslmode` explícito manda. Supabase local y el harness de tests siguen sin TLS.
+  3. **Valor en Vercel:** `postgresql://app_runtime.<project_ref>:<password URL-encoded>@aws-<n>-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require`, con el host exacto del panel de Supabase (Connect → Transaction pooler).
+- **Aclara / supersede:**
+  - ADR-001 §7, E3 punto 2: queda definido el pool del runtime. La latencia real y la verificación en Vercel siguen pendientes.
+  - ADR-001 §7, E3 punto 4: TLS es obligatorio fuera de loopback; `verify-full` sigue pendiente porque exige cargar el certificado de Supabase en el runtime.
+  - No cambia ninguna pieza de ADR-001 §2 ni regla de §3. No hay dependencias nuevas (DEC-009) ni migraciones.
+- **Consecuencias:**
+  - Un deploy con la URL mal configurada falla al primer acceso a datos con un error que dice qué corregir, en lugar de `ENOTFOUND` o "Tenant or user not found".
+  - `tests/db/tenant-session.test.ts` reserva `options.max` conexiones del pool del runtime en lugar de 10 fijas.
+  - Decisiones abiertas para el fundador: `verify-full` con el certificado de Supabase; integrar el cierre del pool con el ciclo de vida de las funciones de Vercel (`@vercel/functions`, dependencia nueva) si el piloto lo exige.
 
 ## ADR-001 — Tenant isolation y SaaS foundation
 - **Estado:** Aceptada · 2026-09-29. El principio se aceptó el 2026-09-21 (DEC-006); la implementación estuvo en validación hasta el cierre de E1 y E2.
