@@ -260,7 +260,7 @@ describe("PipelineView", () => {
 });
 
 describe("OpportunitiesViewSwitch", () => {
-  it("dos enlaces, Cola y Embudo, con la vista actual marcada", () => {
+  it("tres enlaces, Cola, Embudo y Tabla, con la vista actual marcada", () => {
     const markup = renderToStaticMarkup(
       createElement(OpportunitiesViewSwitch, { current: "queue" }),
     );
@@ -271,6 +271,18 @@ describe("OpportunitiesViewSwitch", () => {
     expect(anchorTag(markup, "/opportunities/pipeline")).not.toContain(
       "aria-current",
     );
-    expect(text(markup)).toBe("Cola Embudo");
+    expect(anchorTag(markup, "/opportunities/table")).not.toContain(
+      "aria-current",
+    );
+    expect(text(markup)).toBe("Cola Embudo Tabla");
+  });
+
+  it("la tabla (DEC-055) se marca como vista actual", () => {
+    const markup = renderToStaticMarkup(
+      createElement(OpportunitiesViewSwitch, { current: "table" }),
+    );
+    expect(anchorTag(markup, "/opportunities/table")).toContain(
+      'aria-current="page"',
+    );
   });
 });

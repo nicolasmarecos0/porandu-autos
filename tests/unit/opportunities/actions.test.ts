@@ -88,10 +88,15 @@ const VALID = {
 };
 
 describe("createOpportunity()", () => {
-  it("requireTenant() → escritura con ese contexto → revalidar /opportunities", async () => {
+  it("requireTenant() → escritura con ese contexto → revalidar /opportunities y la tabla", async () => {
     const state = await createOpportunity(null, form(VALID));
 
-    expect(mocks.calls).toEqual(["requireTenant", "write", "revalidatePath"]);
+    expect(mocks.calls).toEqual([
+      "requireTenant",
+      "write",
+      "revalidatePath",
+      "revalidatePath",
+    ]);
     expect(mocks.write).toHaveBeenCalledWith(CTX, {
       contact: {
         name: "Lucía Ortiz",
@@ -103,6 +108,7 @@ describe("createOpportunity()", () => {
       demand: { desired_vehicle: { brand: "Toyota", model: "Corolla Cross" } },
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/opportunities");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/opportunities/table");
     expect(state).toEqual({
       status: "created",
       opportunityId: "30000000-0000-4000-8000-000000000001",
