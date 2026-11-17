@@ -81,7 +81,7 @@ export function NextBestActionCard({
         aria-hidden="true"
         className={cn("absolute inset-y-0 left-0 w-1", accent.rule)}
       />
-      <div className="flex items-center gap-4 py-3.5 pr-4 pl-5">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 py-3.5 pr-4 pl-5">
         <span
           className={cn(
             "flex size-10 shrink-0 items-center justify-center rounded-md shadow-sm",
@@ -90,7 +90,7 @@ export function NextBestActionCard({
         >
           <Icon className="size-5" />
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-48">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <h2 className={cn("text-overline uppercase", accent.title)}>
               ¿Qué hacer?
@@ -112,7 +112,7 @@ export function NextBestActionCard({
           </p>
           <p className="text-label text-text-secondary">{nba.reason}</p>
         </div>
-        <div className="flex shrink-0 flex-col items-end">
+        <div className="flex shrink-0 flex-col items-end max-sm:w-full max-sm:items-start">
           {nba.needsApproval ? (
             <Tooltip content="Cambia condiciones económicas: se aprueba antes de enviarse al cliente.">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-warning-border bg-warning-soft px-2.5 py-1 text-caption font-semibold text-warning">

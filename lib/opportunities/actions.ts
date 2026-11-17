@@ -38,7 +38,7 @@ import {
   type CreateOpportunityState,
 } from "./new-opportunity";
 import { parseNoteRequest, type AddNoteState } from "./note";
-import { PIPELINE_PATH } from "./paths";
+import { PIPELINE_PATH, TABLE_PATH } from "./paths";
 import type { RecordDemandState } from "./record-demand";
 import { parseStageChange, type ChangeStageState } from "./stage-change";
 import { parseVehicleLink, type LinkVehicleState } from "./vehicle-link";
@@ -117,6 +117,8 @@ export async function createOpportunity(
   }
 
   revalidatePath(OPPORTUNITIES_PATH);
+  // La tabla (DEC-055) también ofrece el alta: vuelve con la fila nueva.
+  revalidatePath(TABLE_PATH);
   return {
     status: "created",
     opportunityId: created.opportunityId,

@@ -9,7 +9,7 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonVariant } from "@/components/ui/button";
 import {
   Drawer,
   DrawerClose,
@@ -62,9 +62,16 @@ export type OpportunityCreated = Extract<
 
 type NewOpportunityDrawerProps = {
   onCreated: (created: OpportunityCreated) => void;
+  /** Aspecto del botón que abre el drawer (la tabla usa `success`). */
+  triggerVariant?: ButtonVariant;
+  triggerClassName?: string;
 };
 
-export function NewOpportunityDrawer({ onCreated }: NewOpportunityDrawerProps) {
+export function NewOpportunityDrawer({
+  onCreated,
+  triggerVariant = "secondary",
+  triggerClassName = "w-full",
+}: NewOpportunityDrawerProps) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const firstFieldRef = useRef<HTMLInputElement>(null);
@@ -83,7 +90,7 @@ export function NewOpportunityDrawer({ onCreated }: NewOpportunityDrawerProps) {
       }}
     >
       <DrawerTrigger asChild>
-        <Button variant="secondary" className="w-full">
+        <Button variant={triggerVariant} className={triggerClassName}>
           <PlusIcon className="size-4" />
           Nueva oportunidad
         </Button>

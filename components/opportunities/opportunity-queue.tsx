@@ -5,6 +5,7 @@ import { cn } from "@/components/ui/cn";
 import { ChevronRightIcon } from "@/components/ui/icons";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip } from "@/components/ui/tooltip";
+import { searchedVehicle } from "@/domains/opportunities/prospect";
 import { QUEUE_TABS, countByTab } from "@/domains/opportunities/queue";
 import { formatElapsedShort } from "@/domains/opportunities/recency";
 import { UNDEFINED_VEHICLE } from "@/domains/demand/presentation";
@@ -19,13 +20,18 @@ type OpportunityQueueProps = {
   idPrefix: string;
   referenceMinuteOfDay: number;
   scoreComposition: ScoreComposition;
+  /**
+   * Abrir una oportunidad (click o Enter). En el teléfono lleva al detalle
+   * (DEC-055); sin él, abrir es solo seleccionar.
+   */
+  onOpen?: (opportunityId: string) => void;
 };
 
 /**
  * Cola operativa: filtro por urgencia y filas agrupadas ("Actuar ahora",
  * "Durante el día", "En seguimiento") ordenadas por Porandú Score. Es un
  * listbox: `↑`/`↓`, `Inicio`/`Fin` con foco en la lista; `J`/`K` desde
- * cualquier lugar.
+ * cualquier lugar; `Enter` abre la seleccionada.
  */
 export function OpportunityQueue({
   opportunities,
@@ -33,13 +39,18 @@ export function OpportunityQueue({
   idPrefix,
   referenceMinuteOfDay,
   scoreComposition,
+  onOpen = queue.select,
 }: OpportunityQueueProps) {
   const onListKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const selectedId = queue.selected?.id;
     const keys: Record<string, () => void> = {
       ArrowDown: () => queue.move(1),
       ArrowUp: () => queue.move(-1),
       Home: () => queue.selectEdge("first"),
       End: () => queue.selectEdge("last"),
+      Enter: () => {
+        if (selectedId) onOpen(selectedId);
+      },
     };
     const action = keys[event.key];
     if (!action) return;
@@ -131,7 +142,7 @@ export function OpportunityQueue({
                   op.lastActivity.minutes,
                   referenceMinuteOfDay,
                 )}
-                onSelect={() => queue.select(op.id)}
+                onSelect={() => onOpen(op.id)}
               />
             ))}
           </div>
@@ -165,12 +176,10 @@ function QueueRow({
   elapsed,
   onSelect,
 }: QueueRowProps) {
-  const { prospect, interest, demand, scores, lastActivity } = opportunity;
+  const { prospect, scores, lastActivity } = opportunity;
   const porandu = scores.porandu;
   // El vehículo sale de la demanda (H1.4); el legado, solo si nunca se cargó.
-  const vehicle = demand
-    ? demand.vehicle?.title
-    : [interest.model, interest.version].filter(Boolean).join(" ");
+  const vehicle = searchedVehicle(opportunity);
   return (
     <div
       id={id}

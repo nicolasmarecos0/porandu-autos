@@ -68,6 +68,8 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
 | DEC-052 | Toma de usados y tasaciones: el usado aceptado entra al stock con el cierre Ganada (Hito 20) | Aceptada | 2026-11-10 |
 | DEC-053 | Logística y entregas: remito con checklist físico y salida atómica de la unidad vendida (Hito 21) | Aceptada | 2026-11-11 |
 | DEC-054 | Seguridad, refinamiento de roles y accesos: la gerencia aprueba, fija precios, anula y audita (Hito 22, cierre del MVP) | Aceptada | 2026-11-11 |
+| DEC-055 | Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23) | Aceptada | 2026-11-17 |
+| DEC-056 | Cliente del runtime para Supavisor desde Vercel (E3 parcial de ADR-001) | Aceptada en principio | 2026-11-17 |
 | ADR-001 | Tenant isolation y SaaS foundation | Aceptada | 2026-09-29 |
 
 ---
@@ -1791,6 +1793,125 @@ Las decisiones selladas heredadas siguen vigentes según el Master Context §39 
   - Un concesionario sin un admin activo no puede aprobar tomas, cambiar precios ni anular entregas hasta que el provisioning le dé uno (DEC-038, Consecuencias).
   - Anular borra el remito pendiente: no queda registro de la anulación. Auditarla exige una decisión nueva.
   - Decisiones abiertas para el fundador: un rol `manager` o tasador separado del `admin`; métricas propias por vendedor; restringir `/intelligence`; auditoría de precios y anulaciones.
+
+## DEC-055 — Rediseño ejecutivo: azul marino en las superficies oscuras, carbón neutro, vista Tabla de oportunidades y maestro/detalle en el teléfono (Hito 23)
+- **Estado:** Aceptada · 2026-11-17. El fundador la aceptó como definitiva el 17 nov 2026, junto con sus *propuestas de implementación* (incluidas las de la auditoría previa al deploy). Formaliza el pedido del fundador del 16 nov 2026: rediseñar la interfaz de Porandú sobre las capturas de referencia de automotiveMastermind (perfil del cliente en tres columnas, barra de puntajes, Behavior Drivers, tarjetas de reemplazo, tabla de prospectos, notificaciones y app móvil), reemplazando su morado por un "Azul Oscuro Ejecutivo". Antes de escribir código se le presentaron al fundador los conflictos del pedido con DEC-013 (color de marca y "la referencia no se copia literalmente"), con DEC-003, DEC-005 y DEC-023 (completar con datos de respaldo lo que la base no tiene) y con las funciones que no tienen decisión. El fundador eligió:
+  - **Color:** `#0F1E36` solo en las superficies oscuras (banda superior y tarjeta del prospecto). `#376B89` sigue como acento en enlaces, selección y foco.
+  - **Datos:** producto honesto. Se muestran solo datos reales; lo que falta se ve como "Sin dato" o no se muestra.
+  - **Funciones nuevas:** solo la vista Tabla. Las demás quedan en backlog (§7).
+
+  Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido; quedaron aceptados con la decisión.
+- **Contexto:** `/opportunities` ya era una adaptación de esta misma referencia (DEC-015, "Reference-first + Porandú DNA"):
+  - la tarjeta de identidad corresponde al perfil del cliente;
+  - la franja de scores con el Porandú elevado, a BPS / In Market / Vehicle / Deal;
+  - "Señales fuertes / A validar", a Good to Mention / Neutral Points;
+  - el Top Match con borde, a Primary Replacement.
+
+  El pedido pedía además:
+  - replicarla "exactamente", con rótulos en inglés y un rail de 5 íconos;
+  - completarla con datos ficticios donde la base no los tiene (cuota mensual, APR, plazo, garantía, actividad web);
+  - sumar funciones sin decisión: notificaciones, búsqueda global, recientes y favoritos, Outreach, Campaign/Website Activity, Loyalty, calculadora Lease/Finance/Cash, contrato del auto actual con VIN y CARFAX, y un tile de IA.
+
+  Además, `/opportunities` usaba columnas fijas de 300 y 392 px sin breakpoints: no se podía usar en un teléfono ni en una tablet.
+- **Decisión:**
+  1. **Color (supersede DEC-013 en ese punto).** Las superficies oscuras de marca pasan al azul marino ejecutivo `#0F1E36`: la banda superior, con un gradiente sutil a `#162B4D`, y la tarjeta del prospecto.
+     - `#376B89` sigue siendo el color de marca como acento: enlaces, selección, navegación activa, foco y botón primario.
+     - La superficie inverse pasa a carbón neutro `#383838` (rail, franja de scores, encabezados de tabla y tooltips), con el bloque elevado en `#454545`. El workspace pasa a gris claro neutro `#F4F5F7` y los grises de superficies y bordes pierden el tinte azulado.
+     - Tokens nuevos en `components/ui/tokens.css`:
+       - `navy`: `#0F1E36`; hover `#162B4D`; strong `#1E3A8A`; soft `#F0F5FF` (azul hielo); muted `#A9BCDC`, para texto sobre navy.
+       - `accent`, naranja de realce: `#F58220` para bordes y barras, `accent-strong` `#C2410C` para texto, más `soft` y `border`.
+       - `info`, celeste: `#0369A1` para texto y `#0284C7` para líneas, más `soft` y `border`.
+       - `success-bright`, `warning-bright` y `danger-bright` (`#10B981`, `#F59E0B`, `#EF4444`): solo para líneas, bordes y barras.
+     - *Propuesta de implementación:* los acentos de la referencia no cumplen WCAG AA como texto sobre blanco: verde 2,5:1, naranja 2,6:1, ámbar 3,2:1, rojo 3,8:1 y celeste 4,1:1, contra un mínimo de 4,5:1. Se conservan para líneas, bordes y rellenos, y el texto usa las variantes AA. El token de texto muted sobre carbón queda en `#C4C4C4` (≥ 5:1).
+     - Los colores del PDF de cotizaciones (`PDF_COLOR_TOKENS`, DEC-046) se sincronizan con los tokens que cambian; el test que los compara sigue exigiéndolo.
+  2. **Composición de la referencia en Opportunities.** Amplía DEC-015 sin cambiar su arquitectura de columnas ni sus contenidos.
+     - Tarjeta del prospecto en azul marino, con avatar de 64 px y la etapa en un pill con borde. La etapa sigue siendo de solo lectura en la tarjeta.
+     - Franja de scores en carbón, con el Porandú elevado en `#454545`.
+     - "¿Por qué ahora?": cada título va sobre una línea completa de 2 px (verde o ámbar) y cada driver es un tile cuadrado con su peso en la esquina.
+     - Top Match con borde naranja de 2 px y check azul profundo; la alternativa lleva borde celeste.
+     - Badge verde "0 km" solo cuando Match v0 informa una unidad 0 km. Es un dato real; no es el "New" de la referencia inventado.
+  3. **Responsive** (B1 §8 "teléfono usable", Master Context §6 "web responsive").
+     - Desde `xl`: las tres columnas.
+     - De `md` a `xl`: la columna izquierda y una sola columna con scroll, con la decisión y, debajo, "¿Qué ofrecerle?".
+     - En el teléfono, maestro/detalle: la cola a pantalla completa. Abrir una oportunidad muestra su detalle con "Volver", la tarjeta del prospecto y los cuatro scores fijos en el borde inferior.
+     - `Enter` abre la oportunidad seleccionada. En el teléfono el foco acompaña el cambio de región.
+     - *Propuesta de implementación* (auditoría previa al deploy, pedido del fundador del 17 nov 2026):
+       - el detalle del teléfono tiene siempre "Volver", aunque la selección haya desaparecido; abierto desde la tabla (`&from=table`), dice "Volver a la tabla" y regresa a ella;
+       - una barra "Showroom" lleva al Catálogo visual del stock (DEC-049, la galería para mostrar en el salón), filtrado por el vehículo que busca el cliente (`/stock/catalog?q=…`). Es un atajo a una vista existente: no arma ofertas ni cuotas.
+  4. **Vista Tabla** (`/opportunities/table`): la tercera vista de Opportunities, junto a Cola y Embudo (DEC-001, DEC-048).
+     - Lee la misma cola (`getOpportunityQueue()`: `requireTenant()` → `withTenant()` → RLS). Buscar, ordenar y paginar trabajan sobre esa lectura con lógica pura (`domains/opportunities/table.ts`). No hay lecturas, migraciones ni índices nuevos.
+     - Columnas:
+       - prospecto, vehículo que busca y etapa;
+       - pago (Contado, Financiado o A definir, de la demanda tipada);
+       - responsable;
+       - última actividad, con la recencia del motor;
+       - señales (WhatsApp en vivo, entrega un usado, riesgo de pérdida);
+       - Porandú, resaltado en azul hielo, Intent, Vehicle Fit y Deal.
+     - Se ordena por la actividad y por los cuatro scores. El "sin dato" va siempre al final, en cualquier dirección (DEC-005).
+     - Ofrece las pestañas de urgencia de la cola, una búsqueda sin tildes por prospecto, vehículo o responsable, 10, 25 o 50 filas por página y "Nueva oportunidad" (el drawer de H1.2, con botón verde). El alta revalida también la tabla.
+     - Abrir una fila lleva a la cola con esa oportunidad seleccionada (`/opportunities?op=<id>`), así la ficha de decisión sigue en un solo lugar (DEC-017). `?op=` solo elige entre las oportunidades que la cola ya leyó; no se consulta con él.
+     - En el teléfono, la tabla es una lista de filas compactas con el color de la recencia, la inicial de la forma de pago y el Porandú.
+  5. **Banda superior.** *Propuesta de implementación:* un menú de la cuenta (Radix) reemplaza al botón suelto. Muestra el email de los claims ya verificados, sin otra lectura, y "Cerrar sesión" con la misma Server Action `signOut`.
+     - El ítem resaltado de todos los menús de Radix (mouse o flechas) pasa a fondo y texto de marca: el gris anterior (~1,03:1 sobre blanco) no se veía con el teclado.
+     - Un avatar sin iniciales muestra una silueta, nunca un círculo vacío ni una foto inventada.
+  6. **Lo que se mantiene por las decisiones vigentes:**
+     - copy en es-PY (DEC-011);
+     - los nombres de DEC-004 (Porandú · Intent · Vehicle Fit · Deal) en lugar de BPS · In Market · Vehicle · Deal ("BPS®" es además marca registrada de automotiveMastermind);
+     - las 8 entradas del rail (DEC-001);
+     - íconos propios en lugar de `lucide-react` (DEC-009);
+     - ningún logo ni marca de terceros (CARFAX, FRITZ, Mastermind);
+     - la etiqueta "Representación" en toda imagen genérica.
+  7. **Fuera de este bloque** (backlog; cada ítem necesita su decisión):
+     - notificaciones (campana y panel);
+     - búsqueda global;
+     - cambiar la etapa desde la tarjeta del prospecto;
+     - recientes y favoritos;
+     - el panel lateral de filtros y la selección masiva de la tabla (no hay acciones masivas);
+     - Outreach (automatización de envíos);
+     - Campaign Activity y Website Activity (sin fuente de datos; omnicanalidad);
+     - Loyalty y citas de taller (Lifecycle);
+     - el tile de IA (IA es futura);
+     - la calculadora Lease/Finance/Cash: las cotizaciones no tienen tasa ni plazo, así que toda cuota sería inventada (DEC-003; el motor financiero está fuera de P1);
+     - el contrato del auto actual con VIN y CARFAX.
+- **Aclara / supersede:**
+  - DEC-013: `#0F1E36` pasa a ser el color de las superficies oscuras de marca, y `#376B89` queda como acento. El resto de DEC-013 sigue vigente: workspace claro-neutro, bordes y sombras sutiles, sin glow, y la referencia guía sin copiarse literalmente.
+  - DEC-015: la misma arquitectura. Cambian el color de la tarjeta, el del tile elevado y el del Top Match, y se agrega el responsive.
+  - DEC-048: Opportunities tiene tres vistas.
+  - DEC-009: sin dependencias nuevas.
+  - Prevalece según DEC-002. No requiere un ADR nuevo: no hay datos ni accesos nuevos, y ADR-001 alcanza.
+- **Consecuencias:**
+  - Sin migraciones ni pasos de staging.
+  - Todo lo que usa los tokens cambia de tono: Cockpit, Embudo, Stock, Agenda, Bandeja, Configuración, el login y el PDF de cotizaciones.
+  - Decisiones abiertas para el fundador: los ítems de §7.
+
+## DEC-056 — Cliente del runtime para Supavisor desde Vercel (E3 parcial de ADR-001)
+- **Estado:** Aceptada en principio · 2026-11-17. Formaliza el pedido del fundador del 17 nov 2026 de dejar el cliente de base de datos "100 % compatible con el pooler de Supabase" después del error `getaddrinfo ENOTFOUND db.<project_ref>.supabase.co` en `/cockpit` en Vercel. Los puntos marcados como *propuesta de implementación* los eligió el equipo dentro de ese pedido y pasan a Aceptada con la aprobación del fundador en la revisión del PR.
+- **Contexto:**
+  - El error es de configuración: `RUNTIME_DATABASE_URL` apuntaba a la conexión directa de Supabase, que solo tiene IPv6. Vercel resuelve por IPv4 y no la encuentra. ADR-001 §2 ya fija el runtime en Supavisor en modo transacción (puerto 6543, usuario `app_runtime.<project_ref>`).
+  - ADR-001 §7 dejó para E3 el tamaño de pool, los límites y el comportamiento de las conexiones desde funciones serverless, y TLS `verify-full`.
+  - `db/client.ts` solo fijaba `prepare: false`. El resto eran los defaults de postgres-js: hasta 10 conexiones por instancia, conexiones ociosas que nunca se cierran, 30 s para conectar y TLS solo si la URL lo pedía.
+- **Decisión:**
+  1. **Validación antes de conectar** (`lib/env.ts`, `parseServerEnv()`). Rechaza, con mensajes que nombran la variable y nunca su valor:
+     - la conexión directa (`db.<project_ref>.supabase.co`);
+     - el pooler de Supabase (`*.pooler.supabase.com`) fuera del puerto 6543 (modo sesión);
+     - el pooler con un usuario sin `.<project_ref>`;
+     - `sslmode=disable` fuera de loopback.
+  2. **Opciones del cliente** (`runtimeClientOptions()` en `db/client.ts`). *Propuesta de implementación:*
+     - `prepare: false`, como antes;
+     - `max: 5` conexiones por instancia (Fluid compute atiende varios requests por instancia; Supavisor multiplexa);
+     - `idle_timeout: 20` s, para que una instancia suspendida no conserve sockets que el pooler ya cerró;
+     - `connect_timeout: 10` s;
+     - `application_name: porandu-runtime`;
+     - TLS `require` por defecto fuera de loopback si la URL no dice `sslmode`. Un `sslmode` explícito manda. Supabase local y el harness de tests siguen sin TLS.
+  3. **Valor en Vercel:** `postgresql://app_runtime.<project_ref>:<password URL-encoded>@aws-<n>-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require`, con el host exacto del panel de Supabase (Connect → Transaction pooler).
+- **Aclara / supersede:**
+  - ADR-001 §7, E3 punto 2: queda definido el pool del runtime. La latencia real y la verificación en Vercel siguen pendientes.
+  - ADR-001 §7, E3 punto 4: TLS es obligatorio fuera de loopback; `verify-full` sigue pendiente porque exige cargar el certificado de Supabase en el runtime.
+  - No cambia ninguna pieza de ADR-001 §2 ni regla de §3. No hay dependencias nuevas (DEC-009) ni migraciones.
+- **Consecuencias:**
+  - Un deploy con la URL mal configurada falla al primer acceso a datos con un error que dice qué corregir, en lugar de `ENOTFOUND` o "Tenant or user not found".
+  - `tests/db/tenant-session.test.ts` reserva `options.max` conexiones del pool del runtime en lugar de 10 fijas.
+  - Decisiones abiertas para el fundador: `verify-full` con el certificado de Supabase; integrar el cierre del pool con el ciclo de vida de las funciones de Vercel (`@vercel/functions`, dependencia nueva) si el piloto lo exige.
 
 ## ADR-001 — Tenant isolation y SaaS foundation
 - **Estado:** Aceptada · 2026-09-29. El principio se aceptó el 2026-09-21 (DEC-006); la implementación estuvo en validación hasta el cierre de E1 y E2.

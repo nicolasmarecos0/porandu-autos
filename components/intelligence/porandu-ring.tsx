@@ -24,7 +24,8 @@ function arcPath(center: number, radius: number, from: number, to: number) {
 }
 
 const RING_TONES = {
-  onBrand: {
+  /** Sobre superficies oscuras: el tile elevado de la franja de scores. */
+  onDark: {
     track: "stroke-surface-1/20",
     fill: "stroke-surface-1",
     missing: "stroke-surface-1/50",

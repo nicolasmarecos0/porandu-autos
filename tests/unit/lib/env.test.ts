@@ -119,6 +119,75 @@ describe("parseServerEnv", () => {
   });
 });
 
+describe("parseServerEnv: conexión de Supabase desde Vercel (ADR-001 §2)", () => {
+  it("acepta el pooler en modo transacción con TLS", () => {
+    const url =
+      "postgresql://app_runtime.projectref:secret-pw@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require";
+    expect(parseServerEnv({ RUNTIME_DATABASE_URL: url })).toEqual({
+      runtimeDatabaseUrl: url,
+    });
+  });
+
+  it("rechaza la conexión directa (solo IPv6: ENOTFOUND en Vercel) sin exponer la URL", () => {
+    const issues = issuesOf(() =>
+      parseServerEnv({
+        RUNTIME_DATABASE_URL:
+          "postgresql://app_runtime:secret-pw@db.projectref.supabase.co:5432/postgres",
+      }),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(/direct Supabase connection/);
+    expect(issues[0]).toMatch(/pooler\.supabase\.com:6543/);
+    expect(issues[0]).not.toContain("secret-pw");
+    expect(issues[0]).not.toContain("projectref");
+  });
+
+  it("rechaza el pooler en modo sesión (5432)", () => {
+    expect(
+      issuesOf(() =>
+        parseServerEnv({
+          RUNTIME_DATABASE_URL:
+            "postgresql://app_runtime.projectref:pw@aws-0-sa-east-1.pooler.supabase.com:5432/postgres",
+        }),
+      ),
+    ).toEqual([
+      "RUNTIME_DATABASE_URL must use the Supavisor transaction pooler port 6543 (ADR-001). The session pooler (5432) holds one database connection per client.",
+    ]);
+  });
+
+  it("exige app_runtime.<project_ref> en el pooler", () => {
+    expect(
+      issuesOf(() =>
+        parseServerEnv({
+          RUNTIME_DATABASE_URL:
+            "postgresql://app_runtime:pw@aws-0-sa-east-1.pooler.supabase.com:6543/postgres",
+        }),
+      ),
+    ).toEqual([
+      "RUNTIME_DATABASE_URL must authenticate as app_runtime.<project_ref> on the Supabase pooler.",
+    ]);
+  });
+
+  it("rechaza desactivar TLS fuera de localhost, pero no en local", () => {
+    expect(
+      issuesOf(() =>
+        parseServerEnv({
+          RUNTIME_DATABASE_URL:
+            "postgresql://app_runtime.projectref:pw@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=disable",
+        }),
+      ),
+    ).toEqual([
+      "RUNTIME_DATABASE_URL must not disable TLS (sslmode=disable) outside localhost.",
+    ]);
+    expect(
+      parseServerEnv({
+        RUNTIME_DATABASE_URL:
+          "postgresql://app_runtime:pw@127.0.0.1:54322/postgres?sslmode=disable",
+      }),
+    ).toHaveProperty("runtimeDatabaseUrl");
+  });
+});
+
 describe("parseWhatsAppEnv (DEC-039 §2)", () => {
   const SECRET = "0123456789abcdef0123456789abcdef";
 

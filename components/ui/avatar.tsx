@@ -1,4 +1,5 @@
 import { cn } from "./cn";
+import { PersonIcon } from "./icons";
 
 const sizeClasses = {
   xs: "size-6 text-[0.625rem]",
@@ -6,13 +7,14 @@ const sizeClasses = {
   md: "size-9 text-label",
   lg: "size-12 text-heading",
   xl: "size-14 text-title",
+  "2xl": "size-16 text-title",
 } as const;
 
 const toneClasses = {
   neutral: "bg-surface-3 text-text-secondary",
   brand: "bg-brand-soft text-brand-strong",
-  /** Sobre superficies de marca. */
-  onBrand: "bg-surface-1 text-brand-strong",
+  /** Sobre la tarjeta del prospecto en azul marino (DEC-055). */
+  onNavy: "bg-surface-1 text-navy ring-2 ring-surface-1/20",
 } as const;
 
 type AvatarProps = {
@@ -22,7 +24,11 @@ type AvatarProps = {
   className?: string;
 };
 
-/** Avatar de iniciales. Decorativo: el nombre visible acompaña siempre. */
+/**
+ * Avatar de iniciales. Decorativo: el nombre visible acompaña siempre. Sin
+ * iniciales (un nombre sin letras), muestra una silueta: nunca una foto
+ * inventada ni un círculo vacío.
+ */
 export function Avatar({
   initials,
   size = "sm",
@@ -39,7 +45,11 @@ export function Avatar({
         className,
       )}
     >
-      {initials}
+      {initials.trim() === "" ? (
+        <PersonIcon className="size-[55%]" />
+      ) : (
+        initials
+      )}
     </span>
   );
 }

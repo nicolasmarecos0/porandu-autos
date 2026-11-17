@@ -26,6 +26,8 @@ Porandú conecta inventario, conversaciones, intención de compra y operación c
 >
 > **Hito 22 — Seguridad, roles y accesos (DEC-054):** la gerencia (`admin`) aprueba las tomas, cambia el precio publicado de las unidades, anula entregas pendientes y ve las Métricas del salón; el equipo de ventas (`seller`) ve esas acciones bloqueadas, con quién las hace. Las Server Actions responden `UNAUTHORIZED_ROLE` y la base exige lo mismo con sus triggers y la única policy de DELETE del producto. `0023_security_roles` se aplica a staging después del merge (ver "Seguridad, roles y accesos (Hito 22)").
 >
+> **Hito 23 — Rediseño ejecutivo y vista Tabla (DEC-055):** la banda superior y la tarjeta del prospecto pasan al azul marino ejecutivo `#0F1E36` (`#376B89` sigue como acento), el rail, la franja de scores y los encabezados de tabla al carbón `#383838`, y Opportunities toma la composición de la referencia con datos reales únicamente. Suma la vista Tabla (`/opportunities/table`) y el maestro/detalle en el teléfono. Sin migraciones (ver "Rediseño ejecutivo y vista Tabla (Hito 23)").
+>
 > **Hito 21 — Logística y entregas (DEC-053):** el panel "Coordinación de Entrega" de `/opportunities/[id]` (solo con la oportunidad Ganada) programa la entrega de la unidad vendida, lleva el checklist físico (llaves, manuales, auxilio, limpieza y documentos) y, con todo verificado, "Completar Entrega y Dar Salida al Vehículo" completa el remito y pasa la unidad a Entregada en una sola transacción: sale del Inventario, del Catálogo y de las Métricas del salón. `0022_deliveries` se aplica a staging después del merge (ver "Logística y entregas (Hito 21)").
 
 ---
@@ -105,7 +107,8 @@ Ver `.env.example`, que solo contiene placeholders. **Nunca commitear `.env*` co
 
 Separación runtime / migraciones (ADR-001):
 
-- El runtime lee **solo** `RUNTIME_DATABASE_URL`, a través de `lib/env.server.ts` (`import "server-only"`). La validación rechaza cualquier rol distinto de `app_runtime`. En staging apunta a Supavisor en modo transacción (puerto 6543, usuario `app_runtime.<project_ref>`).
+- El runtime lee **solo** `RUNTIME_DATABASE_URL`, a través de `lib/env.server.ts` (`import "server-only"`). La validación rechaza cualquier rol distinto de `app_runtime`. En staging y en Vercel apunta a Supavisor en modo transacción (puerto 6543, usuario `app_runtime.<project_ref>`, `?sslmode=require`).
+- **Vercel (DEC-056):** la conexión directa `db.<project_ref>.supabase.co` es solo IPv6 y desde Vercel falla con `getaddrinfo ENOTFOUND`. La validación la rechaza con un mensaje claro, igual que el pooler en modo sesión (5432), un usuario del pooler sin `.<project_ref>` y `sslmode=disable` fuera de localhost. El cliente (`db/client.ts`) usa `prepare: false`, hasta 5 conexiones por instancia, cierra las ociosas a los 20 s, espera 10 s para conectar y exige TLS fuera de loopback si la URL no dice `sslmode`.
 - `MIGRATION_DATABASE_URL` la usa únicamente `drizzle-kit`. En staging apunta a Supavisor en modo sesión (puerto 5432, usuario `postgres.<project_ref>`). ESLint prohíbe leerla desde código de la aplicación.
 - No existe un `DATABASE_URL` genérico: ninguna herramienta puede tomar la credencial equivocada por defecto.
 - Las variables públicas se leen con `lib/env.public.ts`. Solo lo que lleva prefijo `NEXT_PUBLIC_` llega al browser; una variable server-only nunca lleva ese prefijo.
@@ -1249,6 +1252,40 @@ Server Action: requireTenant() → authorize(ctx.role, capacidad) ──no──
 - **Tests:** `tests/unit/auth/roles.test.ts` (la matriz), `tests/unit/domains/vehicles-price.test.ts`, `tests/unit/vehicles/price-change.test.ts` y `tests/unit/deliveries/cancel-delivery.test.ts` (un seller recibe `UNAUTHORIZED_ROLE` sin llegar a la base), `tests/unit/trade-ins/*` (aprobar como seller), y los tests de UI de Stock, la entrega, la toma y el Cockpit (acciones bloqueadas). `tests/db/security-roles.test.ts` contra PostgreSQL: los triggers y la policy de DELETE por el boundary real y con el rol dueño, las Server Actions como seller (rechazadas, nada cambia) y como admin, un contexto falsificado de admin, y ninguna otra tabla con DELETE. `tests/db/migrations.test.ts` aplica `0023` sobre una base en el Hito 21 (idempotencia, reversión y postcondiciones que fallan cerradas). Verificado con Playwright (Chromium, 390 y 1280 px, `next start` sobre una base migrada y JWTs de Supabase firmados contra un JWKS local) logueando como vendedor y como admin: el vendedor ve "Aprobar toma", "Editar precio" y "Anular entrega" bloqueados con su tooltip (un click no abre nada), no ve el bloque financiero y recibe el estado vacío en `/cockpit/metrics`; el admin aprueba la toma y cambia un precio de punta a punta. Sin scroll horizontal.
 - **Fuera de este bloque:** un rol `manager` o de tasador separado, permisos configurables, métricas por vendedor, restringir `/intelligence`, auditoría de precios y anulaciones, y todo lo listado como futuro.
 - `0023_security_roles` no se aplica a staging en esta rama: va después del merge con `preflight → migrate → verify`, con `expected_migrations = 0023_security_roles` si staging ya tiene `0022` (o con las anteriores que falten delante, en orden).
+
+## Rediseño ejecutivo y vista Tabla (Hito 23)
+
+Rediseño visual sobre las capturas de referencia del fundador (DEC-055), con datos reales únicamente: lo que la base no tiene se ve como "Sin dato" o no se muestra.
+
+| Región | Antes | Ahora |
+|---|---|---|
+| Banda superior y tarjeta del prospecto | `#376B89` | Azul marino `#0F1E36` (token `navy`), con gradiente sutil a `#162B4D` |
+| Rail, franja de scores, encabezados de tabla, tooltips | Grafito azulado `#1D2830` | Carbón neutro `#383838`; bloque elevado `#454545` |
+| Workspace | `#EEF1F4` | `#F4F5F7`, con grises neutros |
+| Enlaces, selección, navegación activa, foco, botón primario | `#376B89` | `#376B89` (sin cambios: es el acento de marca) |
+| Top Match | Borde de marca | Borde naranja de 2 px (`accent` `#F58220`) |
+
+- **Tokens** (`components/ui/tokens.css`): `navy`, `accent` (naranja), `info` (celeste) y `*-bright` de estado. Los tonos vivos (`#10B981`, `#F58220`, `#F59E0B`, `#EF4444`, `#0284C7`) no cumplen WCAG AA como texto sobre blanco, así que solo se usan en líneas, bordes y rellenos; el texto usa las variantes AA. `PDF_COLOR_TOKENS` (`lib/quotes/pdf.ts`) espeja los tokens que cambiaron.
+- **Opportunities** (`/opportunities`): la misma arquitectura de DEC-015, con la composición de la referencia.
+  - Tarjeta del prospecto en azul marino, con avatar de 64 px y la etapa en un pill con borde.
+  - Franja de scores en carbón, con el Porandú elevado.
+  - "¿Por qué ahora?" con títulos sobre una línea de 2 px y tiles cuadrados con su peso.
+  - Top Match con borde naranja y la alternativa con borde celeste. El badge "0 km" aparece solo si la unidad lo es.
+- **Responsive:**
+  - desde `xl`, las tres columnas;
+  - de `md` a `xl`, la columna izquierda y una sola columna con scroll;
+  - en el teléfono, maestro/detalle: la cola y, al abrir, el detalle con "Volver" y los cuatro scores fijos abajo (`ScoreDock`).
+- **Vista Tabla** (`/opportunities/table`, selector Cola · Embudo · Tabla):
+  - Columnas: prospecto, vehículo y etapa; pago; responsable; actividad; señales; Porandú (columna en azul hielo), Intent, Vehicle Fit y Deal.
+  - Ofrece las pestañas de urgencia, la búsqueda sin tildes, el orden por actividad y por cada score ("sin dato" siempre al final), 10, 25 o 50 filas por página y "Nueva oportunidad".
+  - Usa la misma lectura tenant-scoped de la cola (`getOpportunityQueue()`). La lógica es pura (`domains/opportunities/table.ts`).
+  - Una fila abre la cola con esa oportunidad seleccionada (`/opportunities?op=<id>`).
+  - En el teléfono es una lista compacta con el color de la recencia.
+- **Banda superior:** el menú de la cuenta (Radix) muestra el email de la sesión y "Cerrar sesión".
+- **Se mantiene:** copy en es-PY, los nombres de los scores de DEC-004 (no BPS / In Market), las 8 entradas del rail, íconos propios y ningún logo de terceros.
+- **Tests:** `tests/unit/domains/opportunities/table.test.ts` (orden, búsqueda, paginación, pago y señales) y `tests/unit/opportunities/table-view.test.ts` (columnas reales sin Lease, cuotas ni Outreach; orden inicial; destino de cada fila; "Sin dato" y "Sin asignar"; lista del teléfono). Verificado en Chromium a 1440, 1024 y 390 px, con los datos de prueba y con la forma de los datos reales (sin señales ni matches).
+- **Auditoría previa al deploy:** en el teléfono, el detalle tiene siempre "Volver" ("Volver a la tabla" si se abrió desde la tabla, `&from=table`) y una barra "Showroom" que abre el Catálogo visual (DEC-049) filtrado por el vehículo que busca el cliente. Los menús de Radix resaltan el ítem activo con fondo de marca (se ve con el teclado) y un avatar sin iniciales muestra una silueta.
+- **Fuera de este bloque (backlog, DEC-055 §7):** notificaciones, búsqueda global, cambiar la etapa desde la tarjeta, recientes y favoritos, el panel de filtros y la selección masiva de la tabla, Outreach, Campaign/Website Activity, Loyalty, el tile de IA, la calculadora Lease/Finance/Cash y el contrato del auto actual.
 
 ## Convenciones
 

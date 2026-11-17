@@ -285,7 +285,11 @@ describe("Server Action: requireTenant() → validación → withTenant()", () =
       contactName: "Lucía Ortiz",
       contactReused: false,
     });
-    expect(mocks.revalidated).toEqual(["/opportunities"]);
+    // La tabla (DEC-055) también ofrece el alta: vuelve con la fila nueva.
+    expect(mocks.revalidated).toEqual([
+      "/opportunities",
+      "/opportunities/table",
+    ]);
 
     const [contact] = await contactsWithPhone(phone.e164);
     expect(contact).toEqual({

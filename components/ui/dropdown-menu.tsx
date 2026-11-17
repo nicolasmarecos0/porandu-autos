@@ -41,8 +41,13 @@ export function DropdownMenuContent({
   );
 }
 
+/*
+ * Ítem resaltado (mouse o flechas): fondo y texto de marca. El gris claro
+ * anterior (surface-2 sobre blanco, ~1,03:1) no se veía con el teclado.
+ */
 const itemTones = {
-  neutral: "text-text-primary data-highlighted:bg-surface-2",
+  neutral:
+    "text-text-primary data-highlighted:bg-brand-soft data-highlighted:text-brand-strong",
   danger: "text-danger data-highlighted:bg-danger-soft",
 } as const;
 

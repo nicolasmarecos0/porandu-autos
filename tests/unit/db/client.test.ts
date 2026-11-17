@@ -89,4 +89,61 @@ describe("db/client", () => {
 
     expect(() => getDb()).toThrow(/must connect as app_runtime/);
   });
+
+  it("rechaza la conexión directa de Supabase antes de intentar resolverla", async () => {
+    vi.stubEnv(
+      "RUNTIME_DATABASE_URL",
+      "postgresql://app_runtime:runtime-secret@db.testref.supabase.co:5432/postgres",
+    );
+
+    const { getDb } = await loadClient();
+
+    expect(() => getDb()).toThrow(/direct Supabase connection/);
+  });
+
+  it("pool chico, conexiones ociosas que se cierran y timeout corto (serverless)", async () => {
+    vi.stubEnv("RUNTIME_DATABASE_URL", RUNTIME_URL);
+
+    const { getDb } = await loadClient();
+    const client = getDb().$client;
+
+    try {
+      expect(client.options.max).toBe(5);
+      expect(client.options.idle_timeout).toBe(20);
+      expect(client.options.connect_timeout).toBe(10);
+      expect(client.options.connection.application_name).toBe(
+        "porandu-runtime",
+      );
+    } finally {
+      await client.end();
+    }
+  });
+});
+
+describe("runtimeClientOptions: TLS", () => {
+  it("exige TLS fuera de loopback si la URL no dice sslmode", async () => {
+    const { runtimeClientOptions } = await loadClient();
+    expect(runtimeClientOptions(RUNTIME_URL).ssl).toBe("require");
+  });
+
+  it("respeta un sslmode explícito de la URL", async () => {
+    const { runtimeClientOptions } = await loadClient();
+    expect(
+      runtimeClientOptions(`${RUNTIME_URL}?sslmode=verify-full`),
+    ).not.toHaveProperty("ssl");
+  });
+
+  it.each([
+    "postgresql://app_runtime:pw@127.0.0.1:54322/postgres",
+    "postgresql://app_runtime:pw@localhost:54322/postgres",
+    "postgresql://app_runtime:pw@[::1]:54322/postgres",
+  ])("sin TLS en loopback (%s)", async (url) => {
+    const { runtimeClientOptions } = await loadClient();
+    expect(runtimeClientOptions(url)).not.toHaveProperty("ssl");
+  });
+
+  it("siempre sin prepared statements con nombre", async () => {
+    const { runtimeClientOptions } = await loadClient();
+    expect(runtimeClientOptions(RUNTIME_URL).prepare).toBe(false);
+  });
 });
