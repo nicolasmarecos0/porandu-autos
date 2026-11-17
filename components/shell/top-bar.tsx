@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { BrandGlyphIcon } from "@/components/ui/icons";
 
 /**
  * Banda superior de marca en azul marino ejecutivo (DEC-055), con un
@@ -26,20 +27,7 @@ export function TopBar({ children }: { children?: ReactNode }) {
 function BrandMark() {
   return (
     <span className="flex size-8 items-center justify-center rounded-md bg-surface-1 text-navy shadow-sm">
-      <svg
-        viewBox="0 0 24 24"
-        width={20}
-        height={20}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path d="M8.5 18V6h5a3.5 3.5 0 0 1 0 7h-5" />
-      </svg>
+      <BrandGlyphIcon />
     </span>
   );
 }

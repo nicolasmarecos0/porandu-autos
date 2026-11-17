@@ -410,6 +410,58 @@ export function ArrowUpIcon(props: IconProps) {
   );
 }
 
+/**
+ * Monograma de Porandú (la "P" de la marca). El isotipo de la banda superior
+ * y el núcleo del login lo dibujan con trazo 2.5.
+ */
+export function BrandGlyphIcon(props: IconProps) {
+  return (
+    <Icon strokeWidth={2.5} {...props}>
+      <path d="M8.5 18V6h5a3.5 3.5 0 0 1 0 7h-5" />
+    </Icon>
+  );
+}
+
+/** Engranaje: las reglas del motor de Porandú (login, DEC-057). */
+export function GearIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 3.5v2.25M12 18.25v2.25M3.5 12h2.25M18.25 12h2.25M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6" />
+      <circle cx="12" cy="12" r="6.25" />
+    </Icon>
+  );
+}
+
+/** Línea que sube: la tendencia de la demanda (login, DEC-057). */
+export function TrendUpIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 17l5.5-5.5 3.5 3.5L20 7.5" />
+      <path d="M14.5 7.5H20V13" />
+    </Icon>
+  );
+}
+
+/** Rayo: una señal fuerte de compra (login, DEC-057). */
+export function BoltIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M13.5 3L5.5 13.5h6l-1 7.5 8-10.5h-6z" />
+    </Icon>
+  );
+}
+
+/** Llave: el cierre de la operación y la entrega (login, DEC-057). */
+export function KeyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="15.5" r="4" />
+      <path d="M11 12.5l8.5-8.5M16.5 7l2.5 2.5M14 9.5l2 2" />
+    </Icon>
+  );
+}
+
 /** Silueta de una persona: el avatar sin iniciales (sin nombre ni foto). */
 export function PersonIcon(props: IconProps) {
   return (
